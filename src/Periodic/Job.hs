@@ -5,8 +5,8 @@ module Periodic.Job
   (
     Job (..)
   , newJob
-  , done
-  , fail
+  , workDone
+  , workFail
   , schedLater
   , schedLater'
   ) where
@@ -20,7 +20,6 @@ import           Periodic.Types        (Command (..), nullChar)
 
 import           Data.Aeson            (FromJSON (..), decode, withObject, (.:))
 import           Data.Int              (Int64)
-import           Prelude               hiding (fail)
 
 data RawJob = RawJob { _name     :: String
                      -- unique job name
@@ -63,12 +62,12 @@ newJob c = parse . B.breakSubstring nullChar
                            }
           where (Just r) = decode $ fromStrict dat
 
-done :: Job -> IO ()
-done (Job { handle = h, bc = c }) = withAgent c $ \agent ->
+workDone :: Job -> IO ()
+workDone (Job { handle = h, bc = c }) = withAgent c $ \agent ->
   send agent WorkDone h
 
-fail :: Job -> IO ()
-fail (Job { handle = h, bc = c }) = withAgent c $ \agent ->
+workFail :: Job -> IO ()
+workFail (Job { handle = h, bc = c }) = withAgent c $ \agent ->
   send agent WorkFail h
 
 schedLater :: Job -> Int64 -> IO ()

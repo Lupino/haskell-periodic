@@ -21,7 +21,7 @@ import           Periodic.Agent          (receive, send)
 import           Periodic.BaseClient     (BaseClient, connectTo, newBaseClient,
                                           withAgent)
 import qualified Periodic.BaseClient     as BC (close)
-import           Periodic.Job            (Job, fail, func, name, newJob)
+import           Periodic.Job            (Job, func, name, newJob, workFail)
 import           Periodic.Types          (ClientType (TypeWorker), Command (..),
                                           Payload (..))
 
@@ -36,8 +36,6 @@ import           Control.Exception       (SomeException, bracket_, catch,
 import           Control.Monad           (forever, void, when)
 import           Data.Maybe              (fromJust, isJust)
 import           System.IO.Error         (eofErrorType, ioError, mkIOError)
-
-import           Prelude                 hiding (fail)
 
 import           System.Log.Logger       (errorM)
 
@@ -112,4 +110,4 @@ runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
                                     , "\nError: "
                                     , show e
                                     ]
-  fail job
+  workFail job
