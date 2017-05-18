@@ -79,7 +79,7 @@ writePayload :: BaseClient -> Payload -> IO ()
 writePayload bc pl@(Payload { payloadID = pid }) = do
   v <- atomicModifyIORef' (agents bc) $ \v -> (v, HM.lookup pid v)
   case v of
-    Nothing    -> return ()
+    Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ B.unpack pid ++ "] not found."
     Just agent -> feed agent pl
 
 newAgent :: BaseClient -> IO Agent
