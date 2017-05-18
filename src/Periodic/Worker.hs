@@ -31,7 +31,8 @@ import           Data.IORef              (IORef, atomicModifyIORef', newIORef)
 
 import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.QSem
-import           Control.Exception       (SomeException, bracket_, catch)
+import           Control.Exception       (SomeException, bracket_, catch,
+                                          handle)
 import           Control.Monad           (forever, void, when)
 import           Data.Maybe              (fromJust, isJust)
 import           System.IO.Error         (eofErrorType, ioError, mkIOError)
@@ -92,7 +93,7 @@ close :: Worker -> IO ()
 close (Worker { bc = c }) = BC.close c
 
 work :: Worker -> Int -> IO ()
-work w size = do
+work w size = handle (\(e :: SomeException) -> close w) $ do
   sem <- newQSem size
   forever $ do
     job <- grabJob w

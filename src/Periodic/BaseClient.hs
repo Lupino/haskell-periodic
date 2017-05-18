@@ -99,8 +99,8 @@ withAgent bc = bracket (newAgent bc) (removeAgent bc)
 
 close :: BaseClient -> IO ()
 close (BaseClient { threadID = tid, conn = c }) = do
-  Conn.close c
   when (isJust tid) $ killThread (fromJust tid)
+  Conn.close c
 
 noopAgent :: BaseClient -> IO ()
 noopAgent bc = do
