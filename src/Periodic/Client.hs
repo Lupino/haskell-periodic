@@ -12,6 +12,7 @@ module Periodic.Client
   , close
   , Job (..)
   , job
+  , job'
   ) where
 
 import           Data.ByteString.Char8 (ByteString)
@@ -26,6 +27,8 @@ import           Periodic.Types        (ClientType (TypeClient), Command (..),
 
 import           Data.Aeson            (ToJSON (..), encode, object, (.=))
 import           Data.Int              (Int64)
+
+import           Data.UnixTime
 
 type Client = BaseClient
 
@@ -48,11 +51,20 @@ instance ToJSON Job where
                           ]
 
 job :: String -> String -> Job
-job name func = Job { workload = ""
+job func name = Job { workload = ""
                     , timeout  = 0
                     , schedAt  = 0
                     , ..
                     }
+
+job' :: String -> String -> Int64 -> IO Job
+job' func name later = do
+  schedAt <- (+later) . read . show . toEpochTime <$> getUnixTime
+
+  return Job { workload = ""
+             , timeout = 0
+             , ..
+             }
 
 newClient :: HostName -> PortID -> IO Client
 newClient host portID = do
