@@ -15,7 +15,7 @@ module Periodic.Connection
   ) where
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
-import qualified Data.ByteString.Char8     as B (ByteString, length)
+import qualified Data.ByteString.Char8     as B (ByteString, length, null)
 import           Network.Socket            (Socket)
 import qualified Network.Socket            as Socket (close)
 import           Network.Socket.ByteString (recv, sendAll)
@@ -38,6 +38,9 @@ magicRES = "\x00RES"
 errorMagicNotMatch :: B.ByteString
 errorMagicNotMatch = "Magic not match"
 
+errorSocketClosed :: B.ByteString
+errorSocketClosed = "socket is closed"
+
 newConn :: Socket -> B.ByteString -> B.ByteString -> IO Connection
 newConn sock requestMagic responseMagic = do
   readLock <- L.new
@@ -55,7 +58,8 @@ receive (Connection {..}) = do
   L.with readLock $ do
     magic <- recv sock 4
     case magic == requestMagic of
-      False -> return $ Left errorMagicNotMatch
+      False -> if B.null magic then return $ Left errorSocketClosed
+                               else return $ Left errorMagicNotMatch
       True -> do
         header <- recv sock 4
         dat <- recv sock (parseHeader header)

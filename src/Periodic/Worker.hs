@@ -34,6 +34,7 @@ import           Control.Concurrent.QSem
 import           Control.Exception       (SomeException, bracket_, catch)
 import           Control.Monad           (forever, void, when)
 import           Data.Maybe              (fromJust, isJust)
+import           System.IO.Error         (eofErrorType, ioError, mkIOError)
 
 import           Prelude                 hiding (fail)
 
@@ -68,12 +69,14 @@ ping (Worker { bc = c }) = withAgent c $ \agent -> do
   ret <- receive agent
   return $ payloadCMD ret == Pong
 
-grabJob :: Worker -> IO (Maybe Job)
-grabJob (Worker { bc = c }) = withAgent c $ \agent -> do
+grabJob :: Worker -> IO Job
+grabJob w@(Worker { bc = c }) = withAgent c $ \agent -> do
   send agent GrabJob B.empty
   pl <- receive agent
-  if payloadCMD pl == JobAssign then return . Just . newJob c $ payloadData pl
-                                else return Nothing
+  case payloadCMD pl of
+    JobAssign -> return . newJob c $ payloadData pl
+    Noop      -> ioError $ mkIOError eofErrorType "socket" Nothing Nothing
+    _         -> grabJob w
 
 addFunc :: Worker -> ByteString -> (Job -> IO ()) -> IO ()
 addFunc w@(Worker { bc = c }) f t = withAgent c $ \agent -> do
@@ -93,13 +96,10 @@ work w size = do
   sem <- newQSem size
   forever $ do
     job <- grabJob w
-    case job of
-      Nothing -> errorM "Periodic.Worker" "Failed on grab job"
-      Just job' -> do
-        task <- getTask w (func job')
-        case task of
-          Nothing -> removeFunc w (func job')
-          Just task -> void . forkIO $ bracket_ (waitQSem sem) (signalQSem sem) $ runTask task job'
+    task <- getTask w (func job)
+    case task of
+      Nothing -> removeFunc w (func job)
+      Just task -> void . forkIO $ bracket_ (waitQSem sem) (signalQSem sem) $ runTask task job
 
 runTask :: Task -> Job -> IO ()
 runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do

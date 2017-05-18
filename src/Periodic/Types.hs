@@ -7,6 +7,7 @@ module Periodic.Types
   , ClientType (..)
   , Payload (..)
   , payload
+  , noop
   ) where
 
 import           Data.ByteString (ByteString, empty)
@@ -187,3 +188,6 @@ payload pid cmd = Payload { payloadID   = pid
                           , payloadCMD  = cmd
                           , payloadData = empty
                           }
+
+noop :: Payload
+noop = payload empty Noop

@@ -25,12 +25,14 @@ import           Periodic.Connection   (Connection, newClientConn, receive,
                                         send)
 
 import qualified Periodic.Connection   as Conn (close)
-import           Periodic.Types        (ClientType, Payload (..), nullChar)
+import           Periodic.Types        (ClientType, Payload (..), noop,
+                                        nullChar)
 
 import           Control.Exception     (bracket, bracketOnError, throwIO)
 import qualified Control.Exception     as Exception
 import           Data.HashMap.Strict   (HashMap)
-import qualified Data.HashMap.Strict   as HM (delete, empty, insert, lookup)
+import qualified Data.HashMap.Strict   as HM (delete, elems, empty, insert,
+                                              lookup)
 import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
 import           Network               (PortID (..))
 import           Network.BSD           (getProtocolNumber)
@@ -100,11 +102,17 @@ close (BaseClient { threadID = tid, conn = c }) = do
   Conn.close c
   when (isJust tid) $ killThread (fromJust tid)
 
+noopAgent :: BaseClient -> IO ()
+noopAgent bc = do
+   v <- atomicModifyIORef' (agents bc) $ \v -> (v, HM.elems v)
+   mapM_ (flip feed noop) v
+
+
 mainLoop :: BaseClient -> IO ()
 mainLoop bc = do
   rt <- receive (conn bc)
   case rt of
-    Left e   -> errorM "Periodic.BaseClient" $ B.unpack e
+    Left e   -> noopAgent bc
     Right pl -> writePayload bc (parsePayload pl)
 
 
