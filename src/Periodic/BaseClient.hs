@@ -39,7 +39,7 @@ import           Network.BSD           (getProtocolNumber)
 import           Network.Socket        hiding (close, send)
 import qualified Network.Socket        as Socket (close)
 
-import           Periodic.Agent        (Agent (..), feed)
+import           Periodic.Agent        (Agent, agentID, feed)
 import qualified Periodic.Agent        as Agent (newAgent)
 import           System.Entropy        (getEntropy)
 

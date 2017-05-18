@@ -19,24 +19,27 @@ import           Periodic.Connection     (Connection)
 import qualified Periodic.Connection     as Conn (send)
 import           Periodic.Types          (Command, Payload, nullChar)
 
-data Agent = Agent { agentID     :: ByteString
-                   , agentConn   :: Connection
-                   , agentReader :: MVar Payload
+data Agent = Agent { _id     :: ByteString
+                   , _conn   :: Connection
+                   , _reader :: MVar Payload
                    }
 
+agentID :: Agent -> ByteString
+agentID agent = _id agent
+
 newAgent :: Connection -> ByteString -> IO Agent
-newAgent agentConn agentID = do
-  agentReader <- newEmptyMVar
+newAgent _conn _id = do
+  _reader <- newEmptyMVar
   return Agent { .. }
 
 feed :: Agent -> Payload -> IO ()
-feed (Agent { agentReader = r }) pl = putMVar r pl
+feed (Agent { _reader = r }) pl = putMVar r pl
 
 receive :: Agent -> IO Payload
-receive (Agent { agentReader = r }) = takeMVar r
+receive (Agent { _reader = r }) = takeMVar r
 
 send_ :: Agent -> ByteString -> IO ()
-send_ (Agent { agentID = aid, agentConn = conn }) pl =
+send_ (Agent { _id = aid, _conn = conn }) pl =
   Conn.send conn $ B.concat [ aid, nullChar, pl ]
 
 send :: Agent -> Command -> ByteString -> IO ()
