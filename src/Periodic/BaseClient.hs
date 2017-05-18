@@ -48,7 +48,7 @@ import           Control.Monad         (forever, liftM, when)
 
 import           Data.Maybe            (fromJust, isJust)
 
-import           System.Log.Logger     (errorM)
+import           System.Log.Logger     (errorM, infoM)
 
 data BaseClient = BaseClient { agents   :: IORef (HashMap ByteString Agent)
                              , conn     :: Connection
@@ -64,7 +64,7 @@ newBaseClient sock agentType = do
   let bc = BaseClient { conn = conn', agents = agents', threadID = Nothing }
 
   threadID' <- forkIO $ forever $ mainLoop bc
-  errorM "Periodic.BaseClient" "Connected to periodic task system"
+  infoM "Periodic.BaseClient" "Connected to periodic task system"
   return bc { threadID = Just threadID' }
 
 addAgent :: BaseClient -> Agent -> IO ()
