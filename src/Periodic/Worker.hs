@@ -15,13 +15,13 @@ module Periodic.Worker
   ) where
 
 import           Data.ByteString.Char8   (ByteString)
-import qualified Data.ByteString.Char8   as B (empty)
+import qualified Data.ByteString.Char8   as B (empty, unpack)
 import           Network                 (HostName, PortID)
 import           Periodic.Agent          (receive, send)
 import           Periodic.BaseClient     (BaseClient, connectTo, newBaseClient,
                                           withAgent)
 import qualified Periodic.BaseClient     as BC (close)
-import           Periodic.Job            (Job, fail, func, newJob)
+import           Periodic.Job            (Job, fail, func, name, newJob)
 import           Periodic.Types          (ClientType (TypeWorker), Command (..),
                                           Payload (..))
 
@@ -36,6 +36,8 @@ import           Control.Monad           (forever, void, when)
 import           Data.Maybe              (fromJust, isJust)
 
 import           Prelude                 hiding (fail)
+
+import           System.Log.Logger       (errorM)
 
 newtype Task = Task (Job -> IO ())
 
@@ -91,14 +93,6 @@ work w size = do
   sem <- newQSem size
   forever $ do
     job <- grabJob w
-    when (isJust job) $ do
-      task <- getTask w (func $ fromJust job)
-      process sem task (fromJust job)
-
-  where process :: QSem -> (Maybe Task) -> Job -> IO ()
-        process _ Nothing _ = return ()
-        process sem (Just (Task task)) job = void . forkIO $ bracket_ (waitQSem sem) (signalQSem sem) $ task job
-        process sem (Just task) job = void . forkIO $ bracket_ (waitQSem sem) (signalQSem sem) $ runTask task job
     case job of
       Nothing -> errorM "Periodic.Worker" "Failed on grab job"
       Just job' -> do
@@ -108,4 +102,13 @@ work w size = do
           Just task -> void . forkIO $ bracket_ (waitQSem sem) (signalQSem sem) $ runTask task job'
 
 runTask :: Task -> Job -> IO ()
-runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> fail job
+runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
+  errorM "Periodic.Worker" $ concat [ "Failing on running job { name = "
+                                    , name job
+                                    , ", "
+                                    , B.unpack $ func job
+                                    , " }"
+                                    , "\nError: "
+                                    , show e
+                                    ]
+  fail job

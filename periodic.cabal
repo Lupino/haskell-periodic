@@ -30,6 +30,7 @@ library
                      , unordered-containers
                      , entropy
                      , aeson
+                     , hslogger
   default-language:    Haskell2010
 
 test-suite periodic-test

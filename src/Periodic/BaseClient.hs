@@ -20,7 +20,7 @@ module Periodic.BaseClient
   ) where
 
 import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B (cons, empty, isInfixOf)
+import qualified Data.ByteString.Char8 as B (cons, empty, isInfixOf, unpack)
 import           Periodic.Connection   (Connection, newClientConn, receive,
                                         send)
 
@@ -48,6 +48,8 @@ import           Control.Monad         (forever, liftM, when)
 
 import           Data.Maybe            (fromJust, isJust)
 
+import           System.Log.Logger     (errorM)
+
 data BaseClient = BaseClient { agents   :: IORef (HashMap ByteString Agent)
                              , conn     :: Connection
                              , threadID :: Maybe ThreadId
@@ -62,6 +64,7 @@ newBaseClient sock agentType = do
   let bc = BaseClient { conn = conn', agents = agents', threadID = Nothing }
 
   threadID' <- forkIO $ forever $ mainLoop bc
+  errorM "Periodic.BaseClient" "Connected to periodic task system"
   return bc { threadID = Just threadID' }
 
 addAgent :: BaseClient -> Agent -> IO ()
@@ -100,9 +103,8 @@ close (BaseClient { threadID = tid, conn = c }) = do
 mainLoop :: BaseClient -> IO ()
 mainLoop bc = do
   rt <- receive (conn bc)
-  print rt
   case rt of
-    Left e   -> print e
+    Left e   -> errorM "Periodic.BaseClient" $ B.unpack e
     Right pl -> writePayload bc (parsePayload pl)
 
 
