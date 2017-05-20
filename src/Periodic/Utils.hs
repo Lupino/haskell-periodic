@@ -32,7 +32,7 @@ parsePayload = go . B.breakSubstring nullChar
 
         go1 :: B.ByteString -> B.ByteString -> Payload
         go1 pid x | B.length x > 3 = (payload pid (cmd x)) { payloadData = B.drop 3 x }
-                  | otherwise      = payload pid (cmd x)
+                  | otherwise      = (payload pid Noop) { payloadData = x }
 
 
         cmd :: B.ByteString -> Command

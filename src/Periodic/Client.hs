@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Client
   (
@@ -11,13 +12,15 @@ module Periodic.Client
   , removeJob_
   , removeJob
   , dropFunc
+  , dump
+  , load
   , close
   , Job (..)
   , job
   ) where
 
 import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B (empty)
+import qualified Data.ByteString.Char8 as B (empty, hGet, hPut, length)
 import           Data.ByteString.Lazy  (toStrict)
 import           Network               (HostName, PortID)
 import           Periodic.Agent        (Agent, receive, send)
@@ -30,6 +33,12 @@ import           Data.Aeson            (ToJSON (..), encode, object, (.=))
 import           Data.Int              (Int64)
 
 import           Data.UnixTime
+
+import           Control.Exception     (SomeException, catch)
+import           Control.Monad         (forever, void, when)
+import           GHC.IO.Handle         (Handle)
+import           Periodic.Utils        (makeHeader, parseHeader)
+import           System.IO.Error       (ioError, userError)
 
 type Client = BaseClient
 
@@ -97,3 +106,34 @@ isSuccess :: Agent -> IO Bool
 isSuccess agent = do
   ret <- receive agent
   return $ payloadCMD ret == Success
+
+dump :: Client -> Handle -> IO ()
+dump c h = withAgent c $ \agent -> do
+  send agent Dump B.empty
+  catch (forever $ go agent) $ \(e :: SomeException) -> return ()
+
+  where go :: Agent -> IO ()
+        go agent = do
+          ret <- payloadData <$> receive agent
+          if ret == "EOF" then ioError $ userError "eof"
+                          else putData ret
+
+        putData :: ByteString -> IO ()
+        putData dat = do
+          B.hPut h . makeHeader $ B.length dat
+          B.hPut h dat
+
+load :: Client -> Handle -> IO ()
+load c h = withAgent c $ \agent -> do
+  catch (forever $ go agent) $ \(e :: SomeException) -> return ()
+
+  where go :: Agent -> IO ()
+        go agent = do
+          header <- B.hGet h 4
+          if header == B.empty then ioError $ userError "eof"
+                               else pushData agent $ parseHeader header
+
+        pushData :: Agent -> Int -> IO ()
+        pushData agent len = do
+          dat <- B.hGet h len
+          send agent Load dat
