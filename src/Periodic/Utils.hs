@@ -28,12 +28,15 @@ parsePayload :: B.ByteString -> Payload
 parsePayload = go . B.breakSubstring nullChar
   where go :: (B.ByteString, B.ByteString) -> Payload
         go (pid, xs) | B.null xs = payload pid Unknown
-                     | otherwise = go1 pid (B.drop 2 xs)
+                     | otherwise = go1 pid (B.breakSubstring nullChar $ B.drop 2 xs)
 
-        go1 :: B.ByteString -> B.ByteString -> Payload
-        go1 pid x | B.length x > 3 = (payload pid (cmd x)) { payloadData = B.drop 3 x }
-                  | otherwise      = (payload pid Noop) { payloadData = x }
+        go1 :: B.ByteString -> (B.ByteString, B.ByteString) -> Payload
+        go1 pid (x, xs) | B.length x == 1 = (payload pid (cmd x)) { payloadData = trim xs }
+                        | otherwise       = (payload pid Noop) { payloadData = x }
 
+        trim :: B.ByteString -> B.ByteString
+        trim xs | B.null xs = B.empty
+                | otherwise = B.drop 2 xs
 
         cmd :: B.ByteString -> Command
         cmd = toEnum . fromEnum . B.head
