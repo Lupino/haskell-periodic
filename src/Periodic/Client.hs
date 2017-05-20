@@ -6,13 +6,14 @@ module Periodic.Client
     Client
   , newClient
   , ping
+  , submitJob_
   , submitJob
+  , removeJob_
   , removeJob
   , dropFunc
   , close
   , Job (..)
   , job
-  , job'
   ) where
 
 import           Data.ByteString.Char8 (ByteString)
@@ -57,15 +58,6 @@ job func name = Job { workload = ""
                     , ..
                     }
 
-job' :: String -> String -> Int64 -> IO Job
-job' func name later = do
-  schedAt <- (+later) . read . show . toEpochTime <$> getUnixTime
-
-  return Job { workload = ""
-             , timeout = 0
-             , ..
-             }
-
 newClient :: HostName -> PortID -> IO Client
 newClient host portID = do
   sock <- connectTo host portID
@@ -77,20 +69,29 @@ ping c = withAgent c $ \agent -> do
   ret <- receive agent
   return $ payloadCMD ret == Pong
 
-submitJob :: Client -> Job -> IO Bool
-submitJob c j = withAgent c $ \agent -> do
+submitJob_ :: Client -> Job -> IO Bool
+submitJob_ c j = withAgent c $ \agent -> do
   send agent SubmitJob (toStrict $ encode j)
   isSuccess agent
+
+submitJob :: Client -> String -> String -> Int64 -> IO Bool
+submitJob c func name later = do
+
+  schedAt <- (+later) . read . show . toEpochTime <$> getUnixTime
+  submitJob_ c $ Job { workload = "", timeout = 0, .. }
 
 dropFunc :: Client -> ByteString -> IO Bool
 dropFunc c func = withAgent c $ \agent -> do
   send agent DropFunc func
   isSuccess agent
 
-removeJob :: Client -> Job -> IO Bool
-removeJob c j = withAgent c $ \agent -> do
+removeJob_ :: Client -> Job -> IO Bool
+removeJob_ c j = withAgent c $ \agent -> do
   send agent RemoveJob (toStrict $ encode j)
   isSuccess agent
+
+removeJob :: Client -> String -> String -> IO Bool
+removeJob c f n = removeJob_ c $ job f n
 
 isSuccess :: Agent -> IO Bool
 isSuccess agent = do
