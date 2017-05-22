@@ -23,7 +23,7 @@ import           Periodic.BaseClient     (BaseClient, connectTo, newBaseClient,
 import qualified Periodic.BaseClient     as BC (close)
 import           Periodic.Job            (Job, func, name, newJob, workFail)
 import           Periodic.Types          (ClientType (TypeWorker), Command (..),
-                                          Payload (..))
+                                          Error, Payload (..))
 
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HM (delete, empty, insert, lookup)
@@ -33,9 +33,9 @@ import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.QSem
 import           Control.Exception       (SomeException, bracket_, catch,
                                           handle)
+import           Control.Exception       (throwIO)
 import           Control.Monad           (forever, void, when)
 import           Data.Maybe              (fromJust, isJust)
-import           System.IO.Error         (eofErrorType, ioError, mkIOError)
 
 import           System.Log.Logger       (errorM)
 
@@ -74,7 +74,7 @@ grabJob w@(Worker { bc = c }) = withAgent c $ \agent -> do
   pl <- receive agent
   case payloadCMD pl of
     JobAssign -> return . newJob c $ payloadData pl
-    Noop      -> ioError $ mkIOError eofErrorType "socket" Nothing Nothing
+    Noop      -> throwIO $ payloadError pl
     _         -> grabJob w
 
 addFunc :: Worker -> ByteString -> (Job -> IO ()) -> IO ()
@@ -91,7 +91,7 @@ close :: Worker -> IO ()
 close (Worker { bc = c }) = BC.close c
 
 work :: Worker -> Int -> IO ()
-work w size = handle (\(e :: SomeException) -> close w) $ do
+work w size = handle (\(e :: Error) -> close w) $ do
   sem <- newQSem size
   forever $ do
     job <- grabJob w

@@ -25,10 +25,10 @@ import           Periodic.Connection   (Connection, newClientConn, receive,
                                         send)
 
 import qualified Periodic.Connection   as Conn (close)
-import           Periodic.Types        (ClientType, Payload (..), noop,
-                                        nullChar)
+import           Periodic.Types        (ClientType, Error (..), Payload (..),
+                                        noopError, nullChar)
 
-import           Control.Exception     (bracket, bracketOnError, throwIO)
+import           Control.Exception     (bracket, bracketOnError, throwIO, try)
 import qualified Control.Exception     as Exception
 import           Data.HashMap.Strict   (HashMap)
 import qualified Data.HashMap.Strict   as HM (delete, elems, empty, insert,
@@ -102,18 +102,19 @@ close (BaseClient { threadID = tid, conn = c }) = do
   when (isJust tid) $ killThread (fromJust tid)
   Conn.close c
 
-noopAgent :: BaseClient -> IO ()
-noopAgent bc = do
+noopAgent :: BaseClient -> Error -> IO ()
+noopAgent bc e = do
    v <- atomicModifyIORef' (agents bc) $ \v -> (v, HM.elems v)
-   mapM_ (flip feed noop) v
+   mapM_ (flip feed (noopError e)) v
 
 
 mainLoop :: BaseClient -> IO ()
 mainLoop bc = do
-  rt <- receive (conn bc)
-  case rt of
-    Left e   -> noopAgent bc
-    Right pl -> writePayload bc (parsePayload pl)
+  e <- try $ receive (conn bc)
+  case e of
+    Left SocketClosed  -> noopAgent bc SocketClosed
+    Left MagicNotMatch -> noopAgent bc MagicNotMatch
+    Right pl           -> writePayload bc (parsePayload pl)
 
 
 -- Returns the first action from a list which does not throw an exception.

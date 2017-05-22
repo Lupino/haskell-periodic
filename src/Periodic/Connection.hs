@@ -20,7 +20,10 @@ import           Network.Socket            (Socket)
 import qualified Network.Socket            as Socket (close)
 import           Network.Socket.ByteString (recv, sendAll)
 
-import           Periodic.Utils            (makeHeader, parseHeader)
+import           Control.Exception         (throwIO)
+import           Control.Monad             (when)
+import           Periodic.Types            (Error (..))
+import           Periodic.Utils            (makeHeader, maxLength, parseHeader)
 
 data Connection = Connection { sock          :: Socket
                              , requestMagic  :: B.ByteString
@@ -35,12 +38,6 @@ magicREQ = "\x00REQ"
 magicRES :: B.ByteString
 magicRES = "\x00RES"
 
-errorMagicNotMatch :: B.ByteString
-errorMagicNotMatch = "Magic not match"
-
-errorSocketClosed :: B.ByteString
-errorSocketClosed = "socket is closed"
-
 newConn :: Socket -> B.ByteString -> B.ByteString -> IO Connection
 newConn sock requestMagic responseMagic = do
   readLock <- L.new
@@ -53,21 +50,21 @@ newServerConn sock = newConn sock magicREQ magicRES
 newClientConn :: Socket -> IO Connection
 newClientConn sock = newConn sock magicRES magicREQ
 
-receive :: Connection -> IO (Either B.ByteString B.ByteString)
+receive :: Connection -> IO B.ByteString
 receive (Connection {..}) = do
   L.with readLock $ do
     magic <- recv sock 4
     case magic == requestMagic of
-      False -> if B.null magic then return $ Left errorSocketClosed
-                               else return $ Left errorMagicNotMatch
+      False -> if B.null magic then throwIO SocketClosed
+                               else throwIO MagicNotMatch
       True -> do
         header <- recv sock 4
-        dat <- recv sock (parseHeader header)
-        return $ Right dat
+        recv sock (parseHeader header)
 
 send :: Connection -> B.ByteString -> IO ()
 send (Connection {..}) dat = do
   L.with writeLock $ do
+    when (B.length dat > maxLength) $ throwIO DataTooLarge
     sendAll sock responseMagic
     sendAll sock (makeHeader $ B.length dat)
     sendAll sock dat

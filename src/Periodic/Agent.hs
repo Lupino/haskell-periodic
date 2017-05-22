@@ -13,11 +13,13 @@ module Periodic.Agent
   ) where
 
 import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
+import           Control.Exception       (throwIO)
 import           Data.ByteString.Char8   (ByteString)
 import qualified Data.ByteString.Char8   as B (concat, cons, empty, null)
 import           Periodic.Connection     (Connection)
 import qualified Periodic.Connection     as Conn (send)
-import           Periodic.Types          (Command, Payload, nullChar)
+import           Periodic.Types          (Command, Error (..),
+                                          Payload (payloadError), nullChar)
 
 data Agent = Agent { _id     :: ByteString
                    , _conn   :: Connection
@@ -36,7 +38,10 @@ feed :: Agent -> Payload -> IO ()
 feed (Agent { _reader = r }) pl = putMVar r pl
 
 receive :: Agent -> IO Payload
-receive (Agent { _reader = r }) = takeMVar r
+receive (Agent { _reader = r }) = do
+  pl <- takeMVar r
+  if payloadError pl == EmptyError then return pl
+                                   else throwIO $ payloadError pl
 
 send_ :: Agent -> ByteString -> IO ()
 send_ (Agent { _id = aid, _conn = conn }) pl =

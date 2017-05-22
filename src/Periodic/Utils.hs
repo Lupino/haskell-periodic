@@ -3,6 +3,7 @@ module Periodic.Utils
     makeHeader
   , parseHeader
   , parsePayload
+  , maxLength
   ) where
 
 import           Data.Bits             (shiftL, shiftR, (.&.), (.|.))
@@ -17,6 +18,9 @@ makeHeader :: Int -> B.ByteString
 makeHeader x = c 24 `B.cons` c 16 `B.cons` c 8 `B.cons` c 0 `B.cons` B.empty
   where c :: Int -> Char
         c i = toEnum $ x `shiftR` i .&. 0xff
+
+maxLength :: Int
+maxLength = 0x7fffffff
 
 parseHeader :: B.ByteString -> Int
 parseHeader = go [24, 16, 8, 0]

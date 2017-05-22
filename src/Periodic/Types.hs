@@ -7,11 +7,13 @@ module Periodic.Types
   , ClientType (..)
   , Payload (..)
   , payload
-  , noop
+  , Error (..)
+  , noopError
   ) where
 
-import           Data.ByteString (ByteString, empty)
-import           GHC.Enum        (boundedEnumFrom, boundedEnumFromThen)
+import           Control.Exception (Exception)
+import           Data.ByteString   (ByteString, empty)
+import           GHC.Enum          (boundedEnumFrom, boundedEnumFromThen)
 
 data Command = Noop -- server
              -- GrabJob client ask a job
@@ -177,17 +179,28 @@ instance Enum ClientType where
   enumFrom     = boundedEnumFrom
   enumFromThen = boundedEnumFromThen
 
-data Payload = Payload { payloadID   :: ByteString
-                       , payloadCMD  :: Command
-                       , payloadData :: ByteString
+data Payload = Payload { payloadID    :: ByteString
+                       , payloadCMD   :: Command
+                       , payloadData  :: ByteString
+                       , payloadError :: Error
                        }
   deriving (Eq, Show)
 
 payload :: ByteString -> Command -> Payload
-payload pid cmd = Payload { payloadID   = pid
-                          , payloadCMD  = cmd
-                          , payloadData = empty
+payload pid cmd = Payload { payloadID    = pid
+                          , payloadCMD   = cmd
+                          , payloadData  = empty
+                          , payloadError = EmptyError
                           }
 
-noop :: Payload
-noop = payload empty Noop
+noopError :: Error -> Payload
+noopError e = (payload empty Noop) { payloadError = e }
+
+data Error = MagicNotMatch
+           | SocketClosed
+           | DataTooLarge
+           | EmptyError
+
+  deriving (Show, Eq, Ord)
+
+instance Exception Error

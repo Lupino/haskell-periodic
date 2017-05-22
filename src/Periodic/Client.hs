@@ -27,18 +27,18 @@ import           Periodic.Agent        (Agent, receive, send)
 import           Periodic.BaseClient   (BaseClient, close, connectTo,
                                         newBaseClient, withAgent)
 import           Periodic.Types        (ClientType (TypeClient), Command (..),
-                                        Payload (..))
+                                        Error (EmptyError), Payload (..))
 
 import           Data.Aeson            (ToJSON (..), encode, object, (.=))
 import           Data.Int              (Int64)
 
 import           Data.UnixTime
 
-import           Control.Exception     (SomeException, catch)
+import           Control.Exception     (catch)
+import           Control.Exception     (throwIO)
 import           Control.Monad         (forever, void, when)
 import           GHC.IO.Handle         (Handle)
 import           Periodic.Utils        (makeHeader, parseHeader)
-import           System.IO.Error       (ioError, userError)
 
 type Client = BaseClient
 
@@ -110,12 +110,12 @@ isSuccess agent = do
 dump :: Client -> Handle -> IO ()
 dump c h = withAgent c $ \agent -> do
   send agent Dump B.empty
-  catch (forever $ go agent) $ \(e :: SomeException) -> return ()
+  catch (forever $ go agent) $ \(e :: Error) -> return ()
 
   where go :: Agent -> IO ()
         go agent = do
           ret <- payloadData <$> receive agent
-          if ret == "EOF" then ioError $ userError "eof"
+          if ret == "EOF" then throwIO EmptyError
                           else putData ret
 
         putData :: ByteString -> IO ()
@@ -125,12 +125,12 @@ dump c h = withAgent c $ \agent -> do
 
 load :: Client -> Handle -> IO ()
 load c h = withAgent c $ \agent -> do
-  catch (forever $ go agent) $ \(e :: SomeException) -> return ()
+  catch (forever $ go agent) $ \(e :: Error) -> return ()
 
   where go :: Agent -> IO ()
         go agent = do
           header <- B.hGet h 4
-          if header == B.empty then ioError $ userError "eof"
+          if header == B.empty then throwIO EmptyError
                                else pushData agent $ parseHeader header
 
         pushData :: Agent -> Int -> IO ()
