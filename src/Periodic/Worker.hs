@@ -31,8 +31,7 @@ import           Data.IORef              (IORef, atomicModifyIORef', newIORef)
 
 import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.QSem
-import           Control.Exception       (SomeException, bracket_, catch,
-                                          handle)
+import           Control.Exception       (SomeException, catch, handle)
 import           Control.Exception       (throwIO)
 import           Control.Monad           (forever, void, when)
 import           Data.Maybe              (fromJust, isJust)
@@ -98,7 +97,9 @@ work w size = handle (\(e :: Error) -> close w) $ do
     task <- getTask w (func job)
     case task of
       Nothing -> removeFunc w (func job)
-      Just task -> void . forkIO $ bracket_ (waitQSem sem) (signalQSem sem) $ runTask task job
+      Just task -> do
+        waitQSem sem
+        void . forkIO $ runTask task job >> signalQSem sem
 
 runTask :: Task -> Job -> IO ()
 runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
