@@ -25,14 +25,17 @@ import           Data.ByteString.Lazy  (toStrict)
 import           Network               (HostName, PortID)
 import           Periodic.Agent        (Agent, receive, send)
 import           Periodic.BaseClient   (BaseClient, close, connectTo,
-                                        newBaseClient, withAgent)
+                                        newBaseClient, noopAgent, withAgent)
 import           Periodic.Types        (ClientType (TypeClient), Command (..),
-                                        Error (EmptyError), Payload (..))
+                                        Error (EmptyError, SocketClosed),
+                                        Payload (..))
 
 import           Data.Aeson            (ToJSON (..), encode, object, (.=))
 import           Data.Int              (Int64)
 
 import           Data.UnixTime
+
+import           Control.Concurrent    (forkIO, threadDelay)
 
 import           Control.Exception     (catch)
 import           Control.Exception     (throwIO)
@@ -70,7 +73,9 @@ job func name = Job { workload = ""
 newClient :: HostName -> PortID -> IO Client
 newClient host portID = do
   sock <- connectTo host portID
-  newBaseClient sock TypeClient
+  c <- newBaseClient sock TypeClient
+  void $ forkIO $ forever $ checkHealth c
+  return c
 
 ping :: Client -> IO Bool
 ping c = withAgent c $ \agent -> do
@@ -137,3 +142,9 @@ load c h = withAgent c $ \agent -> do
         pushData agent len = do
           dat <- B.hGet h len
           send agent Load dat
+
+checkHealth :: Client -> IO ()
+checkHealth c = do
+  ret <- ping c
+  if ret then threadDelay 1000
+         else noopAgent c SocketClosed

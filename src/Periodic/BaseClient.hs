@@ -15,6 +15,7 @@ module Periodic.BaseClient
   , removeAgent
   , newAgent
   , withAgent
+  , noopAgent
   , connectTo
   , close
   ) where

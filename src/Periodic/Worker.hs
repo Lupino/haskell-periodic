@@ -19,17 +19,17 @@ import qualified Data.ByteString.Char8   as B (empty, unpack)
 import           Network                 (HostName, PortID)
 import           Periodic.Agent          (receive, send)
 import           Periodic.BaseClient     (BaseClient, connectTo, newBaseClient,
-                                          withAgent)
+                                          noopAgent, withAgent)
 import qualified Periodic.BaseClient     as BC (close)
 import           Periodic.Job            (Job, func, name, newJob, workFail)
 import           Periodic.Types          (ClientType (TypeWorker), Command (..),
-                                          Error, Payload (..))
+                                          Error (SocketClosed), Payload (..))
 
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HM (delete, empty, insert, lookup)
 import           Data.IORef              (IORef, atomicModifyIORef', newIORef)
 
-import           Control.Concurrent      (forkIO)
+import           Control.Concurrent      (forkIO, threadDelay)
 import           Control.Concurrent.QSem
 import           Control.Exception       (SomeException, catch, handle)
 import           Control.Exception       (throwIO)
@@ -112,3 +112,9 @@ runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
                                     , show e
                                     ]
   workFail job
+
+checkHealth :: Worker -> IO ()
+checkHealth w = do
+  ret <- ping w
+  if ret then threadDelay 1000
+         else noopAgent (bc w) SocketClosed
