@@ -18,42 +18,46 @@ module Periodic.Server.Scheduler
   , status
   ) where
 
-import           Control.Concurrent.Suspend.Lifted (msDelay)
-import           Control.Concurrent.Timer
-import           Control.Monad                     (void, when)
-import           Data.ByteString.Char8             (ByteString)
-import qualified Data.ByteString.Char8             as B (concat)
-import           Data.Int                          (Int64)
+import qualified Control.Concurrent.Lock   as L (Lock, new, with)
+import           Control.Monad             (void, when)
+import           Data.ByteString.Char8     (ByteString)
+import qualified Data.ByteString.Char8     as B (concat)
+import           Data.Int                  (Int64)
 import           Data.UnixTime
-import           Periodic.Server.Agent             (Agent, aAlive, send)
-import           Periodic.Server.FuncList          (FuncList, FuncName,
-                                                    newFuncList)
-import qualified Periodic.Server.FuncList          as FL
+import           Periodic.Server.Agent     (Agent, aAlive, send)
+import           Periodic.Server.FuncList  (FuncList, FuncName, newFuncList)
+import qualified Periodic.Server.FuncList  as FL
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
-import           Periodic.Server.Job               (Job (..), JobHandle,
-                                                    jHandle, unparseJob)
-import           Periodic.Server.JobQueue          (JobQueue)
-import qualified Periodic.Server.JobQueue          as JQ
-import           Periodic.Types                    (Command (JobAssign),
-                                                    nullChar)
+import           Periodic.Server.Job       (Job (..), JobHandle, jHandle,
+                                            unparseJob)
+import           Periodic.Server.JobQueue  (JobQueue)
+import qualified Periodic.Server.JobQueue  as JQ
+import           Periodic.Types            (Command (JobAssign), nullChar)
 
-import           Control.DeepSeq                   (force)
+import           Control.Concurrent        (ThreadId, forkIO, killThread,
+                                            threadDelay)
+import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
+import           Data.Maybe                (fromJust, isJust)
 
-data Scheduler = Scheduler { sFuncStatList :: FuncStatList
-                           , sGrabQueue    :: GrabQueue
-                           , sJobQueue     :: JobQueue
-                           , sProcessJob   :: FuncList Job
-                           , sMainTimer    :: TimerIO
+data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
+                           , sGrabQueue     :: GrabQueue
+                           , sJobQueue      :: JobQueue
+                           , sProcessJob    :: FuncList Job
+                           , sMainTimer     :: IORef (Maybe ThreadId)
+                           , sMainTimerLock :: L.Lock
+                           , sMainTimerWait :: IORef Bool
                            }
 
 newScheduler :: IO Scheduler
 newScheduler = do
-  sFuncStatList <- newFuncList
-  sGrabQueue    <- newFuncList
-  sJobQueue     <- newFuncList
-  sProcessJob   <- newFuncList
-  sMainTimer    <- newTimer
+  sFuncStatList  <- newFuncList
+  sGrabQueue     <- newFuncList
+  sJobQueue      <- newFuncList
+  sProcessJob    <- newFuncList
+  sMainTimer     <- newIORef Nothing
+  sMainTimerWait <- newIORef False
+  sMainTimerLock <- L.new
   let sched = Scheduler {..}
 
   nextMainTimer sched 1
@@ -135,13 +139,15 @@ dropFunc sched@(Scheduler {..}) n = do
                            FL.delete sJobQueue n
 
 pushGrab :: Scheduler -> FuncList Bool -> FuncList Bool -> Agent -> IO ()
-pushGrab (Scheduler {..}) = pushAgent sGrabQueue
+pushGrab sched@(Scheduler {..}) fl jh ag = do
+  pushAgent sGrabQueue fl jh ag
+  nextMainTimer sched 1
 
 processJob :: Scheduler -> IO ()
 processJob sched@(Scheduler {..}) = do
   st <- getFirstSched sFuncStatList sGrabQueue
   case st of
-    Nothing -> nextMainTimer sched 1000
+    Nothing -> nextMainTimer sched 10000
     Just st' -> do
       now <- read . show . toEpochTime <$> getUnixTime
       if now < (sSchedAt st') then nextMainTimer sched (sSchedAt st' - now)
@@ -187,7 +193,17 @@ assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
                                                       ]
 
 nextMainTimer :: Scheduler -> Int64 -> IO ()
-nextMainTimer sched@(Scheduler {..}) t = void $ oneShotStart sMainTimer (processJob sched) (msDelay t)
+nextMainTimer sched@(Scheduler {..}) t = L.with sMainTimerLock $ do
+  threadID <- atomicModifyIORef' sMainTimer (\v -> (v, v))
+  wait <- atomicModifyIORef' sMainTimerWait (\v -> (v, v))
+  threadID' <- forkIO $ do
+    atomicModifyIORef' sMainTimerWait (\v -> (True, ()))
+    threadDelay $ fromIntegral t * 1000
+    atomicModifyIORef' sMainTimerWait (\v -> (False, ()))
+    processJob sched
+
+  atomicModifyIORef' sMainTimer (\v -> (Just threadID', ()))
+  when (isJust threadID && wait) $ killThread (fromJust threadID)
 
 failJob :: Scheduler -> JobHandle -> IO ()
 failJob sched@(Scheduler {..}) jh = do

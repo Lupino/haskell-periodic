@@ -28,6 +28,7 @@ data Job = Job { jSchedAt  :: Int64
                , jWorkload :: ByteString
                , jCount    :: Int
                }
+  deriving (Show)
 
 instance FromJSON Job where
   parseJSON = withObject "Job" $ \o -> do

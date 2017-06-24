@@ -31,24 +31,28 @@ import           Periodic.Types            (Command (..), Error (..),
                                             Payload (..), nullChar)
 import           Periodic.Utils            (parsePayload)
 
+import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
+
 data Client = Client { cConn     :: Connection
                      , cSched    :: Scheduler
-                     , cThreadID :: Maybe ThreadId
+                     , cThreadID :: IORef (Maybe ThreadId)
                      }
 
 newClient :: Connection -> Scheduler -> IO Client
 newClient cConn cSched = do
-  let c = Client { cThreadID = Nothing, .. }
+  cThreadID <- newIORef Nothing
+  let c = Client {..}
 
   threadID <- forkIO $ forever $ mainLoop c
-  return c { cThreadID = Just threadID }
+  atomicModifyIORef' cThreadID (\v -> (Just threadID, ()))
+  return c
 
 mainLoop :: Client -> IO ()
 mainLoop c@(Client {..}) = do
   e <- try $ receive cConn
   case e of
-    Left SocketClosed  -> cClose c >> throwIO SocketClosed
-    Left MagicNotMatch -> cClose c >> throwIO MagicNotMatch
+    Left SocketClosed  -> cClose c
+    Left MagicNotMatch -> cClose c
     Right pl           -> handlePayload c (parsePayload pl)
 
 handlePayload :: Client -> Payload -> IO ()
@@ -106,7 +110,9 @@ handleRemoveJob sc ag pl = do
 
 handleDump :: Scheduler -> Agent -> IO ()
 handleDump sc ag = do
+  print "dump"
   jobs <- dumpJob sc
+  print $ show jobs
   send_ ag . toStrict . encode $ object [ "jobs" .= jobs ]
   send_ ag "EOF"
 
@@ -126,5 +132,6 @@ handleLoad sc pl = do
 
 cClose :: Client -> IO ()
 cClose (Client { .. }) = do
-  when (isJust cThreadID) $ killThread (fromJust cThreadID)
   close cConn
+  threadID <- atomicModifyIORef' cThreadID (\v -> (v, v))
+  when (isJust threadID) $ killThread (fromJust threadID)

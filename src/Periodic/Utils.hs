@@ -43,4 +43,6 @@ parsePayload = go . B.breakSubstring nullChar
                 | otherwise = B.drop 2 xs
 
         cmd :: B.ByteString -> Command
-        cmd = toEnum . fromEnum . B.head
+        cmd bs = if v > maxBound || v < minBound then Unknown
+                                                 else toEnum v
+          where v = fromEnum $ B.head bs

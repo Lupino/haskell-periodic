@@ -32,7 +32,7 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
 data Worker = Worker { wConn     :: Connection
                      , wSched    :: Scheduler
-                     , wThreadID :: Maybe ThreadId
+                     , wThreadID :: IORef (Maybe ThreadId)
                      , wFuncList :: FuncList Bool
                      , wJobQueue :: FuncList Bool
                      }
@@ -41,17 +41,20 @@ newWorker :: Connection -> Scheduler -> IO Worker
 newWorker wConn wSched = do
   wFuncList <- newFuncList
   wJobQueue <- newFuncList
-  let w = Worker { wThreadID = Nothing, .. }
+  wThreadID <- newIORef Nothing
+  let w = Worker { .. }
 
   threadID <- forkIO $ forever $ mainLoop w
-  return w { wThreadID = Just threadID }
+  atomicModifyIORef' wThreadID (\v -> (Just threadID, ()))
+  return w
+
 
 mainLoop :: Worker -> IO ()
 mainLoop w@(Worker {..}) = do
   e <- try $ receive wConn
   case e of
-    Left SocketClosed  -> wClose w >> throwIO SocketClosed
-    Left MagicNotMatch -> wClose w >> throwIO MagicNotMatch
+    Left SocketClosed  -> wClose w
+    Left MagicNotMatch -> wClose w
     Right pl           -> handlePayload w (parsePayload pl)
 
 handlePayload :: Worker -> Payload -> IO ()
@@ -115,7 +118,8 @@ handleCantDo sched fl fn = do
 
 wClose :: Worker -> IO ()
 wClose (Worker { .. }) = do
-  when (isJust wThreadID) $ killThread (fromJust wThreadID)
   mapM_ (failJob wSched) =<< FL.keys wJobQueue
   mapM_ (removeFunc wSched) =<< FL.keys wFuncList
   close wConn
+  threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
+  when (isJust threadID) $ killThread (fromJust threadID)
