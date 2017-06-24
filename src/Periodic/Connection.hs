@@ -12,6 +12,8 @@ module Periodic.Connection
   , receive
   , send
   , close
+  , connected
+  , connid
   ) where
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
@@ -22,14 +24,18 @@ import           Network.Socket.ByteString (recv, sendAll)
 
 import           Control.Exception         (throwIO)
 import           Control.Monad             (when)
+import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 import           Periodic.Types            (Error (..))
 import           Periodic.Utils            (makeHeader, maxLength, parseHeader)
+import           System.Entropy            (getEntropy)
 
 data Connection = Connection { sock          :: Socket
                              , requestMagic  :: B.ByteString
                              , responseMagic :: B.ByteString
                              , readLock      :: L.Lock
                              , writeLock     :: L.Lock
+                             , status        :: IORef Bool
+                             , connid        :: B.ByteString
                              }
 
 magicREQ :: B.ByteString
@@ -42,6 +48,8 @@ newConn :: Socket -> B.ByteString -> B.ByteString -> IO Connection
 newConn sock requestMagic responseMagic = do
   readLock <- L.new
   writeLock <- L.new
+  status <- newIORef True
+  connid <- getEntropy 16
   return Connection {..}
 
 newServerConn :: Socket -> IO Connection
@@ -51,12 +59,14 @@ newClientConn :: Socket -> IO Connection
 newClientConn sock = newConn sock magicRES magicREQ
 
 receive :: Connection -> IO B.ByteString
-receive (Connection {..}) = do
+receive c@(Connection {..}) = do
   L.with readLock $ do
     magic <- recv sock 4
     case magic == requestMagic of
-      False -> if B.null magic then throwIO SocketClosed
-                               else throwIO MagicNotMatch
+      False -> do
+        setStatus c False
+        if B.null magic then throwIO SocketClosed
+                        else throwIO MagicNotMatch
       True -> do
         header <- recv sock 4
         recv sock (parseHeader header)
@@ -69,5 +79,13 @@ send (Connection {..}) dat = do
     sendAll sock (makeHeader $ B.length dat)
     sendAll sock dat
 
+connected :: Connection -> IO Bool
+connected (Connection {..}) = atomicModifyIORef' status $ \v -> (v, v)
+
+setStatus :: Connection -> Bool -> IO ()
+setStatus (Connection {..}) v' = atomicModifyIORef' status $ \v -> (v', ())
+
 close :: Connection -> IO ()
-close (Connection { .. }) = Socket.close sock
+close c@(Connection { .. }) = do
+  setStatus c False
+  Socket.close sock

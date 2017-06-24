@@ -41,6 +41,8 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps:
 - concurrent-extra-0.7.0.10
+- timers-0.2.0.3
+- suspend-0.2.0.0
 
 # Override default flag values for local packages and extra-deps
 flags: {}

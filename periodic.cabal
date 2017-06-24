@@ -23,6 +23,16 @@ library
                      , Periodic.Client
                      , Periodic.Job
                      , Periodic.Worker
+
+                     , Periodic.Server.Client
+                     , Periodic.Server.Scheduler
+                     , Periodic.Server.Job
+                     , Periodic.Server.Agent
+                     , Periodic.Server.Worker
+                     , Periodic.Server.FuncList
+                     , Periodic.Server.GrabQueue
+                     , Periodic.Server.FuncStat
+                     , Periodic.Server.JobQueue
   build-depends:       base >= 4.7 && < 5
                      , bytestring
                      , network
@@ -32,6 +42,11 @@ library
                      , aeson
                      , hslogger
                      , unix-time
+                     , psqueues
+                     , timers
+                     , suspend
+                     , deepseq
+                     , text
   default-language:    Haskell2010
 
 test-suite periodic-test
