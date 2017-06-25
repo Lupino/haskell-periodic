@@ -17,6 +17,7 @@ import qualified Data.ByteString           as B (head)
 import           Periodic.Connection       (close, newServerConn, receive)
 import           Periodic.Server.Client    (newClient)
 import           Periodic.Server.Scheduler
+import           Periodic.Server.Store     (newStore)
 import           Periodic.Server.Worker    (newWorker)
 import           Periodic.Types            (ClientType (..), Error (..))
 
@@ -44,10 +45,11 @@ listenOn host port = do
           return sock
       )
 
-startServer :: Maybe String -> String -> IO ()
-startServer host port = do
+startServer :: FilePath -> Maybe String -> String -> IO ()
+startServer storePath host port = do
   sock <- listenOn host port
-  sched <- newScheduler
+  store <- newStore storePath
+  sched <- newScheduler store
 
   forever $ mainLoop sock sched
 

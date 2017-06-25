@@ -34,6 +34,7 @@ library
                      , Periodic.Server.GrabQueue
                      , Periodic.Server.FuncStat
                      , Periodic.Server.JobQueue
+                     , Periodic.Server.Store
   build-depends:       base >= 4.7 && < 5
                      , bytestring
                      , network
@@ -45,6 +46,10 @@ library
                      , unix-time
                      , psqueues
                      , text
+                     , acid-state
+                     , safecopy
+                     , mtl
+                     , containers
   default-language:    Haskell2010
 
 executable periodicd

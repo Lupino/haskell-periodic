@@ -10,6 +10,7 @@ module Periodic.Server.JobQueue
   , removeJob
   , memberJob
   , dumpJob
+  , dumpJobByFuncName
   , sizeJob
   ) where
 
@@ -63,6 +64,13 @@ dumpJob jq = concat . map go <$> elems jq
 
   where go :: SubJobQueue -> [Job]
         go sq = map (\(_, _, v) -> v) $ toList sq
+
+dumpJobByFuncName :: JobQueue -> FuncName -> IO [Job]
+dumpJobByFuncName jq n = do
+  q <- lookup jq n
+  case q of
+    Nothing -> return []
+    Just q' -> return $ map (\(_, _, v) -> v) $ toList q'
 
 sizeJob :: JobQueue -> FuncName -> IO Int
 sizeJob q n = go <$> lookup q n

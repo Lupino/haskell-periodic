@@ -40,6 +40,9 @@ import           Control.Concurrent        (ThreadId, forkIO, killThread,
 import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 import           Data.Maybe                (fromJust, isJust)
 
+import           Periodic.Server.Store     (Store)
+import qualified Periodic.Server.Store     as Store
+
 data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
                            , sGrabQueue     :: GrabQueue
                            , sJobQueue      :: JobQueue
@@ -47,10 +50,11 @@ data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
                            , sMainTimer     :: IORef (Maybe ThreadId)
                            , sMainTimerLock :: L.Lock
                            , sMainTimerWait :: IORef Bool
+                           , sStore         :: Store
                            }
 
-newScheduler :: IO Scheduler
-newScheduler = do
+newScheduler :: Store -> IO Scheduler
+newScheduler sStore = do
   sFuncStatList  <- newFuncList
   sGrabQueue     <- newFuncList
   sJobQueue      <- newFuncList
@@ -68,6 +72,7 @@ pushJob sched@(Scheduler {..}) job = do
   JQ.pushJob sJobQueue job
   size <- JQ.sizeJob sJobQueue n
   FL.alter sFuncStatList (updateFuncStat size) n
+  Store.insertJob sStore job
   nextMainTimer sched 1
 
   where n = jFuncName job
@@ -101,13 +106,12 @@ removeJob sched@(Scheduler {..}) job = do
 
     FL.adjust sFuncStatList update (jFuncName job)
 
+  Store.deleteJob sStore (jHandle job)
+
   nextMainTimer sched 1
 
 dumpJob :: Scheduler -> IO [Job]
-dumpJob (Scheduler {..}) = do
-  jobs <- JQ.dumpJob sJobQueue
-  jobs' <- FL.elems sProcessJob
-  return (jobs ++ jobs')
+dumpJob (Scheduler {..}) = Store.dumpJob sStore
 
 addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched@(Scheduler {..}) n = do
@@ -137,7 +141,9 @@ dropFunc sched@(Scheduler {..}) n = do
       if sWorker st' > 0 then return ()
                          else do
                            FL.delete sFuncStatList n
+                           jhs <- map jHandle <$> JQ.dumpJobByFuncName sJobQueue n
                            FL.delete sJobQueue n
+                           mapM_ (Store.deleteJob sStore) jhs
 
 pushGrab :: Scheduler -> FuncList Bool -> FuncList Bool -> Agent -> IO ()
 pushGrab sched@(Scheduler {..}) fl jh ag = do
@@ -231,7 +237,9 @@ doneJob (Scheduler {..}) jh = do
       let update v = v { sProcess = max (sProcess v - 1) 0
                        , sJob = max (sJob v - 1) 0
                        }
+
       FL.adjust sFuncStatList update (jFuncName job')
+      Store.deleteJob sStore jh
 
 schedLaterJob :: Scheduler -> JobHandle -> Int64 -> Int -> IO ()
 schedLaterJob sched@(Scheduler {..}) jh later step = do
