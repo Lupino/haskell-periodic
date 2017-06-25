@@ -64,6 +64,9 @@ newScheduler sStore = do
   sMainTimerLock <- L.new
   let sched = Scheduler {..}
 
+  jobs <- Store.dumpJob sStore
+  mapM_ (pushJob sched) jobs
+
   nextMainTimer sched 1
   return sched
 
