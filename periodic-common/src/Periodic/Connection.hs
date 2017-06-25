@@ -49,7 +49,7 @@ newConn sock requestMagic responseMagic = do
   readLock <- L.new
   writeLock <- L.new
   status <- newIORef True
-  connid <- getEntropy 16
+  connid <- getEntropy 4
   return Connection {..}
 
 newServerConn :: Socket -> IO Connection

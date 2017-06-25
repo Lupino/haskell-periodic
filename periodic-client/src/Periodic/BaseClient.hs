@@ -88,7 +88,7 @@ writePayload bc pl@(Payload { payloadID = pid }) = do
 
 newAgent :: BaseClient -> IO Agent
 newAgent bc = do
-  aid <- getEntropy 16
+  aid <- getEntropy 4
   if B.isInfixOf nullChar aid then newAgent bc
                               else done aid
 
