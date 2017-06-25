@@ -65,7 +65,7 @@ newScheduler sStore = do
   let sched = Scheduler {..}
 
   jobs <- Store.dumpJob sStore
-  mapM_ (pushJob sched) jobs
+  mapM_ (restoreJob sched) jobs
 
   nextMainTimer sched 1
   return sched
@@ -98,6 +98,20 @@ pushJob sched@(Scheduler {..}) job = do
 
         adjustStat :: FuncStat -> FuncStat
         adjustStat v = v { sSchedAt = min (jSchedAt job) (sSchedAt v) }
+
+restoreJob :: Scheduler -> Job -> IO ()
+restoreJob sched@(Scheduler {..}) job = do
+  JQ.pushJob sJobQueue job
+  size <- JQ.sizeJob sJobQueue fn
+  FL.alter sFuncStatList (updateStat size) fn
+
+  where fn = jFuncName job
+        updateStat :: Int -> Maybe FuncStat -> Maybe FuncStat
+        updateStat s Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
+        updateStat s (Just fs) = Just (fs { sJob = fromIntegral s
+                                          , sSchedAt = min (sSchedAt fs) (jSchedAt job)
+                                          })
+
 
 removeJob :: Scheduler -> Job -> IO ()
 removeJob sched@(Scheduler {..}) job = do
