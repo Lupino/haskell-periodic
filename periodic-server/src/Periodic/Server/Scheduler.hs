@@ -72,19 +72,32 @@ newScheduler sStore = do
 
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@(Scheduler {..}) job = do
-  JQ.pushJob sJobQueue job
-  size <- JQ.sizeJob sJobQueue n
-  FL.alter sFuncStatList (updateFuncStat size) n
-  Store.insertJob sStore job
+  exists <- Store.existsJob sStore jh
+  if exists then do
+    has <- JQ.memberJob sJobQueue fn jn
+    when has $ do
+      Store.insertJob sStore job
+      JQ.pushJob sJobQueue job
+      FL.adjust sFuncStatList adjustStat fn
+  else do
+    Store.insertJob sStore job
+    JQ.pushJob sJobQueue job
+    size <- JQ.sizeJob sJobQueue fn
+    FL.alter sFuncStatList (updateStat size) fn
+
   nextMainTimer sched 1
 
-  where n = jFuncName job
-        updateFuncStat :: Int -> Maybe FuncStat -> Maybe FuncStat
-        updateFuncStat s Nothing = Just ((funcStat n) { sJob = 1, sSchedAt = jSchedAt job })
-        updateFuncStat s (Just fs) = Just (fs { sJob = fromIntegral s
-                                              , sSchedAt = if sSchedAt fs > jSchedAt job  then jSchedAt job
-                                                                                          else sSchedAt fs
-                                              })
+  where fn = jFuncName job
+        jh = jHandle job
+        jn = jName job
+        updateStat :: Int -> Maybe FuncStat -> Maybe FuncStat
+        updateStat s Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
+        updateStat s (Just fs) = Just (fs { sJob = fromIntegral s
+                                          , sSchedAt = min (sSchedAt fs) (jSchedAt job)
+                                          })
+
+        adjustStat :: FuncStat -> FuncStat
+        adjustStat v = v { sSchedAt = min (jSchedAt job) (sSchedAt v) }
 
 removeJob :: Scheduler -> Job -> IO ()
 removeJob sched@(Scheduler {..}) job = do
@@ -92,7 +105,7 @@ removeJob sched@(Scheduler {..}) job = do
   when has $ do
     JQ.removeJob sJobQueue (jFuncName job) (jName job)
     minJob <- JQ.findMinJob sJobQueue (jFuncName job)
-    let update v = v { sJob = sJob v - 1
+    let update v = v { sJob = min (sJob v - 1) 0
                      , sSchedAt = case minJob of
                                     Nothing -> sSchedAt v
                                     Just mj -> jSchedAt mj
@@ -224,8 +237,7 @@ failJob sched@(Scheduler {..}) jh = do
       JQ.pushJob sJobQueue job'
       FL.delete sProcessJob jh
       let update v = v { sProcess = max (sProcess v - 1) 0
-                       , sSchedAt = if sSchedAt v > jSchedAt job' then jSchedAt job'
-                                                                  else sSchedAt v
+                       , sSchedAt = min (sSchedAt v) (jSchedAt job')
                        }
       FL.adjust sFuncStatList update (jFuncName job')
       nextMainTimer sched 1
@@ -251,12 +263,16 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
     Nothing -> return ()
     Just job' -> do
       nextSchedAt <- (+) later . read . show . toEpochTime <$> getUnixTime
-      JQ.pushJob sJobQueue (job' { jSchedAt = nextSchedAt, jCount = jCount job' + step })
+      let nextJob = job' { jSchedAt = nextSchedAt, jCount = jCount job' + step }
+
+      JQ.pushJob sJobQueue nextJob
+      Store.insertJob sStore nextJob
       FL.delete sProcessJob jh
+
       let update v = v { sProcess = max (sProcess v - 1) 0
-                       , sSchedAt = if sSchedAt v > nextSchedAt then nextSchedAt
-                                                                else sSchedAt v
+                       , sSchedAt = min (sSchedAt v) nextSchedAt
                        }
+
       FL.adjust sFuncStatList update (jFuncName job')
       nextMainTimer sched 1
 
