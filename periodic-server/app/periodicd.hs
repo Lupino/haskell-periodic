@@ -3,7 +3,6 @@ module Main
     main
   ) where
 
-import           Network            (PortID (..))
 import           Periodic.Server
 import           System.Environment (getArgs)
 

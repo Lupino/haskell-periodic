@@ -1,3 +1,3 @@
 # haskell-periodic
 
-Periodic task system haskell client.
+Periodic task system haskell client and server.

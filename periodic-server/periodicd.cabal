@@ -1,4 +1,4 @@
-name:                periodic
+name:                periodicd
 version:             0.1.0.0
 -- synopsis:
 description:         Periodic task system haskell client.
@@ -15,16 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Periodic.Utils
-                     , Periodic.Connection
-                     , Periodic.Types
-                     , Periodic.Agent
-                     , Periodic.BaseClient
-                     , Periodic.Client
-                     , Periodic.Job
-                     , Periodic.Worker
-
-                     , Periodic.Server
+  exposed-modules:     Periodic.Server
                      , Periodic.Server.Client
                      , Periodic.Server.Scheduler
                      , Periodic.Server.Job
@@ -36,13 +27,12 @@ library
                      , Periodic.Server.JobQueue
                      , Periodic.Server.Store
   build-depends:       base >= 4.7 && < 5
+                     , periodic-common
                      , bytestring
                      , network
                      , concurrent-extra
                      , unordered-containers
-                     , entropy
                      , aeson
-                     , hslogger
                      , unix-time
                      , psqueues
                      , text
@@ -57,19 +47,7 @@ executable periodicd
   main-is:             periodicd.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
-                     , periodic
-                     , network
-  default-language:    Haskell2010
-
-test-suite periodic-test
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      test
-  main-is:             Spec.hs
-  build-depends:       base
-                     , periodic
-                     , bytestring
-                     , HUnit
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+                     , periodicd
   default-language:    Haskell2010
 
 source-repository head
