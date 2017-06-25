@@ -10,11 +10,12 @@ module Periodic.Server.JobQueue
   , removeJob
   , memberJob
   , dumpJob
+  , sizeJob
   ) where
 
 import           Data.ByteString          (ByteString)
 import           Data.HashPSQ             (HashPSQ, delete, findMin, fromList,
-                                           insert, member, toList)
+                                           insert, member, size, toList)
 import           Data.Int                 (Int64)
 import           Periodic.Server.FuncList (FuncList, FuncName, adjust, alter,
                                            elems, lookup)
@@ -62,3 +63,9 @@ dumpJob jq = concat . map go <$> elems jq
 
   where go :: SubJobQueue -> [Job]
         go sq = map (\(_, _, v) -> v) $ toList sq
+
+sizeJob :: JobQueue -> FuncName -> IO Int
+sizeJob q n = go <$> lookup q n
+  where go :: Maybe SubJobQueue -> Int
+        go Nothing   = 0
+        go (Just q') = size q'

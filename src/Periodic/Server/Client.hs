@@ -110,9 +110,7 @@ handleRemoveJob sc ag pl = do
 
 handleDump :: Scheduler -> Agent -> IO ()
 handleDump sc ag = do
-  print "dump"
   jobs <- dumpJob sc
-  print $ show jobs
   send_ ag . toStrict . encode $ object [ "jobs" .= jobs ]
   send_ ag "EOF"
 

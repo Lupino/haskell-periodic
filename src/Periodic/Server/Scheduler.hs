@@ -66,16 +66,17 @@ newScheduler = do
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@(Scheduler {..}) job = do
   JQ.pushJob sJobQueue job
-  FL.alter sFuncStatList updateFuncStat n
+  size <- JQ.sizeJob sJobQueue n
+  FL.alter sFuncStatList (updateFuncStat size) n
   nextMainTimer sched 1
 
   where n = jFuncName job
-        updateFuncStat :: Maybe FuncStat -> Maybe FuncStat
-        updateFuncStat Nothing = Just ((funcStat n) { sJob = 1, sSchedAt = jSchedAt job })
-        updateFuncStat (Just fs) = Just (fs { sJob = sJob fs + 1
-                                            , sSchedAt = if sSchedAt fs > jSchedAt job  then jSchedAt job
-                                                                                        else sSchedAt fs
-                                            })
+        updateFuncStat :: Int -> Maybe FuncStat -> Maybe FuncStat
+        updateFuncStat s Nothing = Just ((funcStat n) { sJob = 1, sSchedAt = jSchedAt job })
+        updateFuncStat s (Just fs) = Just (fs { sJob = fromIntegral s
+                                              , sSchedAt = if sSchedAt fs > jSchedAt job  then jSchedAt job
+                                                                                          else sSchedAt fs
+                                              })
 
 removeJob :: Scheduler -> Job -> IO ()
 removeJob sched@(Scheduler {..}) job = do
@@ -177,7 +178,7 @@ processJob sched@(Scheduler {..}) = do
                       FL.insert sProcessJob jh job'
                       FL.insert jq jh True
                       minJob <- JQ.findMinJob sJobQueue (jFuncName job')
-                      let update v = v { sProcess = sProcess v + 1
+                      let update v = v { sProcess = min (sProcess v + 1) (sJob v)
                                        , sSchedAt = case minJob of
                                                       Nothing -> sSchedAt v
                                                       Just mj -> jSchedAt mj
