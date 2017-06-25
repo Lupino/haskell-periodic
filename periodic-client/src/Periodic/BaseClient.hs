@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 #include "HsNetworkConfig.h"
 
@@ -55,20 +56,22 @@ import           System.Log.Logger     (errorM, infoM)
 
 data BaseClient = BaseClient { agents   :: IORef (HashMap ByteString Agent)
                              , conn     :: Connection
-                             , threadID :: Maybe ThreadId
+                             , threadID :: IORef (Maybe ThreadId)
                              }
 
 newBaseClient :: Socket -> ClientType -> IO BaseClient
 newBaseClient sock agentType = do
-  conn' <- newClientConn sock
-  send conn' $ (toEnum $ fromEnum agentType) `B.cons` B.empty
+  conn <- newClientConn sock
+  send conn $ (toEnum $ fromEnum agentType) `B.cons` B.empty
 
-  agents' <- newIORef HM.empty
-  let bc = BaseClient { conn = conn', agents = agents', threadID = Nothing }
+  agents <- newIORef HM.empty
+  threadID <- newIORef Nothing
+  let bc = BaseClient {..}
 
-  threadID' <- forkIO $ forever $ mainLoop bc
+  t <- forkIO $ forever $ mainLoop bc
+  atomicModifyIORef' threadID (\v -> (Just t, ()))
   infoM "Periodic.BaseClient" "Connected to periodic task system"
-  return bc { threadID = Just threadID' }
+  return bc
 
 addAgent :: BaseClient -> Agent -> IO ()
 addAgent bc a = atomicModifyIORef' (agents bc) $ \v -> (HM.insert (agentID a) a v, ())
@@ -99,9 +102,10 @@ withAgent :: BaseClient -> (Agent -> IO a) -> IO a
 withAgent bc = bracket (newAgent bc) (removeAgent bc)
 
 close :: BaseClient -> IO ()
-close (BaseClient { threadID = tid, conn = c }) = do
+close (BaseClient {..}) = do
+  tid <- atomicModifyIORef' threadID (\v -> (v, v))
   when (isJust tid) $ killThread (fromJust tid)
-  Conn.close c
+  Conn.close conn
 
 noopAgent :: BaseClient -> Error -> IO ()
 noopAgent bc e = do
