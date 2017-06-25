@@ -146,5 +146,5 @@ load c h = withAgent c $ \agent -> do
 checkHealth :: Client -> IO ()
 checkHealth c = do
   ret <- ping c
-  if ret then threadDelay 1000
+  if ret then threadDelay 10000000
          else noopAgent c SocketClosed

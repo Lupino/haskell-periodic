@@ -116,5 +116,5 @@ runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
 checkHealth :: Worker -> IO ()
 checkHealth w = do
   ret <- ping w
-  if ret then threadDelay 1000
+  if ret then threadDelay 10000000
          else noopAgent (bc w) SocketClosed
