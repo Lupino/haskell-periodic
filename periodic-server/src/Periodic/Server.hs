@@ -3,6 +3,10 @@
 module Periodic.Server
   (
     startServer
+  , listenOn
+  , listenOnFile
+  , HostName
+  , ServiceName
   ) where
 
 import           Control.Monad             (forever, void)
@@ -21,8 +25,20 @@ import           Periodic.Server.Store     (newStore)
 import           Periodic.Server.Worker    (newWorker)
 import           Periodic.Types            (ClientType (..), Error (..))
 
-listenOn :: Maybe String -> String -> IO Socket
-listenOn host port = do
+listenOnFile :: FilePath -> IO Socket
+listenOnFile path =
+  bracketOnError
+    (socket AF_UNIX Stream 0)
+    (sClose)
+    (\sock -> do
+        setSocketOption sock ReuseAddr 1
+        bind sock (SockAddrUnix path)
+        listen sock maxListenQueue
+        return sock
+    )
+
+listenOn :: Maybe HostName -> ServiceName -> IO Socket
+listenOn host serv = do
   proto <- getProtocolNumber "tcp"
   -- We should probably specify addrFamily = AF_INET6 and the filter
   -- code below should be removed. AI_ADDRCONFIG is probably not
@@ -30,7 +46,7 @@ listenOn host port = do
   let hints = defaultHints { addrFlags = [AI_ADDRCONFIG, AI_PASSIVE]
                            , addrSocketType = Stream
                            , addrProtocol = proto }
-  addrs <- getAddrInfo (Just hints) host (Just port)
+  addrs <- getAddrInfo (Just hints) host (Just serv)
   -- Choose an IPv6 socket if exists.  This ensures the socket can
   -- handle both IPv4 and IPv6 if v6only is false.
   let addrs' = filter (\x -> addrFamily x == AF_INET6) addrs
@@ -45,17 +61,16 @@ listenOn host port = do
           return sock
       )
 
-startServer :: FilePath -> Maybe String -> String -> IO ()
-startServer storePath host port = do
-  sock <- listenOn host port
+startServer :: FilePath -> Socket -> IO ()
+startServer storePath sock = do
   store <- newStore storePath
   sched <- newScheduler store
-
   forever $ mainLoop sock sched
 
 mainLoop :: Socket -> Scheduler -> IO ()
 mainLoop sock sched = do
   (sock', _) <- accept sock
+  setSocketOption sock' KeepAlive 1
   conn <- newServerConn sock'
   e <- try $ receive conn
   case e of

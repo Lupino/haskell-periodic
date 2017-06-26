@@ -1,23 +1,18 @@
-{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
-
-#include "HsNetworkConfig.h"
-
-#ifdef HAVE_GETADDRINFO
--- Use IPv6-capable function definitions if the OS supports it.
-#define IPV6_SOCKET_SUPPORT 1
-#endif
 
 module Periodic.BaseClient
   (
     BaseClient
+  , HostName
+  , ServiceName
   , newBaseClient
   , removeAgent
   , newAgent
   , withAgent
   , noopAgent
   , connectTo
+  , connectToFile
   , close
   ) where
 
@@ -143,63 +138,9 @@ firstSuccessful = go Nothing
   go (Just e) [] = throwIO e
 
 
--- | Calling 'connectTo' creates a client side socket which is
--- connected to the given host and port.  The Protocol and socket type is
--- derived from the given port identifier.  If a port number is given
--- then the result is always an internet family 'Stream' socket.
-connectTo :: HostName           -- Hostname
-          -> PortID             -- Port Identifier
-          -> IO Socket          -- Connected Socket
+connectTo :: HostName -> ServiceName -> IO Socket
 
-#if defined(IPV6_SOCKET_SUPPORT)
--- IPv6 and IPv4.
-
-connectTo hostname (Service serv) = connect' hostname serv
-
-connectTo hostname (PortNumber port) = connect' hostname (show port)
-#else
--- IPv4 only.
-
-connectTo hostname (Service serv) = do
-    proto <- getProtocolNumber "tcp"
-    bracketOnError
-        (socket AF_INET Stream proto)
-        (Socket.close)  -- only done if there's an error
-        (\sock -> do
-          port  <- getServicePortNumber serv
-          he    <- getHostByName hostname
-          connect sock (SockAddrInet port (hostAddress he))
-          return sock
-        )
-
-connectTo hostname (PortNumber port) = do
-    proto <- getProtocolNumber "tcp"
-    bracketOnError
-        (socket AF_INET Stream proto)
-        (Socket.close)  -- only done if there's an error
-        (\sock -> do
-          he <- getHostByName hostname
-          connect sock (SockAddrInet port (hostAddress he))
-          return sock
-        )
-#endif
-
-
-#if !defined(mingw32_HOST_OS)
-connectTo _ (UnixSocket path) = do
-    bracketOnError
-        (socket AF_UNIX Stream 0)
-        (Socket.close)
-        (\sock -> do
-          connect sock (SockAddrUnix path)
-          return sock
-        )
-#endif
-
-#if defined(IPV6_SOCKET_SUPPORT)
-connect' :: HostName -> ServiceName -> IO Socket
-
-connect' host serv = do
+connectTo host serv = do
     proto <- getProtocolNumber "tcp"
     let hints = defaultHints { addrFlags = [AI_ADDRCONFIG]
                              , addrProtocol = proto
@@ -212,18 +153,22 @@ connect' host serv = do
         (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
         (Socket.close)  -- only done if there's an error
         (\sock -> do
+          setSocketOption sock KeepAlive 1
           connect sock (addrAddress addr)
           return sock
         )
-#endif
-
-catchIO :: IO a -> (Exception.IOException -> IO a) -> IO a
-#if MIN_VERSION_base(4,0,0)
-catchIO = Exception.catch
-#else
-catchIO = Exception.catchJust Exception.ioErrors
-#endif
 
 -- Version of try implemented in terms of the locally defined catchIO
 tryIO :: IO a -> IO (Either Exception.IOException a)
-tryIO m = catchIO (liftM Right m) (return . Left)
+tryIO m = Exception.catch (liftM Right m) (return . Left)
+
+connectToFile :: FilePath -> IO Socket
+connectToFile path = do
+  bracketOnError
+    (socket AF_UNIX Stream 0)
+    (sClose)
+    (\sock -> do
+      setSocketOption sock KeepAlive 1
+      connect sock (SockAddrUnix path)
+      return sock
+    )
