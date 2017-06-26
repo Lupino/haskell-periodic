@@ -88,16 +88,16 @@ close :: Worker -> IO ()
 close (Worker { bc = c }) = BC.close c
 
 work :: Worker -> Int -> IO ()
-work w size = handle (\(e :: Error) -> close w) $ do
+work w size = handle (\(_ :: Error) -> close w) $ do
   sem <- newQSem size
   forever $ do
     job <- grabJob w
     task <- getTask w (func job)
     case task of
       Nothing -> removeFunc w (func job)
-      Just task -> do
+      Just task' -> do
         waitQSem sem
-        void . forkIO $ runTask task job >> signalQSem sem
+        void . forkIO $ runTask task' job >> signalQSem sem
 
 runTask :: Task -> Job -> IO ()
 runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do

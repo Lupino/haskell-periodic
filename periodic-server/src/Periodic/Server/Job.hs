@@ -19,7 +19,6 @@ import qualified Data.ByteString          as B (concat)
 import           Data.ByteString.Lazy     (fromStrict, toStrict)
 import           Data.Int                 (Int64)
 import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
-import           Periodic.Server.Agent    (Agent, agentid)
 import           Periodic.Server.FuncList (FuncName)
 
 data Job = Job { jSchedAt  :: Int64

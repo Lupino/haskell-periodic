@@ -83,7 +83,7 @@ connected :: Connection -> IO Bool
 connected (Connection {..}) = atomicModifyIORef' status $ \v -> (v, v)
 
 setStatus :: Connection -> Bool -> IO ()
-setStatus (Connection {..}) v' = atomicModifyIORef' status $ \v -> (v', ())
+setStatus (Connection {..}) v' = atomicModifyIORef' status $ \_ -> (v', ())
 
 close :: Connection -> IO ()
 close c@(Connection { .. }) = do

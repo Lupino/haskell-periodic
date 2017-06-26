@@ -56,7 +56,7 @@ newBaseClient sock agentType = do
   let bc = BaseClient {..}
 
   t <- forkIO $ forever $ mainLoop bc
-  atomicModifyIORef' threadID (\v -> (Just t, ()))
+  atomicModifyIORef' threadID (\_ -> (Just t, ()))
   infoM "Periodic.BaseClient" "Connected to periodic task system"
   return bc
 
@@ -106,4 +106,5 @@ mainLoop bc = do
   case e of
     Left SocketClosed  -> noopAgent bc SocketClosed
     Left MagicNotMatch -> noopAgent bc MagicNotMatch
+    Left _             -> return ()
     Right pl           -> writePayload bc (parsePayload pl)

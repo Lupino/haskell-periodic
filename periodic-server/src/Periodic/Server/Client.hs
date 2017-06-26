@@ -9,7 +9,7 @@ module Periodic.Server.Client
   ) where
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread)
-import           Control.Exception         (throwIO, try)
+import           Control.Exception         (try)
 import           Control.Monad             (forever, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
@@ -28,7 +28,7 @@ import           Data.Aeson                (FromJSON (..), decode, encode,
                                             object, withObject, (.:), (.=))
 
 import           Periodic.Types            (Command (..), Error (..),
-                                            Payload (..), nullChar)
+                                            Payload (..))
 import           Periodic.Utils            (parsePayload)
 
 import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
@@ -44,16 +44,16 @@ newClient cConn cSched = do
   let c = Client {..}
 
   threadID <- forkIO $ forever $ mainLoop c
-  atomicModifyIORef' cThreadID (\v -> (Just threadID, ()))
+  atomicModifyIORef' cThreadID (\_ -> (Just threadID, ()))
   return c
 
 mainLoop :: Client -> IO ()
 mainLoop c@(Client {..}) = do
   e <- try $ receive cConn
   case e of
-    Left SocketClosed  -> cClose c
-    Left MagicNotMatch -> cClose c
-    Right pl           -> handlePayload c (parsePayload pl)
+    Left SocketClosed -> cClose c
+    Left _            -> cClose c
+    Right pl          -> handlePayload c (parsePayload pl)
 
 handlePayload :: Client -> Payload -> IO ()
 handlePayload c (Payload {..}) = go payloadCMD

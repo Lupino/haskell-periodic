@@ -19,8 +19,7 @@ module Periodic.Server.Scheduler
   ) where
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
-import           Control.Monad             (void, when)
-import           Data.ByteString.Char8     (ByteString)
+import           Control.Monad             (when)
 import qualified Data.ByteString.Char8     as B (concat)
 import           Data.Int                  (Int64)
 import           Data.UnixTime
@@ -91,7 +90,7 @@ pushJob sched@(Scheduler {..}) job = do
         jh = jHandle job
         jn = jName job
         updateStat :: Int -> Maybe FuncStat -> Maybe FuncStat
-        updateStat s Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
+        updateStat _ Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
         updateStat s (Just fs) = Just (fs { sJob = fromIntegral s
                                           , sSchedAt = min (sSchedAt fs) (jSchedAt job)
                                           })
@@ -100,14 +99,14 @@ pushJob sched@(Scheduler {..}) job = do
         adjustStat v = v { sSchedAt = min (jSchedAt job) (sSchedAt v) }
 
 restoreJob :: Scheduler -> Job -> IO ()
-restoreJob sched@(Scheduler {..}) job = do
+restoreJob (Scheduler {..}) job = do
   JQ.pushJob sJobQueue job
   size <- JQ.sizeJob sJobQueue fn
   FL.alter sFuncStatList (updateStat size) fn
 
   where fn = jFuncName job
         updateStat :: Int -> Maybe FuncStat -> Maybe FuncStat
-        updateStat s Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
+        updateStat _ Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
         updateStat s (Just fs) = Just (fs { sJob = fromIntegral s
                                           , sSchedAt = min (sSchedAt fs) (jSchedAt job)
                                           })
@@ -163,7 +162,7 @@ removeFunc sched@(Scheduler {..}) n = do
                                             })
 
 dropFunc :: Scheduler -> FuncName -> IO ()
-dropFunc sched@(Scheduler {..}) n = do
+dropFunc (Scheduler {..}) n = do
   st <- FL.lookup sFuncStatList n
   case st of
     Nothing -> return ()
@@ -247,12 +246,12 @@ nextMainTimer sched@(Scheduler {..}) t = L.with sMainTimerLock $ do
   wait <- atomicModifyIORef' sMainTimerWait (\v -> (v, v))
   threadID' <- forkIO $ do
     when (t > 0) $ do
-      atomicModifyIORef' sMainTimerWait (\v -> (True, ()))
+      atomicModifyIORef' sMainTimerWait (\_ -> (True, ()))
       threadDelay $ fromIntegral t * 1000000
-    atomicModifyIORef' sMainTimerWait (\v -> (False, ()))
+    atomicModifyIORef' sMainTimerWait (\_ -> (False, ()))
     processJob sched
 
-  atomicModifyIORef' sMainTimer (\v -> (Just threadID', ()))
+  atomicModifyIORef' sMainTimer (\_ -> (Just threadID', ()))
   when (isJust threadID && wait) $ killThread (fromJust threadID)
 
 failJob :: Scheduler -> JobHandle -> IO ()

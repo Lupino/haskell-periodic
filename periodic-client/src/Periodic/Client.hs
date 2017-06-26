@@ -114,7 +114,7 @@ isSuccess agent = do
 dump :: Client -> Handle -> IO ()
 dump c h = withAgent c $ \agent -> do
   send agent Dump B.empty
-  catch (forever $ go agent) $ \(e :: Error) -> return ()
+  catch (forever $ go agent) $ \(_ :: Error) -> return ()
 
   where go :: Agent -> IO ()
         go agent = do
@@ -129,7 +129,7 @@ dump c h = withAgent c $ \agent -> do
 
 load :: Client -> Handle -> IO ()
 load c h = withAgent c $ \agent -> do
-  catch (forever $ go agent) $ \(e :: Error) -> return ()
+  catch (forever $ go agent) $ \(_ :: Error) -> return ()
 
   where go :: Agent -> IO ()
         go agent = do

@@ -16,8 +16,7 @@ import qualified Data.ByteString.Char8 as B (concat, cons, empty, null)
 
 import           Periodic.Connection   (Connection, connected, connid)
 import qualified Periodic.Connection   as Conn (send)
-import           Periodic.Types        (Command, Error (..),
-                                        Payload (payloadError), nullChar)
+import           Periodic.Types        (Command, nullChar)
 
 data Agent = Agent { aMsgid :: ByteString
                    , aConn  :: Connection

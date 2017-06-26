@@ -40,7 +40,7 @@ parseOptions ("-p":x:xs)     = (parseOptions xs) { storePath = x }
 parseOptions ("--path":x:xs) = (parseOptions xs) { storePath = x }
 parseOptions ("-h":xs)       = (parseOptions xs) { showHelp  = True }
 parseOptions ("--help":xs)   = (parseOptions xs) { showHelp  = True }
-parseOptions (x:xs)          = parseOptions xs
+parseOptions (_:xs)          = parseOptions xs
 
 printHelp :: IO ()
 printHelp = do

@@ -51,9 +51,9 @@ mainLoop sock sched = do
   conn <- newServerConn sock'
   e <- try $ receive conn
   case e of
-    Left SocketClosed  -> close conn
-    Left MagicNotMatch -> close conn
-    Right pl           ->
+    Left SocketClosed   -> close conn
+    Left _              -> close conn
+    Right pl            ->
       case tp pl of
         Nothing         -> close conn
         Just TypeClient -> void $ newClient conn sched

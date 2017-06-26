@@ -9,7 +9,7 @@ module Periodic.Server.Worker
   ) where
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread)
-import           Control.Exception         (throwIO, try)
+import           Control.Exception         (try)
 import           Control.Monad             (forever, when)
 import           Data.ByteString.Char8     (ByteString)
 import qualified Data.ByteString.Char8     as B (breakSubstring, drop, empty,
@@ -45,7 +45,7 @@ newWorker wConn wSched = do
   let w = Worker { .. }
 
   threadID <- forkIO $ forever $ mainLoop w
-  atomicModifyIORef' wThreadID (\v -> (Just threadID, ()))
+  atomicModifyIORef' wThreadID (\_ -> (Just threadID, ()))
   return w
 
 
@@ -53,9 +53,9 @@ mainLoop :: Worker -> IO ()
 mainLoop w@(Worker {..}) = do
   e <- try $ receive wConn
   case e of
-    Left SocketClosed  -> wClose w
-    Left MagicNotMatch -> wClose w
-    Right pl           -> handlePayload w (parsePayload pl)
+    Left SocketClosed -> wClose w
+    Left _            -> wClose w
+    Right pl          -> handlePayload w (parsePayload pl)
 
 handlePayload :: Worker -> Payload -> IO ()
 handlePayload w (Payload {..}) = go payloadCMD
