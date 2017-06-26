@@ -67,7 +67,7 @@ newScheduler sStore = do
   jobs <- Store.dumpJob sStore
   mapM_ (restoreJob sched) jobs
 
-  nextMainTimer sched 1
+  nextMainTimer sched 0
   return sched
 
 pushJob :: Scheduler -> Job -> IO ()
@@ -85,7 +85,7 @@ pushJob sched@(Scheduler {..}) job = do
     size <- JQ.sizeJob sJobQueue fn
     FL.alter sFuncStatList (updateStat size) fn
 
-  nextMainTimer sched 1
+  nextMainTimer sched 0
 
   where fn = jFuncName job
         jh = jHandle job
@@ -138,7 +138,7 @@ removeJob sched@(Scheduler {..}) job = do
 
   Store.deleteJob sStore (jHandle job)
 
-  nextMainTimer sched 1
+  nextMainTimer sched 0
 
 dumpJob :: Scheduler -> IO [Job]
 dumpJob (Scheduler {..}) = Store.dumpJob sStore
@@ -146,7 +146,7 @@ dumpJob (Scheduler {..}) = Store.dumpJob sStore
 addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched@(Scheduler {..}) n = do
   FL.alter sFuncStatList updateFuncStat n
-  nextMainTimer sched 1
+  nextMainTimer sched 0
 
   where updateFuncStat :: Maybe FuncStat -> Maybe FuncStat
         updateFuncStat Nothing   = Just ((funcStat n) { sWorker = 1 })
@@ -155,7 +155,7 @@ addFunc sched@(Scheduler {..}) n = do
 removeFunc :: Scheduler -> FuncName -> IO ()
 removeFunc sched@(Scheduler {..}) n = do
   FL.alter sFuncStatList updateFuncStat n
-  nextMainTimer sched 1
+  nextMainTimer sched 0
 
   where updateFuncStat :: Maybe FuncStat -> Maybe FuncStat
         updateFuncStat Nothing = Just (funcStat n)
@@ -178,13 +178,13 @@ dropFunc sched@(Scheduler {..}) n = do
 pushGrab :: Scheduler -> FuncList Bool -> FuncList Bool -> Agent -> IO ()
 pushGrab sched@(Scheduler {..}) fl jh ag = do
   pushAgent sGrabQueue fl jh ag
-  nextMainTimer sched 1
+  nextMainTimer sched 0
 
 processJob :: Scheduler -> IO ()
 processJob sched@(Scheduler {..}) = do
   st <- getFirstSched sFuncStatList sGrabQueue
   case st of
-    Nothing -> nextMainTimer sched 10000
+    Nothing -> nextMainTimer sched 10
     Just st' -> do
       now <- read . show . toEpochTime <$> getUnixTime
       if now < (sSchedAt st') then nextMainTimer sched (sSchedAt st' - now)
@@ -193,7 +193,7 @@ processJob sched@(Scheduler {..}) = do
   where revertJob :: Job -> IO ()
         revertJob job = do
           JQ.pushJob sJobQueue job
-          nextMainTimer sched 1
+          nextMainTimer sched 0
 
         popJobThen :: Int64 -> FuncStat -> (Job -> IO ()) -> IO ()
         popJobThen now st done = do
@@ -203,7 +203,7 @@ processJob sched@(Scheduler {..}) = do
               size <- JQ.sizeJob sJobQueue (sFuncName st)
               let update v = v { sJob = fromIntegral size }
               FL.adjust sFuncStatList update (sFuncName st)
-              nextMainTimer sched 1
+              nextMainTimer sched 0
             Just job' -> if jSchedAt job' > now then revertJob job'
                                                 else done job'
 
@@ -230,7 +230,7 @@ processJob sched@(Scheduler {..}) = do
                            }
           FL.adjust sFuncStatList update (jFuncName job)
 
-          nextMainTimer sched 1
+          nextMainTimer sched 0
 
         submitJob :: Int64 -> FuncStat -> IO ()
         submitJob now st = popJobThen now st $ popMaybeAgentThen st doneSubmitJob
@@ -246,8 +246,9 @@ nextMainTimer sched@(Scheduler {..}) t = L.with sMainTimerLock $ do
   threadID <- atomicModifyIORef' sMainTimer (\v -> (v, v))
   wait <- atomicModifyIORef' sMainTimerWait (\v -> (v, v))
   threadID' <- forkIO $ do
-    atomicModifyIORef' sMainTimerWait (\v -> (True, ()))
-    threadDelay $ fromIntegral t * 1000
+    when (t > 0) $ do
+      atomicModifyIORef' sMainTimerWait (\v -> (True, ()))
+      threadDelay $ fromIntegral t * 1000000
     atomicModifyIORef' sMainTimerWait (\v -> (False, ()))
     processJob sched
 
@@ -266,7 +267,7 @@ failJob sched@(Scheduler {..}) jh = do
                        , sSchedAt = min (sSchedAt v) (jSchedAt job')
                        }
       FL.adjust sFuncStatList update (jFuncName job')
-      nextMainTimer sched 1
+      nextMainTimer sched 0
 
 doneJob :: Scheduler -> JobHandle -> IO ()
 doneJob (Scheduler {..}) jh = do
@@ -300,7 +301,7 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
                        }
 
       FL.adjust sFuncStatList update (jFuncName job')
-      nextMainTimer sched 1
+      nextMainTimer sched 0
 
 status :: Scheduler -> IO [FuncStat]
 status (Scheduler {..}) = FL.elems sFuncStatList
