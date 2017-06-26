@@ -6,10 +6,6 @@ module Periodic.Worker
   (
     Worker
   , newWorker
-  , HostName
-  , ServiceName
-  , connectTo
-  , connectToFile
   , ping
   , addFunc
   , removeFunc
@@ -20,13 +16,12 @@ module Periodic.Worker
 
 import           Data.ByteString.Char8   (ByteString)
 import qualified Data.ByteString.Char8   as B (empty, unpack)
-import           Network.Socket          (Socket)
 import           Periodic.Agent          (receive, send)
-import           Periodic.BaseClient     (BaseClient, HostName, ServiceName,
-                                          connectTo, connectToFile,
-                                          newBaseClient, noopAgent, withAgent)
+import           Periodic.BaseClient     (BaseClient, newBaseClient, noopAgent,
+                                          withAgent)
 import qualified Periodic.BaseClient     as BC (close)
 import           Periodic.Job            (Job, func, name, newJob, workFail)
+import           Periodic.Socket         (Socket)
 import           Periodic.Types          (ClientType (TypeWorker), Command (..),
                                           Error (SocketClosed), Payload (..))
 
@@ -38,8 +33,7 @@ import           Control.Concurrent      (forkIO, threadDelay)
 import           Control.Concurrent.QSem
 import           Control.Exception       (SomeException, catch, handle)
 import           Control.Exception       (throwIO)
-import           Control.Monad           (forever, void, when)
-import           Data.Maybe              (fromJust, isJust)
+import           Control.Monad           (forever, void)
 
 import           System.Log.Logger       (errorM)
 

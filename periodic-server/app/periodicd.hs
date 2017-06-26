@@ -7,6 +7,8 @@ module Main
 
 import           Control.Monad      (when)
 import           Periodic.Server
+import           Periodic.Socket    (HostName, ServiceName, listenOn,
+                                     listenOnFile)
 import           System.Directory   (removeFile)
 import           System.Environment (getArgs)
 

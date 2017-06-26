@@ -18,9 +18,9 @@ module Periodic.Connection
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
 import qualified Data.ByteString.Char8     as B (ByteString, length, null)
-import           Network.Socket            (Socket)
-import qualified Network.Socket            as Socket (close)
 import           Network.Socket.ByteString (recv, sendAll)
+import           Periodic.Socket           (Socket)
+import qualified Periodic.Socket           as Socket (close)
 
 import           Control.Exception         (throwIO)
 import           Control.Monad             (when)

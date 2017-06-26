@@ -6,10 +6,6 @@ module Periodic.Client
   (
     Client
   , newClient
-  , HostName
-  , ServiceName
-  , connectTo
-  , connectToFile
   , ping
   , submitJob_
   , submitJob
@@ -26,11 +22,10 @@ module Periodic.Client
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B (empty, hGet, hPut, length)
 import           Data.ByteString.Lazy  (toStrict)
-import           Network.Socket        (Socket)
 import           Periodic.Agent        (Agent, receive, send)
-import           Periodic.BaseClient   (BaseClient, HostName, ServiceName,
-                                        close, connectTo, connectToFile,
-                                        newBaseClient, noopAgent, withAgent)
+import           Periodic.BaseClient   (BaseClient, close, newBaseClient,
+                                        noopAgent, withAgent)
+import           Periodic.Socket       (Socket)
 import           Periodic.Types        (ClientType (TypeClient), Command (..),
                                         Error (EmptyError, SocketClosed),
                                         Payload (..))
@@ -44,7 +39,7 @@ import           Control.Concurrent    (forkIO, threadDelay)
 
 import           Control.Exception     (catch)
 import           Control.Exception     (throwIO)
-import           Control.Monad         (forever, void, when)
+import           Control.Monad         (forever, void)
 import           GHC.IO.Handle         (Handle)
 import           Periodic.Utils        (makeHeader, parseHeader)
 

@@ -4,15 +4,11 @@
 module Periodic.BaseClient
   (
     BaseClient
-  , HostName
-  , ServiceName
   , newBaseClient
   , removeAgent
   , newAgent
   , withAgent
   , noopAgent
-  , connectTo
-  , connectToFile
   , close
   ) where
 
@@ -22,19 +18,15 @@ import           Periodic.Connection   (Connection, newClientConn, receive,
                                         send)
 
 import qualified Periodic.Connection   as Conn (close)
+import           Periodic.Socket       (Socket)
 import           Periodic.Types        (ClientType, Error (..), Payload (..),
                                         noopError, nullChar)
 
-import           Control.Exception     (bracket, bracketOnError, throwIO, try)
-import qualified Control.Exception     as Exception
+import           Control.Exception     (bracket, try)
 import           Data.HashMap.Strict   (HashMap)
 import qualified Data.HashMap.Strict   as HM (delete, elems, empty, insert,
                                               lookup)
 import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
-import           Network               (PortID (..))
-import           Network.BSD           (getProtocolNumber)
-import           Network.Socket        hiding (close, send)
-import qualified Network.Socket        as Socket (close)
 
 import           Periodic.Agent        (Agent, agentID, feed)
 import qualified Periodic.Agent        as Agent (newAgent)
@@ -43,7 +35,7 @@ import           System.Entropy        (getEntropy)
 import           Periodic.Utils        (parsePayload)
 
 import           Control.Concurrent    (ThreadId, forkIO, killThread)
-import           Control.Monad         (forever, liftM, when)
+import           Control.Monad         (forever, when)
 
 import           Data.Maybe            (fromJust, isJust)
 
@@ -115,60 +107,3 @@ mainLoop bc = do
     Left SocketClosed  -> noopAgent bc SocketClosed
     Left MagicNotMatch -> noopAgent bc MagicNotMatch
     Right pl           -> writePayload bc (parsePayload pl)
-
-
--- Returns the first action from a list which does not throw an exception.
--- If all the actions throw exceptions (and the list of actions is not empty),
--- the last exception is thrown.
--- The operations are run outside of the catchIO cleanup handler because
--- catchIO masks asynchronous exceptions in the cleanup handler.
--- In the case of complete failure, the last exception is actually thrown.
-firstSuccessful :: [IO a] -> IO a
-firstSuccessful = go Nothing
-  where
-  -- Attempt the next operation, remember exception on failure
-  go _ (p:ps) =
-    do r <- tryIO p
-       case r of
-         Right x -> return x
-         Left  e -> go (Just e) ps
-
-  -- All operations failed, throw error if one exists
-  go Nothing  [] = error "firstSuccessful: empty list"
-  go (Just e) [] = throwIO e
-
-
-connectTo :: HostName -> ServiceName -> IO Socket
-
-connectTo host serv = do
-    proto <- getProtocolNumber "tcp"
-    let hints = defaultHints { addrFlags = [AI_ADDRCONFIG]
-                             , addrProtocol = proto
-                             , addrSocketType = Stream }
-    addrs <- getAddrInfo (Just hints) (Just host) (Just serv)
-    firstSuccessful $ map tryToConnect addrs
-  where
-  tryToConnect addr =
-    bracketOnError
-        (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
-        (Socket.close)  -- only done if there's an error
-        (\sock -> do
-          setSocketOption sock KeepAlive 1
-          connect sock (addrAddress addr)
-          return sock
-        )
-
--- Version of try implemented in terms of the locally defined catchIO
-tryIO :: IO a -> IO (Either Exception.IOException a)
-tryIO m = Exception.catch (liftM Right m) (return . Left)
-
-connectToFile :: FilePath -> IO Socket
-connectToFile path = do
-  bracketOnError
-    (socket AF_UNIX Stream 0)
-    (sClose)
-    (\sock -> do
-      setSocketOption sock KeepAlive 1
-      connect sock (SockAddrUnix path)
-      return sock
-    )
