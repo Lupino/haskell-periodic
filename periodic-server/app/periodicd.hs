@@ -5,7 +5,9 @@ module Main
     main
   ) where
 
+import           Control.Monad      (when)
 import           Periodic.Server
+import           System.Directory   (removeFile)
 import           System.Environment (getArgs)
 
 data Options = Options { host      :: Maybe HostName
@@ -52,3 +54,5 @@ main = do
   if showHelp then printHelp
               else startServer storePath =<< if useSock then listenOnFile sockFile
                                                         else listenOn host service
+
+  when useSock $ removeFile sockFile

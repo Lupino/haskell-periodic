@@ -14,6 +14,13 @@ import           Network.BSD               (getProtocolNumber)
 import           Network.Socket            hiding (close)
 import qualified Network.Socket            as Socket
 
+-- process
+import           Control.Concurrent        (forkIO)
+import           Control.Concurrent.MVar   (MVar, newEmptyMVar, putMVar,
+                                            takeMVar)
+import           System.Posix.Signals      (Handler (Catch), installHandler,
+                                            sigINT, sigTERM)
+
 -- server
 import           Control.Exception         (bracketOnError, try)
 import           Data.ByteString           (ByteString)
@@ -29,7 +36,7 @@ listenOnFile :: FilePath -> IO Socket
 listenOnFile path =
   bracketOnError
     (socket AF_UNIX Stream 0)
-    (sClose)
+    (Socket.close)
     (\sock -> do
         setSocketOption sock ReuseAddr 1
         bind sock (SockAddrUnix path)
@@ -61,11 +68,21 @@ listenOn host serv = do
           return sock
       )
 
+handleExit :: MVar Bool -> IO ()
+handleExit mv = putMVar mv True
+
 startServer :: FilePath -> Socket -> IO ()
 startServer storePath sock = do
   store <- newStore storePath
   sched <- newScheduler store
-  forever $ mainLoop sock sched
+  -- Handle dying
+  bye <- newEmptyMVar
+  void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
+  void $ installHandler sigINT (Catch $ handleExit bye) Nothing
+
+  void . forkIO $ forever $ mainLoop sock sched
+  void $ takeMVar bye
+  Socket.close sock
 
 mainLoop :: Socket -> Scheduler -> IO ()
 mainLoop sock sched = do
