@@ -188,40 +188,52 @@ processJob sched@(Scheduler {..}) = do
     Just st' -> do
       now <- read . show . toEpochTime <$> getUnixTime
       if now < (sSchedAt st') then nextMainTimer sched (sSchedAt st' - now)
-                              else submitJob st'
+                              else submitJob now st'
 
   where revertJob :: Job -> IO ()
         revertJob job = do
           JQ.pushJob sJobQueue job
           nextMainTimer sched 1
 
-        submitJob :: FuncStat -> IO ()
-        submitJob st = do
+        popJobThen :: Int64 -> FuncStat -> (Job -> IO ()) -> IO ()
+        popJobThen now st done = do
           job <- JQ.popJob sJobQueue (sFuncName st)
           case job of
-            Nothing   -> nextMainTimer sched 1
-            Just job' -> do
-              agent <- popMaybeAgent sGrabQueue (sFuncName st)
-              case agent of
-                Nothing -> revertJob job'
-                Just (jq, agent') -> do
-                  alive <- aAlive agent'
-                  case alive of
-                    False -> revertJob job'
-                    True -> do
-                      let jh = jHandle job'
-                      assignJob agent' job'
-                      FL.insert sProcessJob jh job'
-                      FL.insert jq jh True
-                      minJob <- JQ.findMinJob sJobQueue (jFuncName job')
-                      let update v = v { sProcess = min (sProcess v + 1) (sJob v)
-                                       , sSchedAt = case minJob of
-                                                      Nothing -> sSchedAt v
-                                                      Just mj -> jSchedAt mj
-                                       }
-                      FL.adjust sFuncStatList update (jFuncName job')
+            Nothing -> do
+              size <- JQ.sizeJob sJobQueue (sFuncName st)
+              let update v = v { sJob = fromIntegral size }
+              FL.adjust sFuncStatList update (sFuncName st)
+              nextMainTimer sched 1
+            Just job' -> if jSchedAt job' > now then revertJob job'
+                                                else done job'
 
-                      nextMainTimer sched 1
+        popMaybeAgentThen :: FuncStat -> (Agent -> Job -> IO ()) -> Job -> IO ()
+        popMaybeAgentThen st done job = do
+          agent <- popMaybeAgent sGrabQueue (sFuncName st)
+          case agent of
+            Nothing           -> revertJob job
+            Just (jq, agent') -> do
+              alive <- aAlive agent'
+              if alive then FL.insert jq (jHandle job) True >> done agent' job
+                       else revertJob job
+
+        doneSubmitJob :: Agent -> Job -> IO ()
+        doneSubmitJob agent job = do
+          let jh = jHandle job
+          assignJob agent job
+          FL.insert sProcessJob jh job
+          minJob <- JQ.findMinJob sJobQueue (jFuncName job)
+          let update v = v { sProcess = min (sProcess v + 1) (sJob v)
+                           , sSchedAt = case minJob of
+                                          Nothing -> sSchedAt v
+                                          Just mj -> jSchedAt mj
+                           }
+          FL.adjust sFuncStatList update (jFuncName job)
+
+          nextMainTimer sched 1
+
+        submitJob :: Int64 -> FuncStat -> IO ()
+        submitJob now st = popJobThen now st $ popMaybeAgentThen st doneSubmitJob
 
 assignJob :: Agent -> Job -> IO ()
 assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
