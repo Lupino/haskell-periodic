@@ -23,7 +23,7 @@ data Options = Options { host      :: Maybe HostName
 defaultOptions :: Options
 defaultOptions = Options { host      = Nothing
                          , service   = "5000"
-                         , sockFile  = "/run/periodicd.sock"
+                         , sockFile  = "/tmp/periodicd.sock"
                          , useSock   = True
                          , storePath = "state"
                          , showHelp  = False
@@ -45,7 +45,7 @@ parseOptions (_:xs)          = parseOptions xs
 printHelp :: IO ()
 printHelp = do
   putStrLn "periodicd [--port|-P 5000] [--host|-H 0.0.0.0] [--path|-p state]"
-  putStrLn "periodicd [--sock /run/periodicd.sock] [--path|-p state]"
+  putStrLn "periodicd [--sock /tmp/periodicd.sock] [--path|-p state]"
   putStrLn "periodicd --help"
   putStrLn "periodicd -h"
 
@@ -54,7 +54,8 @@ main = do
   (Options {..}) <- parseOptions <$> getArgs
 
   if showHelp then printHelp
-              else startServer storePath =<< if useSock then listenOnFile sockFile
-                                                        else listenOn host service
+              else startServer storePath
+                     =<< if useSock then listenOnFile sockFile
+                                    else listenOn host service
 
-  when useSock $ removeFile sockFile
+  when (useSock && not showHelp) $ removeFile sockFile
