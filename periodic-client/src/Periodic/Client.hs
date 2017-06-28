@@ -27,8 +27,7 @@ import           Periodic.BaseClient   (BaseClient, close, newBaseClient,
                                         noopAgent, withAgent)
 import           Periodic.Socket       (Socket)
 import           Periodic.Types        (ClientType (TypeClient), Command (..),
-                                        Error (EmptyError, SocketClosed),
-                                        Payload (..))
+                                        Error (..), Payload (..))
 
 import           Data.Aeson            (ToJSON (..), encode, object, (.=))
 import           Data.Int              (Int64)
@@ -37,11 +36,11 @@ import           Data.UnixTime
 
 import           Control.Concurrent    (forkIO, threadDelay)
 
-import           Control.Exception     (catch)
-import           Control.Exception     (throwIO)
+import           Control.Exception     (catch, throwIO)
 import           Control.Monad         (forever, void)
 import           GHC.IO.Handle         (Handle)
 import           Periodic.Utils        (makeHeader, parseHeader)
+import           System.Timeout        (timeout)
 
 type Client = BaseClient
 
@@ -50,7 +49,6 @@ data Job = Job { name     :: String
                , func     :: String
                -- refer worker func
                , workload :: String
-               , timeout  :: Int64
                , schedAt  :: Int64
                }
   deriving (Show)
@@ -59,13 +57,11 @@ instance ToJSON Job where
   toJSON Job{..} = object [ "name"     .= name
                           , "func"     .= func
                           , "workload" .= workload
-                          , "timeout"  .= timeout
                           , "sched_at" .= schedAt
                           ]
 
 job :: String -> String -> Job
 job func name = Job { workload = ""
-                    , timeout  = 0
                     , schedAt  = 0
                     , ..
                     }
@@ -91,7 +87,7 @@ submitJob :: Client -> String -> String -> Int64 -> IO Bool
 submitJob c func name later = do
 
   schedAt <- (+later) . read . show . toEpochTime <$> getUnixTime
-  submitJob_ c $ Job { workload = "", timeout = 0, .. }
+  submitJob_ c $ Job { workload = "", .. }
 
 dropFunc :: Client -> ByteString -> IO Bool
 dropFunc c func = withAgent c $ \agent -> do
@@ -144,6 +140,9 @@ load c h = withAgent c $ \agent -> do
 
 checkHealth :: Client -> IO ()
 checkHealth c = do
-  ret <- ping c
-  if ret then threadDelay 10000000
-         else noopAgent c SocketClosed
+  ret <- timeout 10000000 $ ping c
+  case ret of
+    Nothing -> noopAgent c SocketTimeout
+    Just r ->
+      if r then threadDelay 10000000
+           else noopAgent c SocketClosed

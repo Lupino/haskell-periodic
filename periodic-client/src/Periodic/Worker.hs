@@ -23,7 +23,8 @@ import qualified Periodic.BaseClient     as BC (close)
 import           Periodic.Job            (Job, func, name, newJob, workFail)
 import           Periodic.Socket         (Socket)
 import           Periodic.Types          (ClientType (TypeWorker), Command (..),
-                                          Error (SocketClosed), Payload (..))
+                                          Error (SocketClosed, SocketTimeout),
+                                          Payload (..))
 
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HM (delete, empty, insert, lookup)
@@ -34,6 +35,7 @@ import           Control.Concurrent.QSem
 import           Control.Exception       (SomeException, catch, handle)
 import           Control.Exception       (throwIO)
 import           Control.Monad           (forever, void)
+import           System.Timeout          (timeout)
 
 import           System.Log.Logger       (errorM)
 
@@ -113,6 +115,9 @@ runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
 
 checkHealth :: Worker -> IO ()
 checkHealth w = do
-  ret <- ping w
-  if ret then threadDelay 10000000
-         else noopAgent (bc w) SocketClosed
+  ret <- timeout 10000000 $ ping w
+  case ret of
+    Nothing -> noopAgent (bc w) SocketTimeout
+    Just r ->
+      if r then threadDelay 10000000
+           else noopAgent (bc w) SocketClosed

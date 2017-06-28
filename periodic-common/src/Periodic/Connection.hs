@@ -17,7 +17,8 @@ module Periodic.Connection
   ) where
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
-import qualified Data.ByteString.Char8     as B (ByteString, length, null)
+import qualified Data.ByteString.Char8     as B (ByteString, concat, length,
+                                                 null)
 import           Network.Socket.ByteString (recv, sendAll)
 import           Periodic.Socket           (Socket)
 import qualified Periodic.Socket           as Socket (close)
@@ -75,9 +76,7 @@ send :: Connection -> B.ByteString -> IO ()
 send (Connection {..}) dat = do
   L.with writeLock $ do
     when (B.length dat > maxLength) $ throwIO DataTooLarge
-    sendAll sock responseMagic
-    sendAll sock (makeHeader $ B.length dat)
-    sendAll sock dat
+    sendAll sock $ B.concat [ responseMagic, makeHeader $ B.length dat, dat ]
 
 connected :: Connection -> IO Bool
 connected (Connection {..}) = atomicModifyIORef' status $ \v -> (v, v)

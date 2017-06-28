@@ -198,6 +198,7 @@ noopError e = (payload empty Noop) { payloadError = e }
 
 data Error = MagicNotMatch
            | SocketClosed
+           | SocketTimeout
            | DataTooLarge
            | EmptyError
 
