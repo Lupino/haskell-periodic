@@ -19,7 +19,7 @@ module Periodic.Server.Scheduler
   ) where
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
-import           Control.Monad             (when)
+import           Control.Monad             (void, when)
 import qualified Data.ByteString.Char8     as B (concat)
 import           Data.Int                  (Int64)
 import           Data.UnixTime
@@ -33,6 +33,7 @@ import           Periodic.Server.Job       (Job (..), JobHandle, jHandle,
 import           Periodic.Server.JobQueue  (JobQueue)
 import qualified Periodic.Server.JobQueue  as JQ
 import           Periodic.Types            (Command (JobAssign), nullChar)
+import           Periodic.Utils            (tryIO)
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread,
                                             threadDelay)
@@ -247,7 +248,7 @@ nextMainTimer sched@(Scheduler {..}) t = L.with sMainTimerLock $ do
   threadID' <- forkIO $ do
     when (t > 0) $ do
       atomicModifyIORef' sMainTimerWait (\_ -> (True, ()))
-      threadDelay $ fromIntegral t * 1000000
+      void . tryIO . threadDelay $ fromIntegral t * 1000000
     atomicModifyIORef' sMainTimerWait (\_ -> (False, ()))
     processJob sched
 

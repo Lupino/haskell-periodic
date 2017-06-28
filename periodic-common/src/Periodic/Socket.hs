@@ -10,10 +10,10 @@ module Periodic.Socket
   , close
   ) where
 
-import           Control.Exception (IOException, bracketOnError, catch, throwIO)
-import           Control.Monad     (liftM)
+import           Control.Exception (bracketOnError, throwIO)
 import           Network.BSD       (getProtocolNumber)
 import           Network.Socket
+import           Periodic.Utils    (tryIO)
 
 -- Returns the first action from a list which does not throw an exception.
 -- If all the actions throw exceptions (and the list of actions is not empty),
@@ -55,10 +55,6 @@ connectTo host serv = do
           connect sock (addrAddress addr)
           return sock
         )
-
--- Version of try implemented in terms of the locally defined catchIO
-tryIO :: IO a -> IO (Either IOException a)
-tryIO m = catch (liftM Right m) (return . Left)
 
 connectToFile :: FilePath -> IO Socket
 connectToFile path = do

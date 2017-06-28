@@ -4,6 +4,7 @@ module Periodic.Utils
   , parseHeader
   , parsePayload
   , maxLength
+  , tryIO
   ) where
 
 import           Data.Bits             (shiftL, shiftR, (.&.), (.|.))
@@ -13,6 +14,9 @@ import qualified Data.ByteString.Char8 as B (ByteString, breakSubstring, cons,
 
 import           Periodic.Types        (Command (..), Payload (..), nullChar,
                                         payload)
+
+import           Control.Exception     (IOException, catch)
+import           Control.Monad         (liftM)
 
 makeHeader :: Int -> B.ByteString
 makeHeader x = c 24 `B.cons` c 16 `B.cons` c 8 `B.cons` c 0 `B.cons` B.empty
@@ -46,3 +50,6 @@ parsePayload = go . B.breakSubstring nullChar
         cmd bs = if v > maxBound || v < minBound then Unknown
                                                  else toEnum v
           where v = fromEnum $ B.head bs
+
+tryIO :: IO a -> IO (Either IOException a)
+tryIO m = catch (liftM Right m) (return . Left)
