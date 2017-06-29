@@ -32,14 +32,12 @@ import           Periodic.Types        (ClientType (TypeClient), Command (..),
 import           Data.Aeson            (ToJSON (..), encode, object, (.=))
 import           Data.Int              (Int64)
 
-import           Data.UnixTime
-
 import           Control.Concurrent    (forkIO, threadDelay)
 
 import           Control.Exception     (catch, throwIO)
 import           Control.Monad         (forever, void)
 import           GHC.IO.Handle         (Handle)
-import           Periodic.Utils        (makeHeader, parseHeader)
+import           Periodic.Utils        (getEpochTime, makeHeader, parseHeader)
 import           System.Timeout        (timeout)
 
 type Client = BaseClient
@@ -86,7 +84,7 @@ submitJob_ c j = withAgent c $ \agent -> do
 submitJob :: Client -> String -> String -> Int64 -> IO Bool
 submitJob c func name later = do
 
-  schedAt <- (+later) . read . show . toEpochTime <$> getUnixTime
+  schedAt <- (+later) <$> getEpochTime
   submitJob_ c $ Job { workload = "", .. }
 
 dropFunc :: Client -> ByteString -> IO Bool

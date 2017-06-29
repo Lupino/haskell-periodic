@@ -22,7 +22,6 @@ import qualified Control.Concurrent.Lock   as L (Lock, new, with)
 import           Control.Monad             (void, when)
 import qualified Data.ByteString.Char8     as B (concat)
 import           Data.Int                  (Int64)
-import           Data.UnixTime
 import           Periodic.Server.Agent     (Agent, aAlive, send)
 import           Periodic.Server.FuncList  (FuncList, FuncName, newFuncList)
 import qualified Periodic.Server.FuncList  as FL
@@ -33,7 +32,7 @@ import           Periodic.Server.Job       (Job (..), JobHandle, jHandle,
 import           Periodic.Server.JobQueue  (JobQueue)
 import qualified Periodic.Server.JobQueue  as JQ
 import           Periodic.Types            (Command (JobAssign), nullChar)
-import           Periodic.Utils            (tryIO)
+import           Periodic.Utils            (getEpochTime, tryIO)
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread,
                                             threadDelay)
@@ -186,7 +185,7 @@ processJob sched@(Scheduler {..}) = do
   case st of
     Nothing -> nextMainTimer sched 10
     Just st' -> do
-      now <- read . show . toEpochTime <$> getUnixTime
+      now <- getEpochTime
       if now < (sSchedAt st') then nextMainTimer sched (sSchedAt st' - now)
                               else submitJob now st'
 
@@ -289,7 +288,7 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
   case job of
     Nothing -> return ()
     Just job' -> do
-      nextSchedAt <- (+) later . read . show . toEpochTime <$> getUnixTime
+      nextSchedAt <- (+) later <$> getEpochTime
       let nextJob = job' { jSchedAt = nextSchedAt, jCount = jCount job' + step }
 
       JQ.pushJob sJobQueue nextJob

@@ -33,7 +33,6 @@ library
                      , concurrent-extra
                      , unordered-containers
                      , aeson
-                     , unix-time
                      , psqueues
                      , text
                      , acid-state
