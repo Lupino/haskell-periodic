@@ -50,7 +50,9 @@ newWorker :: Socket -> IO Worker
 newWorker sock = do
   bc <- newBaseClient sock TypeWorker
   tasks <- newIORef HM.empty
-  return Worker { .. }
+  let w = Worker { .. }
+  void $ forkIO $ forever $ checkHealth w
+  return w
 
 addTask :: Worker -> ByteString -> Task -> IO ()
 addTask w f t = atomicModifyIORef' (tasks w) $ \v -> (HM.insert f t v, ())
