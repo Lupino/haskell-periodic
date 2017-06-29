@@ -8,9 +8,10 @@ module Periodic.Server.Client
   , cClose
   ) where
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread)
+import           Control.Concurrent        (ThreadId, forkIO, killThread,
+                                            threadDelay)
 import           Control.Exception         (try)
-import           Control.Monad             (forever, when)
+import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
                                                  pack)
@@ -29,31 +30,53 @@ import           Data.Aeson                (FromJSON (..), decode, encode,
 
 import           Periodic.Types            (Command (..), Error (..),
                                             Payload (..))
-import           Periodic.Utils            (parsePayload)
+import           Periodic.Utils            (getEpochTime, parsePayload)
 
+import           Data.Int                  (Int64)
 import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
-data Client = Client { cConn     :: Connection
-                     , cSched    :: Scheduler
-                     , cThreadID :: IORef (Maybe ThreadId)
+data Client = Client { cConn      :: Connection
+                     , cSched     :: Scheduler
+                     , cThreadID  :: IORef (Maybe ThreadId)
+                     , cThreadID1 :: IORef (Maybe ThreadId)
+                     , cKeepAlive :: Int64
+                     , cLastVist  :: IORef Int64
                      }
 
-newClient :: Connection -> Scheduler -> IO Client
-newClient cConn cSched = do
+newClient :: Connection -> Scheduler -> Int64 -> IO Client
+newClient cConn cSched cKeepAlive = do
   cThreadID <- newIORef Nothing
+  cThreadID1 <- newIORef Nothing
+  cLastVist <- newIORef =<< getEpochTime
   let c = Client {..}
 
   threadID <- forkIO $ forever $ mainLoop c
+  threadID1 <- forkIO $ forever $ checkAlive c
   atomicModifyIORef' cThreadID (\_ -> (Just threadID, ()))
+  atomicModifyIORef' cThreadID1 (\_ -> (Just threadID1, ()))
   return c
 
 mainLoop :: Client -> IO ()
 mainLoop c@(Client {..}) = do
   e <- try $ receive cConn
+  setLastVistTime c =<< getEpochTime
   case e of
     Left SocketClosed -> cClose c
     Left _            -> cClose c
     Right pl          -> handlePayload c (parsePayload pl)
+
+setLastVistTime :: Client -> Int64 -> IO ()
+setLastVistTime (Client {..}) v = atomicModifyIORef' cLastVist (\_ -> (v, ()))
+
+getLastVistTime :: Client -> IO Int64
+getLastVistTime (Client {..}) = atomicModifyIORef' cLastVist (\v -> (v, v))
+
+checkAlive :: Client -> IO ()
+checkAlive c@(Client {..}) = do
+  expiredAt <- (cKeepAlive +) <$> getLastVistTime c
+  now <- getEpochTime
+  if now > expiredAt then cClose c
+                     else threadDelay . fromIntegral $ cKeepAlive * 1000000
 
 handlePayload :: Client -> Payload -> IO ()
 handlePayload c (Payload {..}) = go payloadCMD
@@ -129,7 +152,9 @@ handleLoad sc pl = do
       mapM_ (pushJob sc) lpJobs
 
 cClose :: Client -> IO ()
-cClose (Client { .. }) = do
-  close cConn
+cClose (Client { .. }) = void $ forkIO $ do
   threadID <- atomicModifyIORef' cThreadID (\v -> (v, v))
   when (isJust threadID) $ killThread (fromJust threadID)
+  threadID1 <- atomicModifyIORef' cThreadID1 (\v -> (v, v))
+  when (isJust threadID1) $ killThread (fromJust threadID1)
+  close cConn

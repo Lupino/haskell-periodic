@@ -8,9 +8,10 @@ module Periodic.Server.Worker
   , wClose
   ) where
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread)
+import           Control.Concurrent        (ThreadId, forkIO, killThread,
+                                            threadDelay)
 import           Control.Exception         (try)
-import           Control.Monad             (forever, when)
+import           Control.Monad             (forever, void, when)
 import           Data.ByteString.Char8     (ByteString)
 import qualified Data.ByteString.Char8     as B (breakSubstring, drop, empty,
                                                  null, unpack)
@@ -26,36 +27,56 @@ import           Periodic.Server.Scheduler
 
 import           Periodic.Types            (Command (..), Error (..),
                                             Payload (..), nullChar)
-import           Periodic.Utils            (parsePayload)
+import           Periodic.Utils            (getEpochTime, parsePayload)
 
 import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
-data Worker = Worker { wConn     :: Connection
-                     , wSched    :: Scheduler
-                     , wThreadID :: IORef (Maybe ThreadId)
-                     , wFuncList :: FuncList Bool
-                     , wJobQueue :: FuncList Bool
+data Worker = Worker { wConn      :: Connection
+                     , wSched     :: Scheduler
+                     , wThreadID  :: IORef (Maybe ThreadId)
+                     , wThreadID1 :: IORef (Maybe ThreadId)
+                     , wFuncList  :: FuncList Bool
+                     , wJobQueue  :: FuncList Bool
+                     , wKeepAlive :: Int64
+                     , wLastVist  :: IORef Int64
                      }
 
-newWorker :: Connection -> Scheduler -> IO Worker
-newWorker wConn wSched = do
+newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
+newWorker wConn wSched wKeepAlive = do
   wFuncList <- newFuncList
   wJobQueue <- newFuncList
   wThreadID <- newIORef Nothing
+  wThreadID1 <- newIORef Nothing
+  wLastVist <- newIORef =<< getEpochTime
   let w = Worker { .. }
 
   threadID <- forkIO $ forever $ mainLoop w
+  threadID1 <- forkIO $ forever $ checkAlive w
   atomicModifyIORef' wThreadID (\_ -> (Just threadID, ()))
+  atomicModifyIORef' wThreadID1 (\_ -> (Just threadID1, ()))
   return w
-
 
 mainLoop :: Worker -> IO ()
 mainLoop w@(Worker {..}) = do
   e <- try $ receive wConn
+  setLastVistTime w =<< getEpochTime
   case e of
     Left SocketClosed -> wClose w
     Left _            -> wClose w
     Right pl          -> handlePayload w (parsePayload pl)
+
+setLastVistTime :: Worker -> Int64 -> IO ()
+setLastVistTime (Worker {..}) v = atomicModifyIORef' wLastVist (\_ -> (v, ()))
+
+getLastVistTime :: Worker -> IO Int64
+getLastVistTime (Worker {..}) = atomicModifyIORef' wLastVist (\v -> (v, v))
+
+checkAlive :: Worker -> IO ()
+checkAlive w@(Worker {..}) = do
+  expiredAt <- (wKeepAlive +) <$> getLastVistTime w
+  now <- getEpochTime
+  if now > expiredAt then wClose w
+                     else threadDelay . fromIntegral $ wKeepAlive * 1000000
 
 handlePayload :: Worker -> Payload -> IO ()
 handlePayload w (Payload {..}) = go payloadCMD
@@ -117,9 +138,12 @@ handleCantDo sched fl fn = do
   FL.delete fl fn
 
 wClose :: Worker -> IO ()
-wClose (Worker { .. }) = do
+wClose (Worker { .. }) = void $ forkIO $ do
+  threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
+  when (isJust threadID) $ killThread (fromJust threadID)
+  threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
+  when (isJust threadID1) $ killThread (fromJust threadID1)
+
   mapM_ (failJob wSched) =<< FL.keys wJobQueue
   mapM_ (removeFunc wSched) =<< FL.keys wFuncList
   close wConn
-  threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
-  when (isJust threadID) $ killThread (fromJust threadID)

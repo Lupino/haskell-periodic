@@ -56,8 +56,8 @@ mainLoop sock sched = do
     Right pl            ->
       case tp pl of
         Nothing         -> close conn
-        Just TypeClient -> void $ newClient conn sched
-        Just TypeWorker -> void $ newWorker conn sched
+        Just TypeClient -> void $ newClient conn sched 300
+        Just TypeWorker -> void $ newWorker conn sched 300
 
   where tp :: ByteString -> Maybe ClientType
         tp bs = if v < minBound || v > maxBound then Nothing

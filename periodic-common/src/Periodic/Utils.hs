@@ -5,6 +5,7 @@ module Periodic.Utils
   , parsePayload
   , maxLength
   , tryIO
+  , getEpochTime
   ) where
 
 import           Data.Bits             (shiftL, shiftR, (.&.), (.|.))
@@ -17,6 +18,9 @@ import           Periodic.Types        (Command (..), Payload (..), nullChar,
 
 import           Control.Exception     (IOException, catch)
 import           Control.Monad         (liftM)
+
+import           Data.Int              (Int64)
+import           Data.UnixTime         (getUnixTime, toEpochTime)
 
 makeHeader :: Int -> B.ByteString
 makeHeader x = c 24 `B.cons` c 16 `B.cons` c 8 `B.cons` c 0 `B.cons` B.empty
@@ -53,3 +57,6 @@ parsePayload = go . B.breakSubstring nullChar
 
 tryIO :: IO a -> IO (Either IOException a)
 tryIO m = catch (liftM Right m) (return . Left)
+
+getEpochTime :: IO Int64
+getEpochTime = read . show . toEpochTime <$> getUnixTime
