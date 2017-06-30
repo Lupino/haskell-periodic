@@ -15,16 +15,15 @@ module Periodic.Types.Job
   , unHandle
   ) where
 
-import           Data.Aeson             (FromJSON (..), ToJSON (..), decode,
-                                         encode, object, withObject, (.!=),
-                                         (.:), (.:?), (.=))
+import           Data.Aeson           (FromJSON (..), ToJSON (..), decode,
+                                       encode, object, withObject, (.!=), (.:),
+                                       (.:?), (.=))
 
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B (breakSubstring, concat, drop)
-import           Data.ByteString.Lazy   (fromStrict, toStrict)
-import           Data.Int               (Int64)
-import           Data.Text.Encoding     (decodeUtf8, encodeUtf8)
-import           Periodic.Types.Payload (nullChar)
+import           Data.ByteString      (ByteString)
+import qualified Data.ByteString      as B (breakSubstring, concat, drop)
+import           Data.ByteString.Lazy (fromStrict, toStrict)
+import           Data.Int             (Int64)
+import           Data.Text.Encoding   (decodeUtf8, encodeUtf8)
 
 type FuncName  = ByteString
 type JobName   = ByteString
@@ -69,9 +68,12 @@ parseJob = decode . fromStrict
 unparseJob :: Job -> ByteString
 unparseJob = toStrict . encode
 
+sep :: ByteString
+sep = "__$__"
+
 jHandle :: Job -> JobHandle
-jHandle (Job {..}) = B.concat [ jFuncName, nullChar, jName ]
+jHandle (Job {..}) = B.concat [ jFuncName, sep, jName ]
 
 unHandle :: JobHandle -> (FuncName, JobName)
-unHandle = go . B.breakSubstring nullChar
+unHandle = go . B.breakSubstring sep
   where go (fn, jn) = (fn, B.drop 2 jn)
