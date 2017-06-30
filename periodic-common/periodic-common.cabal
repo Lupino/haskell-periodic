@@ -18,6 +18,10 @@ library
   exposed-modules:     Periodic.Utils
                      , Periodic.Connection
                      , Periodic.Types
+                     , Periodic.Types.Command
+                     , Periodic.Types.ClientType
+                     , Periodic.Types.Error
+                     , Periodic.Types.Payload
                      , Periodic.Socket
 
   build-depends:       base >= 4.7 && < 5
