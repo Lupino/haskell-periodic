@@ -76,4 +76,4 @@ jHandle (Job {..}) = B.concat [ jFuncName, sep, jName ]
 
 unHandle :: JobHandle -> (FuncName, JobName)
 unHandle = go . B.breakSubstring sep
-  where go (fn, jn) = (fn, B.drop 2 jn)
+  where go (fn, jn) = (fn, B.drop 5 jn)
