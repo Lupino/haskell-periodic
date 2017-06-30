@@ -96,7 +96,7 @@ adjustFuncStat (Scheduler {..}) fn = do
   size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
   sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
   minJob <- JQ.findMinJob sJobQueue fn
-  FL.alter sFuncStatList (update size sizePQ minJob) fn
+  FL.alter sFuncStatList (update (size + sizePQ) sizePQ minJob) fn
 
   where update :: Int64 -> Int64 -> Maybe Job -> Maybe FuncStat -> Maybe FuncStat
         update size sizePQ Nothing Nothing = Just ((funcStat fn) { sJob = size
