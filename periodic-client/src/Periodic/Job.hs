@@ -13,54 +13,36 @@ module Periodic.Job
 
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B (breakSubstring, concat, drop, pack)
-import           Data.ByteString.Lazy  (fromStrict)
 import           Periodic.Agent        (send)
 import           Periodic.BaseClient   (BaseClient, withAgent)
 import           Periodic.Types        (Command (..), nullChar)
+import qualified Periodic.Types.Job    as J
 
-import           Data.Aeson            (FromJSON (..), decode, withObject, (.:))
 import           Data.Int              (Int64)
 
-data RawJob = RawJob { _name     :: String
-                     -- unique job name
-                     , _func     :: String
-                     -- refer worker func
-                     , _workload :: String
-                     -- workload
-                     , _counter  :: Int64
-                     }
-  deriving (Show)
-
-instance FromJSON RawJob where
-  parseJSON = withObject "RawJob" $ \o -> do
-    _name     <- o .: "name"
-    _func     <- o .: "func"
-    _workload <- o .: "workload"
-    _counter  <- o .: "counter"
-    return RawJob{ .. }
-
-data Job = Job { name     :: String
-               , func     :: ByteString
-               , workload :: String
-               , counter  :: Int64
+data Job = Job { name     :: J.JobName
+               , func     :: J.FuncName
+               , workload :: J.Workload
+               , counter  :: Int
                , bc       :: BaseClient
-               , handle   :: ByteString
+               , handle   :: J.JobHandle
                }
 
-newJob :: BaseClient -> ByteString -> Job
+newJob :: BaseClient -> ByteString -> Maybe Job
 newJob c = parse . B.breakSubstring nullChar
-  where parse :: (ByteString, ByteString) -> Job
-        parse (h, dat) = parse1 h (B.drop 2 dat)
+  where parse :: (ByteString, ByteString) -> Maybe Job
+        parse (h, dat) = parse1 h (J.parseJob $ B.drop 2 dat)
 
-        parse1 :: ByteString -> ByteString -> Job
-        parse1 h dat = Job { name = _name r
-                           , func = B.pack $ _func r
-                           , workload = _workload r
-                           , counter = _counter r
-                           , handle = h
-                           , bc = c
-                           }
-          where (Just r) = decode $ fromStrict dat
+        parse1 :: ByteString -> Maybe J.Job -> Maybe Job
+        parse1 _ Nothing = Nothing
+        parse1 h (Just r) = Just Job { name = J.jName r
+                                     , func = J.jFuncName r
+                                     , workload = J.jWorkload r
+                                     , counter = J.jCount r
+                                     , handle = h
+                                     , bc = c
+                                     }
+
 
 workDone :: Job -> IO ()
 workDone (Job { handle = h, bc = c }) = withAgent c $ \agent ->

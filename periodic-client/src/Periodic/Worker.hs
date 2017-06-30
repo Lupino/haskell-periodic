@@ -69,7 +69,7 @@ ping (Worker { bc = c }) = withAgent c $ \agent -> do
   ret <- receive agent
   return $ payloadCMD ret == Pong
 
-grabJob :: Worker -> IO Job
+grabJob :: Worker -> IO (Maybe Job)
 grabJob w@(Worker { bc = c }) = withAgent c $ \agent -> do
   send agent GrabJob B.empty
   pl <- receive agent
@@ -95,18 +95,21 @@ work :: Worker -> Int -> IO ()
 work w size = handle (\(_ :: Error) -> close w) $ do
   sem <- newQSem size
   forever $ do
-    job <- grabJob w
-    task <- getTask w (func job)
-    case task of
-      Nothing -> removeFunc w (func job)
-      Just task' -> do
-        waitQSem sem
-        void . forkIO $ runTask task' job >> signalQSem sem
+    j <- grabJob w
+    case j of
+      Nothing -> errorM "Periodic.Worker" "Nothing Job"
+      Just job -> do
+        task <- getTask w (func job)
+        case task of
+          Nothing -> removeFunc w (func job)
+          Just task' -> do
+            waitQSem sem
+            void . forkIO $ runTask task' job >> signalQSem sem
 
 runTask :: Task -> Job -> IO ()
 runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
   errorM "Periodic.Worker" $ concat [ "Failing on running job { name = "
-                                    , name job
+                                    , B.unpack $ name job
                                     , ", "
                                     , B.unpack $ func job
                                     , " }"

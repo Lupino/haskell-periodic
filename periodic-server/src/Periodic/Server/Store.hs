@@ -28,7 +28,7 @@ import qualified Data.Map             as Map
 import           Data.Aeson           (decode, encode)
 import           Data.ByteString.Lazy (ByteString, fromStrict, toStrict)
 import           Data.Maybe           (catMaybes)
-import           Periodic.Server.Job  (Job, JobHandle, jHandle)
+import           Periodic.Types       (Job, JobHandle, jHandle)
 import           Prelude              hiding (lookup)
 
 ------------------------------------------------------

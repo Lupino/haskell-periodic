@@ -27,13 +27,13 @@ import           Periodic.Server.FuncList     (FuncList, FuncName, newFuncList)
 import qualified Periodic.Server.FuncList     as FL
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
-import           Periodic.Server.Job          (Job (..), JobHandle, jHandle,
-                                               unHandle, unparseJob)
 import           Periodic.Server.JobQueue     (JobQueue)
 import qualified Periodic.Server.JobQueue     as JQ
 import           Periodic.Server.ProcessQueue (ProcessQueue)
 import qualified Periodic.Server.ProcessQueue as PQ
-import           Periodic.Types               (Command (JobAssign), nullChar)
+import           Periodic.Types               (Command (JobAssign), Job (..),
+                                               JobHandle, jHandle, nullChar,
+                                               unHandle, unparseJob)
 import           Periodic.Utils               (getEpochTime, tryIO)
 
 import           Control.Concurrent           (ThreadId, forkIO, killThread,

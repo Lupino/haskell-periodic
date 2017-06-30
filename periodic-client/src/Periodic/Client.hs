@@ -15,54 +15,31 @@ module Periodic.Client
   , dump
   , load
   , close
-  , Job (..)
-  , job
   ) where
 
-import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B (empty, hGet, hPut, length)
-import           Data.ByteString.Lazy  (toStrict)
-import           Periodic.Agent        (Agent, receive, send)
-import           Periodic.BaseClient   (BaseClient, close, newBaseClient,
-                                        noopAgent, withAgent)
-import           Periodic.Socket       (Socket)
-import           Periodic.Types        (ClientType (TypeClient), Command (..),
-                                        Error (..), Payload (..))
+import           Data.ByteString.Char8  (ByteString)
+import qualified Data.ByteString.Char8  as B (empty, hGet, hPut, length)
+import           Periodic.Agent         (Agent, receive, send)
+import           Periodic.BaseClient    (BaseClient, close, newBaseClient,
+                                         noopAgent, withAgent)
+import           Periodic.Socket        (Socket)
+import           Periodic.Types         (ClientType (TypeClient))
+import           Periodic.Types.Command
+import           Periodic.Types.Error
+import           Periodic.Types.Job
+import           Periodic.Types.Payload
 
-import           Data.Aeson            (ToJSON (..), encode, object, (.=))
-import           Data.Int              (Int64)
+import           Data.Int               (Int64)
 
-import           Control.Concurrent    (forkIO, threadDelay)
+import           Control.Concurrent     (forkIO, threadDelay)
 
-import           Control.Exception     (catch, throwIO)
-import           Control.Monad         (forever, void)
-import           GHC.IO.Handle         (Handle)
-import           Periodic.Utils        (getEpochTime, makeHeader, parseHeader)
-import           System.Timeout        (timeout)
+import           Control.Exception      (catch, throwIO)
+import           Control.Monad          (forever, void)
+import           GHC.IO.Handle          (Handle)
+import           Periodic.Utils         (getEpochTime, makeHeader, parseHeader)
+import           System.Timeout         (timeout)
 
 type Client = BaseClient
-
-data Job = Job { name     :: String
-               -- unique job name
-               , func     :: String
-               -- refer worker func
-               , workload :: String
-               , schedAt  :: Int64
-               }
-  deriving (Show)
-
-instance ToJSON Job where
-  toJSON Job{..} = object [ "name"     .= name
-                          , "func"     .= func
-                          , "workload" .= workload
-                          , "sched_at" .= schedAt
-                          ]
-
-job :: String -> String -> Job
-job func name = Job { workload = ""
-                    , schedAt  = 0
-                    , ..
-                    }
 
 newClient :: Socket -> IO Client
 newClient sock = do
@@ -78,14 +55,14 @@ ping c = withAgent c $ \agent -> do
 
 submitJob_ :: Client -> Job -> IO Bool
 submitJob_ c j = withAgent c $ \agent -> do
-  send agent SubmitJob (toStrict $ encode j)
+  send agent SubmitJob (unparseJob j)
   isSuccess agent
 
-submitJob :: Client -> String -> String -> Int64 -> IO Bool
-submitJob c func name later = do
+submitJob :: Client -> FuncName -> JobName -> Int64 -> IO Bool
+submitJob c jFuncName jName later = do
 
-  schedAt <- (+later) <$> getEpochTime
-  submitJob_ c $ Job { workload = "", .. }
+  jSchedAt <- (+later) <$> getEpochTime
+  submitJob_ c $ Job { jWorkload = "", jCount = 0, .. }
 
 dropFunc :: Client -> ByteString -> IO Bool
 dropFunc c func = withAgent c $ \agent -> do
@@ -94,11 +71,11 @@ dropFunc c func = withAgent c $ \agent -> do
 
 removeJob_ :: Client -> Job -> IO Bool
 removeJob_ c j = withAgent c $ \agent -> do
-  send agent RemoveJob (toStrict $ encode j)
+  send agent RemoveJob (unparseJob j)
   isSuccess agent
 
-removeJob :: Client -> String -> String -> IO Bool
-removeJob c f n = removeJob_ c $ job f n
+removeJob :: Client -> FuncName -> JobName -> IO Bool
+removeJob c f n = removeJob_ c $ newJob f n
 
 isSuccess :: Agent -> IO Bool
 isSuccess agent = do

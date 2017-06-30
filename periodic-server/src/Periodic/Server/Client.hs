@@ -21,9 +21,9 @@ import           Periodic.Connection       (Connection, close, receive)
 
 import           Periodic.Server.Agent     (Agent, newAgent, send, send_)
 import           Periodic.Server.FuncStat  (FuncStat (..))
-import           Periodic.Server.Job       (Job, parseJob)
 import           Periodic.Server.Scheduler (Scheduler, dropFunc, dumpJob,
                                             pushJob, removeJob, status)
+import           Periodic.Types            (Job, parseJob)
 
 import           Data.Aeson                (FromJSON (..), decode, encode,
                                             object, withObject, (.:), (.=))

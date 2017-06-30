@@ -19,7 +19,7 @@ import           Data.HashMap.Strict      (HashMap, delete, fromList, insert,
 import qualified Data.HashMap.Strict      as HM (lookup)
 import           Periodic.Server.FuncList (FuncList, FuncName, adjust, alter,
                                            elems, lookup)
-import           Periodic.Server.Job      (Job (..))
+import           Periodic.Types           (Job (..))
 import           Prelude                  hiding (lookup, null)
 
 type SubProcessQueue = HashMap FuncName Job

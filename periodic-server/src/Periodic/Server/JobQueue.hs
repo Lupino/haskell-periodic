@@ -20,7 +20,7 @@ import           Data.HashPSQ             (HashPSQ, delete, findMin, fromList,
 import           Data.Int                 (Int64)
 import           Periodic.Server.FuncList (FuncList, FuncName, adjust, alter,
                                            elems, lookup)
-import           Periodic.Server.Job      (Job (..))
+import           Periodic.Types           (Job (..))
 import           Prelude                  hiding (lookup, null)
 
 type SubJobQueue = HashPSQ FuncName Int64 Job
