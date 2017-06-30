@@ -25,6 +25,7 @@ library
                      , Periodic.Server.GrabQueue
                      , Periodic.Server.FuncStat
                      , Periodic.Server.JobQueue
+                     , Periodic.Server.ProcessQueue
                      , Periodic.Server.Store
   build-depends:       base >= 4.7 && < 5
                      , periodic-common

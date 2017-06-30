@@ -18,34 +18,37 @@ module Periodic.Server.Scheduler
   , status
   ) where
 
-import qualified Control.Concurrent.Lock   as L (Lock, new, with)
-import           Control.Monad             (void, when)
-import qualified Data.ByteString.Char8     as B (concat)
-import           Data.Int                  (Int64)
-import           Periodic.Server.Agent     (Agent, aAlive, send)
-import           Periodic.Server.FuncList  (FuncList, FuncName, newFuncList)
-import qualified Periodic.Server.FuncList  as FL
+import qualified Control.Concurrent.Lock      as L (Lock, new, with)
+import           Control.Monad                (void, when)
+import qualified Data.ByteString.Char8        as B (concat)
+import           Data.Int                     (Int64)
+import           Periodic.Server.Agent        (Agent, aAlive, send)
+import           Periodic.Server.FuncList     (FuncList, FuncName, newFuncList)
+import qualified Periodic.Server.FuncList     as FL
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
-import           Periodic.Server.Job       (Job (..), JobHandle, jHandle,
-                                            unparseJob)
-import           Periodic.Server.JobQueue  (JobQueue)
-import qualified Periodic.Server.JobQueue  as JQ
-import           Periodic.Types            (Command (JobAssign), nullChar)
-import           Periodic.Utils            (getEpochTime, tryIO)
+import           Periodic.Server.Job          (Job (..), JobHandle, jHandle,
+                                               unHandle, unparseJob)
+import           Periodic.Server.JobQueue     (JobQueue)
+import qualified Periodic.Server.JobQueue     as JQ
+import           Periodic.Server.ProcessQueue (ProcessQueue)
+import qualified Periodic.Server.ProcessQueue as PQ
+import           Periodic.Types               (Command (JobAssign), nullChar)
+import           Periodic.Utils               (getEpochTime, tryIO)
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread,
-                                            threadDelay)
-import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
-import           Data.Maybe                (fromJust, isJust)
+import           Control.Concurrent           (ThreadId, forkIO, killThread,
+                                               threadDelay)
+import           Data.IORef                   (IORef, atomicModifyIORef',
+                                               newIORef)
+import           Data.Maybe                   (fromJust, isJust)
 
-import           Periodic.Server.Store     (Store)
-import qualified Periodic.Server.Store     as Store
+import           Periodic.Server.Store        (Store)
+import qualified Periodic.Server.Store        as Store
 
 data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
                            , sGrabQueue     :: GrabQueue
                            , sJobQueue      :: JobQueue
-                           , sProcessJob    :: FuncList Job
+                           , sProcessJob    :: ProcessQueue
                            , sMainTimer     :: IORef (Maybe ThreadId)
                            , sMainTimerLock :: L.Lock
                            , sMainTimerWait :: IORef Bool
@@ -63,8 +66,8 @@ newScheduler sStore = do
   sMainTimerLock <- L.new
   let sched = Scheduler {..}
 
-  jobs <- Store.dumpJob sStore
-  mapM_ (restoreJob sched) jobs
+  mapM_ (restoreJob sched) =<< Store.dumpJob sStore
+  mapM_ (adjustFuncStat sched) =<< (FL.keys sJobQueue)
 
   nextMainTimer sched 0
   return sched
@@ -77,65 +80,53 @@ pushJob sched@(Scheduler {..}) job = do
     when has $ do
       Store.insertJob sStore job
       JQ.pushJob sJobQueue job
-      FL.adjust sFuncStatList adjustStat fn
   else do
     Store.insertJob sStore job
     JQ.pushJob sJobQueue job
-    size <- JQ.sizeJob sJobQueue fn
-    FL.alter sFuncStatList (updateStat size) fn
 
+  adjustFuncStat sched fn
   nextMainTimer sched 0
 
   where fn = jFuncName job
         jh = jHandle job
         jn = jName job
-        updateStat :: Int -> Maybe FuncStat -> Maybe FuncStat
-        updateStat _ Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
-        updateStat s (Just fs) = Just (fs { sJob = fromIntegral s
-                                          , sSchedAt = min (sSchedAt fs) (jSchedAt job)
-                                          })
 
-        adjustStat :: FuncStat -> FuncStat
-        adjustStat v = v { sSchedAt = min (jSchedAt job) (sSchedAt v) }
+adjustFuncStat :: Scheduler -> FuncName -> IO ()
+adjustFuncStat (Scheduler {..}) fn = do
+  size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
+  sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
+  minJob <- JQ.findMinJob sJobQueue fn
+  FL.alter sFuncStatList (update size sizePQ minJob) fn
+
+  where update :: Int64 -> Int64 -> Maybe Job -> Maybe FuncStat -> Maybe FuncStat
+        update size sizePQ Nothing Nothing = Just ((funcStat fn) { sJob = size
+                                                                 , sProcess = sizePQ
+                                                                 })
+        update size sizePQ (Just job) Nothing = Just ((funcStat fn) { sJob = size
+                                                                    , sProcess = sizePQ
+                                                                    , sSchedAt = jSchedAt job
+                                                                    })
+        update size sizePQ Nothing (Just stat) = Just (stat { sJob = size
+                                                            , sProcess = sizePQ
+                                                            })
+        update size sizePQ (Just job) (Just stat) = Just (stat { sJob = size
+                                                               , sProcess = sizePQ
+                                                               , sSchedAt = jSchedAt job
+                                                               })
 
 restoreJob :: Scheduler -> Job -> IO ()
 restoreJob (Scheduler {..}) job = do
   JQ.pushJob sJobQueue job
-  size <- JQ.sizeJob sJobQueue fn
-  FL.alter sFuncStatList (updateStat size) fn
-
-  where fn = jFuncName job
-        updateStat :: Int -> Maybe FuncStat -> Maybe FuncStat
-        updateStat _ Nothing = Just ((funcStat fn) { sJob = 1, sSchedAt = jSchedAt job })
-        updateStat s (Just fs) = Just (fs { sJob = fromIntegral s
-                                          , sSchedAt = min (sSchedAt fs) (jSchedAt job)
-                                          })
-
 
 removeJob :: Scheduler -> Job -> IO ()
 removeJob sched@(Scheduler {..}) job = do
   has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
-  when has $ do
-    JQ.removeJob sJobQueue (jFuncName job) (jName job)
-    minJob <- JQ.findMinJob sJobQueue (jFuncName job)
-    let update v = v { sJob = min (sJob v - 1) 0
-                     , sSchedAt = case minJob of
-                                    Nothing -> sSchedAt v
-                                    Just mj -> jSchedAt mj
-                     }
-
-    FL.adjust sFuncStatList update (jFuncName job)
+  when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
 
   isProc <- FL.member sProcessJob (jHandle job)
-  when isProc $ do
-    FL.delete sProcessJob (jHandle job)
-    let update v = v { sJob     = max (sJob v - 1) 0
-                     , sProcess = max (sProcess v - 1) 0
-                     }
-
-    FL.adjust sFuncStatList update (jFuncName job)
-
+  when isProc $ PQ.removeJob sProcessJob (jFuncName job) (jName job)
   Store.deleteJob sStore (jHandle job)
+  adjustFuncStat sched (jFuncName job)
 
   nextMainTimer sched 0
 
@@ -144,22 +135,21 @@ dumpJob (Scheduler {..}) = Store.dumpJob sStore
 
 addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched@(Scheduler {..}) n = do
-  FL.alter sFuncStatList updateFuncStat n
+  FL.alter sFuncStatList updateStat n
   nextMainTimer sched 0
 
-  where updateFuncStat :: Maybe FuncStat -> Maybe FuncStat
-        updateFuncStat Nothing   = Just ((funcStat n) { sWorker = 1 })
-        updateFuncStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
+  where updateStat :: Maybe FuncStat -> Maybe FuncStat
+        updateStat Nothing   = Just ((funcStat n) { sWorker = 1 })
+        updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
 removeFunc sched@(Scheduler {..}) n = do
-  FL.alter sFuncStatList updateFuncStat n
+  FL.alter sFuncStatList updateStat n
   nextMainTimer sched 0
 
-  where updateFuncStat :: Maybe FuncStat -> Maybe FuncStat
-        updateFuncStat Nothing = Just (funcStat n)
-        updateFuncStat (Just fs) = Just (fs { sWorker = max (sWorker fs - 1) 0
-                                            })
+  where updateStat :: Maybe FuncStat -> Maybe FuncStat
+        updateStat Nothing   = Just (funcStat n)
+        updateStat (Just fs) = Just (fs { sWorker = max (sWorker fs - 1) 0 })
 
 dropFunc :: Scheduler -> FuncName -> IO ()
 dropFunc (Scheduler {..}) n = do
@@ -199,9 +189,7 @@ processJob sched@(Scheduler {..}) = do
           job <- JQ.popJob sJobQueue (sFuncName st)
           case job of
             Nothing -> do
-              size <- JQ.sizeJob sJobQueue (sFuncName st)
-              let update v = v { sJob = fromIntegral size }
-              FL.adjust sFuncStatList update (sFuncName st)
+              adjustFuncStat sched (sFuncName st)
               nextMainTimer sched 0
             Just job' -> if jSchedAt job' > now then revertJob job'
                                                 else done job'
@@ -218,17 +206,9 @@ processJob sched@(Scheduler {..}) = do
 
         doneSubmitJob :: Agent -> Job -> IO ()
         doneSubmitJob agent job = do
-          let jh = jHandle job
           assignJob agent job
-          FL.insert sProcessJob jh job
-          minJob <- JQ.findMinJob sJobQueue (jFuncName job)
-          let update v = v { sProcess = min (sProcess v + 1) (sJob v)
-                           , sSchedAt = case minJob of
-                                          Nothing -> sSchedAt v
-                                          Just mj -> jSchedAt mj
-                           }
-          FL.adjust sFuncStatList update (jFuncName job)
-
+          PQ.insertJob sProcessJob job
+          adjustFuncStat sched (jFuncName job)
           nextMainTimer sched 0
 
         submitJob :: Int64 -> FuncStat -> IO ()
@@ -256,35 +236,32 @@ nextMainTimer sched@(Scheduler {..}) t = L.with sMainTimerLock $ do
 
 failJob :: Scheduler -> JobHandle -> IO ()
 failJob sched@(Scheduler {..}) jh = do
-  job <- FL.lookup sProcessJob jh
+  job <- PQ.lookupJob sProcessJob fn jn
   case job of
     Nothing -> return ()
     Just job' -> do
       JQ.pushJob sJobQueue job'
-      FL.delete sProcessJob jh
-      let update v = v { sProcess = max (sProcess v - 1) 0
-                       , sSchedAt = min (sSchedAt v) (jSchedAt job')
-                       }
-      FL.adjust sFuncStatList update (jFuncName job')
+      PQ.removeJob sProcessJob fn jn
+      adjustFuncStat sched fn
       nextMainTimer sched 0
 
+  where (fn, jn) = unHandle jh
+
 doneJob :: Scheduler -> JobHandle -> IO ()
-doneJob (Scheduler {..}) jh = do
-  job <- FL.lookup sProcessJob jh
+doneJob sched@(Scheduler {..}) jh = do
+  job <- PQ.lookupJob sProcessJob fn jn
   case job of
     Nothing -> return ()
-    Just job' -> do
-      FL.delete sProcessJob jh
-      let update v = v { sProcess = max (sProcess v - 1) 0
-                       , sJob = max (sJob v - 1) 0
-                       }
-
-      FL.adjust sFuncStatList update (jFuncName job')
+    Just _ -> do
+      PQ.removeJob sProcessJob fn jn
+      adjustFuncStat sched fn
       Store.deleteJob sStore jh
+
+  where (fn, jn) = unHandle jh
 
 schedLaterJob :: Scheduler -> JobHandle -> Int64 -> Int -> IO ()
 schedLaterJob sched@(Scheduler {..}) jh later step = do
-  job <- FL.lookup sProcessJob jh
+  job <- PQ.lookupJob sProcessJob fn jn
   case job of
     Nothing -> return ()
     Just job' -> do
@@ -293,14 +270,12 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
 
       JQ.pushJob sJobQueue nextJob
       Store.insertJob sStore nextJob
-      FL.delete sProcessJob jh
 
-      let update v = v { sProcess = max (sProcess v - 1) 0
-                       , sSchedAt = min (sSchedAt v) nextSchedAt
-                       }
-
-      FL.adjust sFuncStatList update (jFuncName job')
+      PQ.removeJob sProcessJob fn jn
+      adjustFuncStat sched fn
       nextMainTimer sched 0
+
+  where (fn, jn) = unHandle jh
 
 status :: Scheduler -> IO [FuncStat]
 status (Scheduler {..}) = FL.elems sFuncStatList

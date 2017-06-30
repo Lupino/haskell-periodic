@@ -6,6 +6,7 @@ module Periodic.Server.Job
     parseJob
   , unparseJob
   , jHandle
+  , unHandle
   , JobHandle
   , Job (..)
   ) where
@@ -15,11 +16,12 @@ import           Data.Aeson               (FromJSON (..), ToJSON (..), decode,
                                            (.:), (.:?), (.=))
 
 import           Data.ByteString          (ByteString)
-import qualified Data.ByteString          as B (concat)
+import qualified Data.ByteString          as B (breakSubstring, concat, drop)
 import           Data.ByteString.Lazy     (fromStrict, toStrict)
 import           Data.Int                 (Int64)
 import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import           Periodic.Server.FuncList (FuncName)
+import           Periodic.Types           (nullChar)
 
 data Job = Job { jSchedAt  :: Int64
                , jFuncName :: FuncName
@@ -56,4 +58,8 @@ unparseJob :: Job -> ByteString
 unparseJob = toStrict . encode
 
 jHandle :: Job -> JobHandle
-jHandle (Job {..}) = B.concat [ jFuncName, jName ]
+jHandle (Job {..}) = B.concat [ jFuncName, nullChar, jName ]
+
+unHandle :: JobHandle -> (FuncName, ByteString)
+unHandle = go . B.breakSubstring nullChar
+  where go (fn, jn) = (fn, B.drop 2 jn)
