@@ -10,20 +10,20 @@ module Periodic.Utils
   , readBS
   ) where
 
-import           Data.Bits             (shiftL, shiftR, (.&.), (.|.))
-import qualified Data.ByteString.Char8 as B (ByteString, breakSubstring, cons,
-                                             drop, empty, head, length, null,
-                                             tail, unpack)
+import           Data.Bits              (shiftL, shiftR, (.&.), (.|.))
+import qualified Data.ByteString.Char8  as B (ByteString, breakSubstring, cons,
+                                              drop, empty, head, length, null,
+                                              tail, unpack)
 
-import           Periodic.Types        (Command (..), Payload (..), nullChar,
-                                        nullCharLength, payload)
+import           Periodic.Types.Command
+import           Periodic.Types.Payload
 
-import           Control.Exception     (IOException, catch)
-import           Control.Monad         (liftM)
+import           Control.Exception      (IOException, catch)
+import           Control.Monad          (liftM)
 
-import           Data.Int              (Int64)
-import           Data.UnixTime         (getUnixTime, toEpochTime)
-import           Text.Read             (readMaybe)
+import           Data.Int               (Int64)
+import           Data.UnixTime          (getUnixTime, toEpochTime)
+import           Text.Read              (readMaybe)
 
 makeHeader :: Int -> B.ByteString
 makeHeader x = c 24 `B.cons` c 16 `B.cons` c 8 `B.cons` c 0 `B.cons` B.empty

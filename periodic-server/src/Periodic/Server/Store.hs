@@ -25,10 +25,10 @@ import           Data.Typeable        (Typeable)
 
 import qualified Data.Map             as Map
 
-import           Data.Aeson           (decode, encode)
-import           Data.ByteString.Lazy (ByteString, fromStrict, toStrict)
+import           Data.ByteString      (ByteString)
 import           Data.Maybe           (catMaybes)
-import           Periodic.Types       (Job, JobHandle, jHandle)
+import           Periodic.Types       (Job, JobHandle, decodeJob, encodeJob,
+                                       jHandle)
 import           Prelude              hiding (lookup)
 
 ------------------------------------------------------
@@ -81,25 +81,25 @@ $(makeAcidic ''KeyValue ['insert, 'lookup, 'delete, 'elems, 'keys, 'member])
 
 lookupJob :: Store -> JobHandle -> IO (Maybe Job)
 lookupJob st jh = do
-  rt <- query st (Lookup (fromStrict jh))
+  rt <- query st (Lookup jh)
   case rt of
     Nothing -> return Nothing
-    Just bs -> return $ decode bs
+    Just bs -> return $ decodeJob bs
 
 insertJob :: Store -> Job -> IO ()
-insertJob st job = update st (Insert (fromStrict $ jHandle job) (encode job))
+insertJob st job = update st (Insert (jHandle job) (encodeJob job))
 
 deleteJob :: Store -> JobHandle -> IO ()
-deleteJob st jh = update st (Delete (fromStrict jh))
+deleteJob st jh = update st (Delete jh)
 
 dumpJob :: Store -> IO [Job]
-dumpJob st = catMaybes . map decode <$> query st Elems
+dumpJob st = catMaybes . map decodeJob <$> query st Elems
 
 dumpJobHandle :: Store -> IO [JobHandle]
-dumpJobHandle st = map toStrict <$> query st Keys
+dumpJobHandle st = query st Keys
 
 existsJob :: Store -> JobHandle -> IO Bool
-existsJob st jh = query st (Member (fromStrict jh))
+existsJob st jh = query st (Member jh)
 
 newStore :: FilePath -> IO Store
 newStore fp = openLocalStateFrom fp (KeyValue Map.empty)

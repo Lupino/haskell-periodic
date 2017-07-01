@@ -11,20 +11,26 @@ module Periodic.Types.Job
   , newJob
   , parseJob
   , unparseJob
+  , decodeJob
+  , encodeJob
   , jHandle
   , unHandle
   ) where
 
-import           Data.Aeson           (FromJSON (..), ToJSON (..), decode,
-                                       encode, object, withObject, (.!=), (.:),
-                                       (.:?), (.=))
+import           Data.Aeson             (FromJSON (..), ToJSON (..), decode,
+                                         encode, object, withObject, (.!=),
+                                         (.:), (.:?), (.=))
 
-import           Data.ByteString      (ByteString)
-import qualified Data.ByteString      as B (breakSubstring, concat, drop,
-                                            length)
-import           Data.ByteString.Lazy (fromStrict, toStrict)
-import           Data.Int             (Int64)
-import           Data.Text.Encoding   (decodeUtf8, encodeUtf8)
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString.Char8  as B (breakSubstring, concat, drop,
+                                              empty, length, null, pack)
+import           Data.ByteString.Lazy   (fromStrict, toStrict)
+import           Data.Int               (Int64)
+import           Data.Text.Encoding     (decodeUtf8, encodeUtf8)
+
+import           Data.Maybe             (catMaybes)
+import           Periodic.Types.Payload (nullChar)
+import           Periodic.Utils         (breakBS, readBS)
 
 type FuncName  = ByteString
 type JobName   = ByteString
@@ -57,7 +63,7 @@ instance ToJSON Job where
                           ]
 
 newJob :: FuncName -> JobName -> Job
-newJob jFuncName jName = Job { jWorkload = ""
+newJob jFuncName jName = Job { jWorkload = B.empty
                              , jSchedAt = 0
                              , jCount = 0
                              , ..
@@ -68,6 +74,38 @@ parseJob = decode . fromStrict
 
 unparseJob :: Job -> ByteString
 unparseJob = toStrict . encode
+
+encodeJob :: Job -> ByteString
+encodeJob Job {..} = concatBS [ Just jFuncName
+                              , Just jName
+                              , if B.null jWorkload then Nothing else Just jWorkload
+                              , if jSchedAt > 0 then Just (B.pack $ show jSchedAt)
+                                                else Nothing
+                              , if jCount == 0 && B.null jWorkload then Nothing
+                                                                   else Just (B.pack $ show jCount)
+                              ]
+
+ where join :: [ByteString] -> [ByteString]
+       join []     = []
+       join (x:[]) = [x]
+       join (x:xs) = (x:nullChar:join xs)
+
+       concatBS = B.concat . join . catMaybes
+
+decodeJob :: ByteString -> Maybe Job
+decodeJob = go . breakBS 5
+  where go :: [ByteString] -> Maybe Job
+        go []            = Nothing
+        go (_:[])        = Nothing
+        go (x:y:[])      = Just $ newJob x y
+        go (x:y:z:[])    = Just $ (newJob x y) { jSchedAt = readBS z }
+        go (x:y:z:a:[])  = Just $ (newJob x y) { jSchedAt = readBS z
+                                               , jCount = readBS a
+                                               }
+        go (x:y:z:a:b:_) = Just $ (newJob x y) { jWorkload = z
+                                               , jSchedAt = readBS a
+                                               , jCount = readBS b
+                                               }
 
 sep :: ByteString
 sep = "func:name"
