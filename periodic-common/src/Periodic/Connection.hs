@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -62,15 +63,16 @@ newClientConn sock = newConn sock magicRES magicREQ
 receive :: Connection -> IO B.ByteString
 receive c@(Connection {..}) = do
   L.with readLock $ do
-    magic <- recv sock 4
+    !magic <- recv sock 4
     case magic == requestMagic of
       False -> do
         setStatus c False
         if B.null magic then throwIO SocketClosed
                         else throwIO MagicNotMatch
       True -> do
-        header <- recv sock 4
-        recv sock (parseHeader header)
+        !header <- recv sock 4
+        !ret <- recv sock (parseHeader header)
+        return ret
 
 send :: Connection -> B.ByteString -> IO ()
 send (Connection {..}) dat = do
