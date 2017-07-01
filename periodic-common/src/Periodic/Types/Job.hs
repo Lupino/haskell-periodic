@@ -20,7 +20,8 @@ import           Data.Aeson           (FromJSON (..), ToJSON (..), decode,
                                        (.:?), (.=))
 
 import           Data.ByteString      (ByteString)
-import qualified Data.ByteString      as B (breakSubstring, concat, drop)
+import qualified Data.ByteString      as B (breakSubstring, concat, drop,
+                                            length)
 import           Data.ByteString.Lazy (fromStrict, toStrict)
 import           Data.Int             (Int64)
 import           Data.Text.Encoding   (decodeUtf8, encodeUtf8)
@@ -69,11 +70,14 @@ unparseJob :: Job -> ByteString
 unparseJob = toStrict . encode
 
 sep :: ByteString
-sep = "__$__"
+sep = "func:name"
+
+sepLength :: Int
+sepLength = B.length sep
 
 jHandle :: Job -> JobHandle
 jHandle (Job {..}) = B.concat [ jFuncName, sep, jName ]
 
 unHandle :: JobHandle -> (FuncName, JobName)
 unHandle = go . B.breakSubstring sep
-  where go (fn, jn) = (fn, B.drop 5 jn)
+  where go (fn, jn) = (fn, B.drop sepLength jn)
