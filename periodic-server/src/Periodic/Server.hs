@@ -20,7 +20,7 @@ import           System.Posix.Signals      (Handler (Catch), installHandler,
 -- server
 import           Control.Exception         (try)
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString           as B (head)
+import qualified Data.ByteString           as B (head, null)
 import           Periodic.Connection       (close, newServerConn, receive)
 import           Periodic.Server.Client    (newClient)
 import           Periodic.Server.Scheduler
@@ -61,6 +61,8 @@ mainLoop sock sched = do
         Just TypeWorker -> void $ newWorker conn sched 300
 
   where tp :: ByteString -> Maybe ClientType
-        tp bs = if v < minBound || v > maxBound then Nothing
-                                                else Just (toEnum v)
+        tp bs | B.null bs = Nothing
+              | v == 1    = Just TypeClient
+              | v == 2    = Just TypeWorker
+              | otherwise = Nothing
           where v = fromEnum $ B.head bs

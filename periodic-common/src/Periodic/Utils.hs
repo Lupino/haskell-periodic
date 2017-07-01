@@ -49,8 +49,9 @@ parsePayload = go . breakBS 3
         go []     = payload B.empty Unknown
 
         cmd :: B.ByteString -> Command
-        cmd bs = if v > maxBound || v < minBound then Unknown
-                                                 else toEnum v
+        cmd bs | B.null bs = Unknown
+               | otherwise = if v > maxBound || v < minBound then Unknown
+                                                             else toEnum v
           where v = fromEnum $ B.head bs
 
 tryIO :: IO a -> IO (Either IOException a)
