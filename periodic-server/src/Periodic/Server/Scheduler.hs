@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Server.Scheduler
   (
@@ -19,6 +20,7 @@ module Periodic.Server.Scheduler
   ) where
 
 import qualified Control.Concurrent.Lock      as L (Lock, new, with)
+import           Control.Exception            (SomeException, try)
 import           Control.Monad                (void, when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
@@ -206,10 +208,13 @@ processJob sched@(Scheduler {..}) = do
 
         doneSubmitJob :: Agent -> Job -> IO ()
         doneSubmitJob agent job = do
-          assignJob agent job
-          PQ.insertJob sProcessJob job
-          adjustFuncStat sched (jFuncName job)
-          nextMainTimer sched 0
+          e <- try $ assignJob agent job
+          case e of
+            Left (_::SomeException) -> revertJob job
+            Right _ -> do
+              PQ.insertJob sProcessJob job
+              adjustFuncStat sched (jFuncName job)
+              nextMainTimer sched 0
 
         submitJob :: Int64 -> FuncStat -> IO ()
         submitJob now st = popJobThen now st $ popMaybeAgentThen st doneSubmitJob

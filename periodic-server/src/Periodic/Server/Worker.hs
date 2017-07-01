@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Server.Worker
   (
@@ -10,7 +11,7 @@ module Periodic.Server.Worker
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread,
                                             threadDelay)
-import           Control.Exception         (try)
+import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (empty)
@@ -23,8 +24,7 @@ import           Periodic.Server.FuncList  (FuncList, newFuncList)
 import qualified Periodic.Server.FuncList  as FL
 import           Periodic.Server.Scheduler
 
-import           Periodic.Types            (Command (..), Error (..),
-                                            Payload (..))
+import           Periodic.Types            (Command (..), Payload (..))
 import           Periodic.Utils            (breakBS, getEpochTime, parsePayload,
                                             readBS)
 
@@ -60,9 +60,12 @@ mainLoop w@(Worker {..}) = do
   e <- try $ receive wConn
   setLastVistTime w =<< getEpochTime
   case e of
-    Left SocketClosed -> wClose w
-    Left _            -> wClose w
-    Right pl          -> handlePayload w (parsePayload pl)
+    Left (_::SomeException) -> wClose w
+    Right pl                -> do
+      e' <- try $ handlePayload w (parsePayload pl)
+      case e' of
+        Left (_::SomeException) -> wClose w
+        Right _                 -> return ()
 
 setLastVistTime :: Worker -> Int64 -> IO ()
 setLastVistTime (Worker {..}) v = atomicModifyIORef' wLastVist (\_ -> (v, ()))

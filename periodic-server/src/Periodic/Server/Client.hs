@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Server.Client
   (
@@ -10,7 +11,7 @@ module Periodic.Server.Client
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread,
                                             threadDelay)
-import           Control.Exception         (try)
+import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
@@ -28,8 +29,7 @@ import           Periodic.Types            (Job, parseJob)
 import           Data.Aeson                (FromJSON (..), decode, encode,
                                             object, withObject, (.:), (.=))
 
-import           Periodic.Types            (Command (..), Error (..),
-                                            Payload (..))
+import           Periodic.Types            (Command (..), Payload (..))
 import           Periodic.Utils            (getEpochTime, parsePayload)
 
 import           Data.Int                  (Int64)
@@ -61,9 +61,12 @@ mainLoop c@(Client {..}) = do
   e <- try $ receive cConn
   setLastVistTime c =<< getEpochTime
   case e of
-    Left SocketClosed -> cClose c
-    Left _            -> cClose c
-    Right pl          -> handlePayload c (parsePayload pl)
+    Left (_::SomeException) -> cClose c
+    Right pl                -> do
+      e' <- try $ handlePayload c (parsePayload pl)
+      case e' of
+        Left (_::SomeException) -> cClose c
+        Right _                 -> return ()
 
 setLastVistTime :: Client -> Int64 -> IO ()
 setLastVistTime (Client {..}) v = atomicModifyIORef' cLastVist (\_ -> (v, ()))
