@@ -20,8 +20,10 @@ module Periodic.Server.Scheduler
   ) where
 
 import qualified Control.Concurrent.Lock      as L (Lock, new, with)
+import           Control.Concurrent.MVar      (MVar, newEmptyMVar, putMVar,
+                                               takeMVar)
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (void, when)
+import           Control.Monad                (forever, void, when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Server.Agent        (Agent, aAlive, send)
@@ -53,8 +55,9 @@ data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
                            , sJobQueue      :: JobQueue
                            , sProcessJob    :: ProcessQueue
                            , sMainTimer     :: IORef (Maybe ThreadId)
+                           , sMainWaiter    :: MVar Bool
+                           , sMainRunner    :: IORef (Maybe ThreadId)
                            , sMainTimerLock :: L.Lock
-                           , sMainTimerWait :: IORef Bool
                            , sStore         :: Store
                            }
 
@@ -66,12 +69,16 @@ newScheduler sStore = do
   sJobQueue      <- newFuncList
   sProcessJob    <- newFuncList
   sMainTimer     <- newIORef Nothing
-  sMainTimerWait <- newIORef False
+  sMainWaiter    <- newEmptyMVar
+  sMainRunner    <- newIORef Nothing
   sMainTimerLock <- L.new
   let sched = Scheduler {..}
 
   mapM_ (restoreJob sched) =<< Store.dumpJob sStore
   mapM_ (adjustFuncStat sched) =<< (FL.keys sJobQueue)
+
+  threadID <- forkIO $ forever $ processJob sched
+  atomicModifyIORef' sMainRunner (\_ -> (Just threadID, ()))
 
   nextMainTimer sched 0
   return sched
@@ -175,6 +182,7 @@ pushGrab sched@(Scheduler {..}) fl jh ag = do
 
 processJob :: Scheduler -> IO ()
 processJob sched@(Scheduler {..}) = do
+  void $ takeMVar sMainWaiter
   st <- getFirstSched sFuncStatList sGrabQueue
   case st of
     Nothing -> nextMainTimer sched 10
@@ -228,18 +236,15 @@ assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
                                                       ]
 
 nextMainTimer :: Scheduler -> Int64 -> IO ()
-nextMainTimer sched@(Scheduler {..}) t = L.with sMainTimerLock $ do
+nextMainTimer (Scheduler {..}) t = L.with sMainTimerLock $ do
   threadID <- atomicModifyIORef' sMainTimer (\v -> (v, v))
-  wait <- atomicModifyIORef' sMainTimerWait (\v -> (v, v))
+  when (isJust threadID) $ killThread (fromJust threadID)
   threadID' <- forkIO $ do
     when (t > 0) $ do
-      atomicModifyIORef' sMainTimerWait (\_ -> (True, ()))
       void . tryIO . threadDelay $ fromIntegral t * 1000000
-    atomicModifyIORef' sMainTimerWait (\_ -> (False, ()))
-    processJob sched
+    putMVar sMainWaiter True
 
   atomicModifyIORef' sMainTimer (\_ -> (Just threadID', ()))
-  when (isJust threadID && wait) $ killThread (fromJust threadID)
 
 failJob :: Scheduler -> JobHandle -> IO ()
 failJob sched@(Scheduler {..}) jh = do
