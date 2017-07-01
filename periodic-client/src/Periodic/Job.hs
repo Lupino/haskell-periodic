@@ -12,11 +12,12 @@ module Periodic.Job
   ) where
 
 import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B (breakSubstring, concat, drop, pack)
+import qualified Data.ByteString.Char8 as B (concat, pack)
 import           Periodic.Agent        (send)
 import           Periodic.BaseClient   (BaseClient, withAgent)
-import           Periodic.Types        (Command (..), nullChar, nullCharLength)
+import           Periodic.Types        (Command (..), nullChar)
 import qualified Periodic.Types.Job    as J
+import           Periodic.Utils        (breakBS)
 
 import           Data.Int              (Int64)
 
@@ -29,19 +30,21 @@ data Job = Job { name     :: J.JobName
                }
 
 newJob :: BaseClient -> ByteString -> Maybe Job
-newJob c = parse . B.breakSubstring nullChar
-  where parse :: (ByteString, ByteString) -> Maybe Job
-        parse (h, dat) = parse1 h (J.parseJob $ B.drop nullCharLength dat)
+newJob c = go . breakBS 2
+  where go :: [ByteString] -> Maybe Job
+        go []        = Nothing
+        go (_:[])    = Nothing
+        go (h:dat:_) = parse h (J.parseJob dat)
 
-        parse1 :: ByteString -> Maybe J.Job -> Maybe Job
-        parse1 _ Nothing = Nothing
-        parse1 h (Just r) = Just Job { name = J.jName r
-                                     , func = J.jFuncName r
-                                     , workload = J.jWorkload r
-                                     , counter = J.jCount r
-                                     , handle = h
-                                     , bc = c
-                                     }
+        parse :: ByteString -> Maybe J.Job -> Maybe Job
+        parse _ Nothing = Nothing
+        parse h (Just r) = Just Job { name = J.jName r
+                                    , func = J.jFuncName r
+                                    , workload = J.jWorkload r
+                                    , counter = J.jCount r
+                                    , handle = h
+                                    , bc = c
+                                    }
 
 
 workDone :: Job -> IO ()
