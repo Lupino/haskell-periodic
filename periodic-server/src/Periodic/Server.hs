@@ -41,13 +41,18 @@ startServer storePath sock = do
   void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
   void $ installHandler sigINT (Catch $ handleExit bye) Nothing
 
-  thread <- forkIO $ forever $ mainLoop sock sched
+  thread <- forkIO $ forever $ do
+    -- if accept failed exit
+    e <- tryIO $ mainLoop sock sched
+    case e of
+      Left _  -> handleExit bye
+      Right _ -> return ()
   void $ takeMVar bye
   killThread thread
   Socket.close sock
 
 mainLoop :: Socket -> Scheduler -> IO ()
-mainLoop sock sched = void $ tryIO $ do
+mainLoop sock sched = do
   (sock', _) <- accept sock
   conn <- newServerConn sock'
   e <- try $ receive conn
