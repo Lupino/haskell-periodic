@@ -61,10 +61,11 @@ getEpochTime = read . show . toEpochTime <$> getUnixTime
 
 breakBS :: Int -> B.ByteString -> [B.ByteString]
 breakBS step bs | B.null bs = []
+                | step == 0 = []
+                | step == 1 = [bs]
                 | otherwise = go step $ B.breakSubstring nullChar bs
   where go :: Int -> (B.ByteString, B.ByteString) -> [B.ByteString]
         go s (x, xs) | B.null xs = [x]
-                     | s == 0    = [x, trim xs]
                      | otherwise = (x:breakBS (s-1) (trim xs))
 
         trim :: B.ByteString -> B.ByteString
