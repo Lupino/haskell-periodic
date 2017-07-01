@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Server
   (
@@ -17,7 +18,7 @@ import           System.Posix.Signals      (Handler (Catch), installHandler,
                                             sigINT, sigTERM)
 
 -- server
-import           Control.Exception         (try)
+import           Control.Exception         (SomeException, try)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (head, null)
 import           Periodic.Connection       (close, newServerConn, receive)
@@ -25,7 +26,8 @@ import           Periodic.Server.Client    (newClient)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Store     (newStore)
 import           Periodic.Server.Worker    (newWorker)
-import           Periodic.Types            (ClientType (..), Error (..))
+import           Periodic.Types            (ClientType (..))
+import           Periodic.Utils            (tryIO)
 
 handleExit :: MVar Bool -> IO ()
 handleExit mv = putMVar mv True
@@ -45,14 +47,13 @@ startServer storePath sock = do
   Socket.close sock
 
 mainLoop :: Socket -> Scheduler -> IO ()
-mainLoop sock sched = do
+mainLoop sock sched = void $ tryIO $ do
   (sock', _) <- accept sock
   conn <- newServerConn sock'
   e <- try $ receive conn
   case e of
-    Left SocketClosed   -> close conn
-    Left _              -> close conn
-    Right pl            ->
+    Left (_::SomeException) -> close conn
+    Right pl                ->
       case tp pl of
         Nothing         -> close conn
         Just TypeClient -> void $ newClient conn sched 300
