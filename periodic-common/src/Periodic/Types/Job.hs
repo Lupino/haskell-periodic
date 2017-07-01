@@ -108,7 +108,7 @@ decodeJob = go . breakBS 5
                                                }
 
 sep :: ByteString
-sep = "func:name"
+sep = "::"
 
 sepLength :: Int
 sepLength = B.length sep
