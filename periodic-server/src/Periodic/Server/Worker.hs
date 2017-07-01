@@ -38,6 +38,7 @@ data Worker = Worker { wConn      :: Connection
                      , wJobQueue  :: FuncList Bool
                      , wKeepAlive :: Int64
                      , wLastVist  :: IORef Int64
+                     , wClosed    :: IORef Bool
                      }
 
 newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
@@ -46,7 +47,9 @@ newWorker wConn wSched wKeepAlive = do
   wJobQueue <- newFuncList
   wThreadID <- newIORef Nothing
   wThreadID1 <- newIORef Nothing
+  wClosed   <- newIORef False
   wLastVist <- newIORef =<< getEpochTime
+
   let w = Worker { .. }
 
   threadID <- forkIO $ forever $ mainLoop w
@@ -136,11 +139,13 @@ handleCantDo sched fl fn = do
 
 wClose :: Worker -> IO ()
 wClose (Worker { .. }) = void $ forkIO $ do
-  threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
-  when (isJust threadID) $ killThread (fromJust threadID)
-  threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
-  when (isJust threadID1) $ killThread (fromJust threadID1)
+  closed <- atomicModifyIORef' wClosed (\v -> (True, v))
+  when (not closed) $ do
+    threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
+    when (isJust threadID) $ killThread (fromJust threadID)
+    threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
+    when (isJust threadID1) $ killThread (fromJust threadID1)
 
-  mapM_ (failJob wSched) =<< FL.keys wJobQueue
-  mapM_ (removeFunc wSched) =<< FL.keys wFuncList
-  close wConn
+    mapM_ (failJob wSched) =<< FL.keys wJobQueue
+    mapM_ (removeFunc wSched) =<< FL.keys wFuncList
+    close wConn
