@@ -26,7 +26,8 @@ import qualified Periodic.Server.FuncList  as FL
 import           Periodic.Server.Scheduler
 
 import           Periodic.Types            (Command (..), Error (..),
-                                            Payload (..), nullChar)
+                                            Payload (..), nullChar,
+                                            nullCharLength)
 import           Periodic.Utils            (getEpochTime, parsePayload)
 
 import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
@@ -121,11 +122,11 @@ handleSchedLater sched jq pl = do
         readBS = maybe 0 id . readMaybe . B.unpack
         parse :: (ByteString, ByteString) -> (ByteString, Int64, Int)
         parse (jh, xs) | B.null xs = (jh, 0, 0)
-                       | otherwise = parse1 jh (breakBS $ B.drop 2 xs)
+                       | otherwise = parse1 jh (breakBS $ B.drop nullCharLength xs)
 
         parse1 :: ByteString -> (ByteString, ByteString) -> (ByteString, Int64, Int)
         parse1 jh (later, step) | B.null step = (jh, readBS later, 0)
-                                | otherwise = (jh, readBS later, readBS $ B.drop 2 step)
+                                | otherwise = (jh, readBS later, readBS $ B.drop nullCharLength step)
 
 handleCanDo :: Scheduler -> FuncList Bool -> ByteString -> IO ()
 handleCanDo sched fl fn = do

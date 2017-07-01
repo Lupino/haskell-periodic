@@ -15,7 +15,7 @@ import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B (breakSubstring, concat, drop, pack)
 import           Periodic.Agent        (send)
 import           Periodic.BaseClient   (BaseClient, withAgent)
-import           Periodic.Types        (Command (..), nullChar)
+import           Periodic.Types        (Command (..), nullChar, nullCharLength)
 import qualified Periodic.Types.Job    as J
 
 import           Data.Int              (Int64)
@@ -31,7 +31,7 @@ data Job = Job { name     :: J.JobName
 newJob :: BaseClient -> ByteString -> Maybe Job
 newJob c = parse . B.breakSubstring nullChar
   where parse :: (ByteString, ByteString) -> Maybe Job
-        parse (h, dat) = parse1 h (J.parseJob $ B.drop 2 dat)
+        parse (h, dat) = parse1 h (J.parseJob $ B.drop nullCharLength dat)
 
         parse1 :: ByteString -> Maybe J.Job -> Maybe Job
         parse1 _ Nothing = Nothing

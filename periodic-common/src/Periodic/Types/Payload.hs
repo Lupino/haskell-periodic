@@ -6,15 +6,20 @@ module Periodic.Types.Payload
   , payload
   , noopError
   , nullChar
+  , nullCharLength
   ) where
 
 import           Periodic.Types.Command (Command (Noop))
 import           Periodic.Types.Error   (Error (EmptyError))
 
-import           Data.ByteString        (ByteString, empty)
+import           Data.ByteString        (ByteString, empty, length)
+import           Prelude                hiding (length)
 
 nullChar :: ByteString
 nullChar = "\00\01"
+
+nullCharLength :: Int
+nullCharLength = length nullChar
 
 data Payload = Payload { payloadID    :: ByteString
                        , payloadCMD   :: Command

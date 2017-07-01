@@ -14,7 +14,7 @@ import qualified Data.ByteString.Char8 as B (ByteString, breakSubstring, cons,
                                              tail)
 
 import           Periodic.Types        (Command (..), Payload (..), nullChar,
-                                        payload)
+                                        nullCharLength, payload)
 
 import           Control.Exception     (IOException, catch)
 import           Control.Monad         (liftM)
@@ -40,7 +40,7 @@ parsePayload :: B.ByteString -> Payload
 parsePayload = go . B.breakSubstring nullChar
   where go :: (B.ByteString, B.ByteString) -> Payload
         go (pid, xs) | B.null xs = payload pid Unknown
-                     | otherwise = go1 pid (B.breakSubstring nullChar $ B.drop 2 xs)
+                     | otherwise = go1 pid (B.breakSubstring nullChar $ B.drop nullCharLength xs)
 
         go1 :: B.ByteString -> (B.ByteString, B.ByteString) -> Payload
         go1 pid (x, xs) | B.length x == 1 = (payload pid (cmd x)) { payloadData = trim xs }
@@ -48,7 +48,7 @@ parsePayload = go . B.breakSubstring nullChar
 
         trim :: B.ByteString -> B.ByteString
         trim xs | B.null xs = B.empty
-                | otherwise = B.drop 2 xs
+                | otherwise = B.drop nullCharLength xs
 
         cmd :: B.ByteString -> Command
         cmd bs = if v > maxBound || v < minBound then Unknown
