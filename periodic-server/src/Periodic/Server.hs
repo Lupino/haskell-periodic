@@ -6,8 +6,7 @@ module Periodic.Server
   ) where
 
 import           Control.Monad             (forever, void)
-import           Network.Socket            (Socket, SocketOption (KeepAlive),
-                                            accept, setSocketOption)
+import           Network.Socket            (Socket, accept)
 import qualified Network.Socket            as Socket (close)
 
 -- process
@@ -48,7 +47,6 @@ startServer storePath sock = do
 mainLoop :: Socket -> Scheduler -> IO ()
 mainLoop sock sched = do
   (sock', _) <- accept sock
-  setSocketOption sock' KeepAlive 1
   conn <- newServerConn sock'
   e <- try $ receive conn
   case e of

@@ -51,7 +51,6 @@ connectTo host serv = do
         (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
         (close)  -- only done if there's an error
         (\sock -> do
-          setSocketOption sock KeepAlive 1
           connect sock (addrAddress addr)
           return sock
         )
@@ -62,7 +61,6 @@ connectToFile path = do
     (socket AF_UNIX Stream 0)
     (close)
     (\sock -> do
-      setSocketOption sock KeepAlive 1
       connect sock (SockAddrUnix path)
       return sock
     )
