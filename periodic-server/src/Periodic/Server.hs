@@ -11,7 +11,7 @@ import           Network.Socket            (Socket, SocketOption (KeepAlive),
 import qualified Network.Socket            as Socket (close)
 
 -- process
-import           Control.Concurrent        (forkIO)
+import           Control.Concurrent        (forkIO, killThread)
 import           Control.Concurrent.MVar   (MVar, newEmptyMVar, putMVar,
                                             takeMVar)
 import           System.Posix.Signals      (Handler (Catch), installHandler,
@@ -40,8 +40,9 @@ startServer storePath sock = do
   void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
   void $ installHandler sigINT (Catch $ handleExit bye) Nothing
 
-  void . forkIO $ forever $ mainLoop sock sched
+  thread <- forkIO $ forever $ mainLoop sock sched
   void $ takeMVar bye
+  killThread thread
   Socket.close sock
 
 mainLoop :: Socket -> Scheduler -> IO ()
