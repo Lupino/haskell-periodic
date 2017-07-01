@@ -12,13 +12,11 @@ import           Control.Concurrent        (ThreadId, forkIO, killThread,
                                             threadDelay)
 import           Control.Exception         (try)
 import           Control.Monad             (forever, void, when)
-import           Data.ByteString.Char8     (ByteString)
-import qualified Data.ByteString.Char8     as B (breakSubstring, drop, empty,
-                                                 null, unpack)
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString           as B (empty)
 import           Data.Int                  (Int64)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
-import           Text.Read                 (readMaybe)
 
 import           Periodic.Server.Agent     (Agent, newAgent, send)
 import           Periodic.Server.FuncList  (FuncList, newFuncList)
@@ -26,9 +24,9 @@ import qualified Periodic.Server.FuncList  as FL
 import           Periodic.Server.Scheduler
 
 import           Periodic.Types            (Command (..), Error (..),
-                                            Payload (..), nullChar,
-                                            nullCharLength)
-import           Periodic.Utils            (getEpochTime, parsePayload)
+                                            Payload (..))
+import           Periodic.Utils            (breakBS, getEpochTime, parsePayload,
+                                            readBS)
 
 import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
@@ -112,21 +110,16 @@ handleWorkFail sched jq jh = do
 
 handleSchedLater :: Scheduler -> FuncList Bool -> ByteString -> IO ()
 handleSchedLater sched jq pl = do
-  let (jh, later, step) = parse (breakBS pl)
+  let (jh, later, step) = parse (breakBS 3 pl)
 
   schedLaterJob sched jh later step
   FL.delete jq jh
 
-  where breakBS = B.breakSubstring nullChar
-        readBS :: (Num a, Read a) => ByteString -> a
-        readBS = maybe 0 id . readMaybe . B.unpack
-        parse :: (ByteString, ByteString) -> (ByteString, Int64, Int)
-        parse (jh, xs) | B.null xs = (jh, 0, 0)
-                       | otherwise = parse1 jh (breakBS $ B.drop nullCharLength xs)
-
-        parse1 :: ByteString -> (ByteString, ByteString) -> (ByteString, Int64, Int)
-        parse1 jh (later, step) | B.null step = (jh, readBS later, 0)
-                                | otherwise = (jh, readBS later, readBS $ B.drop nullCharLength step)
+  where parse :: [ByteString] -> (ByteString, Int64, Int)
+        parse (a:b:c:_) = (a, readBS b, readBS c)
+        parse (a:b:[])  = (a, readBS b, 0)
+        parse (a:[])    = (a, 0, 0)
+        parse []        = (B.empty, 0, 0)
 
 handleCanDo :: Scheduler -> FuncList Bool -> ByteString -> IO ()
 handleCanDo sched fl fn = do

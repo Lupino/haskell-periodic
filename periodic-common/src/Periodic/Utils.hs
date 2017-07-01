@@ -6,12 +6,14 @@ module Periodic.Utils
   , maxLength
   , tryIO
   , getEpochTime
+  , breakBS
+  , readBS
   ) where
 
 import           Data.Bits             (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString.Char8 as B (ByteString, breakSubstring, cons,
                                              drop, empty, head, length, null,
-                                             tail)
+                                             tail, unpack)
 
 import           Periodic.Types        (Command (..), Payload (..), nullChar,
                                         nullCharLength, payload)
@@ -21,6 +23,7 @@ import           Control.Monad         (liftM)
 
 import           Data.Int              (Int64)
 import           Data.UnixTime         (getUnixTime, toEpochTime)
+import           Text.Read             (readMaybe)
 
 makeHeader :: Int -> B.ByteString
 makeHeader x = c 24 `B.cons` c 16 `B.cons` c 8 `B.cons` c 0 `B.cons` B.empty
@@ -37,18 +40,13 @@ parseHeader = go [24, 16, 8, 0]
         go (x:xs) h = fromEnum (B.head h) `shiftL` x .|. go xs (B.tail h)
 
 parsePayload :: B.ByteString -> Payload
-parsePayload = go . B.breakSubstring nullChar
-  where go :: (B.ByteString, B.ByteString) -> Payload
-        go (pid, xs) | B.null xs = payload pid Unknown
-                     | otherwise = go1 pid (B.breakSubstring nullChar $ B.drop nullCharLength xs)
-
-        go1 :: B.ByteString -> (B.ByteString, B.ByteString) -> Payload
-        go1 pid (x, xs) | B.length x == 1 = (payload pid (cmd x)) { payloadData = trim xs }
-                        | otherwise       = (payload pid Noop) { payloadData = x }
-
-        trim :: B.ByteString -> B.ByteString
-        trim xs | B.null xs = B.empty
-                | otherwise = B.drop nullCharLength xs
+parsePayload = go . breakBS 3
+  where go :: [B.ByteString] -> Payload
+        go (a:b:c:_) = (payload a (cmd b)) { payloadData = c }
+        go (a:b:[]) | B.length b == 1 = payload a (cmd b)
+                    | otherwise       = (payload a Noop) { payloadData = b }
+        go (a:[]) = payload a Unknown
+        go []     = payload B.empty Unknown
 
         cmd :: B.ByteString -> Command
         cmd bs = if v > maxBound || v < minBound then Unknown
@@ -60,3 +58,18 @@ tryIO m = catch (liftM Right m) (return . Left)
 
 getEpochTime :: IO Int64
 getEpochTime = read . show . toEpochTime <$> getUnixTime
+
+breakBS :: Int -> B.ByteString -> [B.ByteString]
+breakBS step bs | B.null bs = []
+                | otherwise = go step $ B.breakSubstring nullChar bs
+  where go :: Int -> (B.ByteString, B.ByteString) -> [B.ByteString]
+        go s (x, xs) | B.null xs = [x]
+                     | s == 0    = [x, trim xs]
+                     | otherwise = (x:breakBS (s-1) (trim xs))
+
+        trim :: B.ByteString -> B.ByteString
+        trim xs | B.null xs = B.empty
+                | otherwise = B.drop nullCharLength xs
+
+readBS :: (Num a, Read a) => B.ByteString -> a
+readBS = maybe 0 id . readMaybe . B.unpack
