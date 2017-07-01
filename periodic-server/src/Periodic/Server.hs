@@ -45,8 +45,10 @@ startServer storePath sock = do
     -- if accept failed exit
     e <- tryIO $ mainLoop sock sched
     case e of
-      Left _  -> handleExit bye
       Right _ -> return ()
+      Left e'  -> do
+        print e'
+        handleExit bye
   void $ takeMVar bye
   killThread thread
   Socket.close sock
