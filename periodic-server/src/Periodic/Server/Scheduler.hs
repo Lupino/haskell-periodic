@@ -48,6 +48,7 @@ import           Periodic.Server.Store        (Store)
 import qualified Periodic.Server.Store        as Store
 
 data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
+                           , sFuncStatLock  :: L.Lock
                            , sGrabQueue     :: GrabQueue
                            , sJobQueue      :: JobQueue
                            , sProcessJob    :: ProcessQueue
@@ -60,6 +61,7 @@ data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
 newScheduler :: Store -> IO Scheduler
 newScheduler sStore = do
   sFuncStatList  <- newFuncList
+  sFuncStatLock  <- L.new
   sGrabQueue     <- newFuncList
   sJobQueue      <- newFuncList
   sProcessJob    <- newFuncList
@@ -94,7 +96,7 @@ pushJob sched@(Scheduler {..}) job = do
         jn = jName job
 
 adjustFuncStat :: Scheduler -> FuncName -> IO ()
-adjustFuncStat (Scheduler {..}) fn = do
+adjustFuncStat (Scheduler {..}) fn = L.with sFuncStatLock $ do
   size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
   sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
   minJob <- JQ.findMinJob sJobQueue fn
@@ -136,7 +138,7 @@ dumpJob :: Scheduler -> IO [Job]
 dumpJob (Scheduler {..}) = Store.dumpJob sStore
 
 addFunc :: Scheduler -> FuncName -> IO ()
-addFunc sched@(Scheduler {..}) n = do
+addFunc sched@(Scheduler {..}) n = L.with sFuncStatLock $ do
   FL.alter sFuncStatList updateStat n
   nextMainTimer sched 0
 
@@ -145,7 +147,7 @@ addFunc sched@(Scheduler {..}) n = do
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc sched@(Scheduler {..}) n = do
+removeFunc sched@(Scheduler {..}) n = L.with sFuncStatLock $ do
   FL.alter sFuncStatList updateStat n
   nextMainTimer sched 0
 
@@ -154,7 +156,7 @@ removeFunc sched@(Scheduler {..}) n = do
         updateStat (Just fs) = Just (fs { sWorker = max (sWorker fs - 1) 0 })
 
 dropFunc :: Scheduler -> FuncName -> IO ()
-dropFunc (Scheduler {..}) n = do
+dropFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
   st <- FL.lookup sFuncStatList n
   case st of
     Nothing -> return ()
