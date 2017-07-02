@@ -11,6 +11,7 @@ module Periodic.Server.Worker
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread,
                                             threadDelay)
+import qualified Control.Concurrent.Lock   as L (Lock, new, with)
 import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
@@ -40,6 +41,7 @@ data Worker = Worker { wConn      :: Connection
                      , wKeepAlive :: Int64
                      , wLastVist  :: IORef Int64
                      , wClosed    :: IORef Bool
+                     , wLocker    :: L.Lock
                      }
 
 newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
@@ -49,6 +51,7 @@ newWorker wConn wSched wKeepAlive = do
   wThreadID <- newIORef Nothing
   wThreadID1 <- newIORef Nothing
   wClosed   <- newIORef False
+  wLocker   <- L.new
   wLastVist <- newIORef =<< getEpochTime
 
   let w = Worker { .. }
@@ -139,14 +142,14 @@ handleCantDo sched fl fn = do
   delete fl fn
 
 wClose :: Worker -> IO ()
-wClose (Worker { .. }) = void $ forkIO $ do
+wClose (Worker { .. }) = void $ forkIO $ L.with wLocker $ do
   closed <- atomicModifyIORef' wClosed (\v -> (True, v))
-  when (not closed) $ do
-    threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
-    when (isJust threadID) $ killThread (fromJust threadID)
-    threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
-    when (isJust threadID1) $ killThread (fromJust threadID1)
+  threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
+  when (isJust threadID) $ killThread (fromJust threadID)
+  threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
+  when (isJust threadID1) $ killThread (fromJust threadID1)
 
+  when (not closed) $ do
     mapM_ (failJob wSched) =<< toList wJobQueue
     mapM_ (removeFunc wSched) =<< toList wFuncList
     close wConn
