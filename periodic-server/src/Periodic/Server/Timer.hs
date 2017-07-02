@@ -8,6 +8,8 @@ module Periodic.Server.Timer
   , initTimer
   , startTimer
   , startTimer'
+  , repeatTimer
+  , repeatTimer'
   , clearTimer
   ) where
 
@@ -75,3 +77,24 @@ startTimer (Timer {..}) delay = do
 --
 startTimer' :: Timer -> Int -> IO ()
 startTimer' t delay = startTimer t (delay * 1000000)
+
+-- | repeatTimer for a given number of microseconds
+--
+repeatTimer :: Timer -> Int -> IO ()
+repeatTimer (Timer {..}) delay = do
+  takeMVar locker
+  t <- atomicModifyIORef' timer (\v -> (v, v))
+  when (isJust t) $ killThread (fromJust t)
+
+  t' <- forkIO $ forever $ do
+    when (delay > 0) $ threadDelay $ delay
+    putMVar waiter ()
+
+  atomicModifyIORef' timer (\_ -> (Just t', ()))
+
+  putMVar locker ()
+
+-- | repeatTimer' for a given number of seconds
+--
+repeatTimer' :: Timer -> Int -> IO ()
+repeatTimer' t delay = startTimer t (delay * 1000000)

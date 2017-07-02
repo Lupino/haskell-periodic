@@ -72,7 +72,7 @@ newScheduler sStore = do
   initTimer sRevertTimer $ revertProcessQueue sched
 
   startTimer sMainTimer 0
-  startTimer' sRevertTimer 300
+  repeatTimer' sRevertTimer 300
 
   return sched
 
@@ -283,7 +283,6 @@ revertProcessQueue :: Scheduler -> IO ()
 revertProcessQueue sched@(Scheduler {..}) = do
   now <- getEpochTime
   mapM_ (failJob sched . jHandle) =<< filter (isTimeout now) <$> PQ.dumpJob sProcessJob
-  startTimer' sRevertTimer 300
   where isTimeout :: Int64 -> Job -> Bool
         isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
 
