@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Periodic.Server.Timer
+module Periodic.Timer
   (
     Timer
   , newTimer

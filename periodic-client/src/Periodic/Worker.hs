@@ -22,15 +22,18 @@ import           Periodic.BaseClient     (BaseClient, newBaseClient, noopAgent,
 import qualified Periodic.BaseClient     as BC (close)
 import           Periodic.Job            (Job, func, name, newJob, workFail)
 import           Periodic.Socket         (Socket)
-import           Periodic.Types          (ClientType (TypeWorker), Command (..),
-                                          Error (SocketClosed, SocketTimeout),
-                                          Payload (..))
+import           Periodic.Timer
+import           Periodic.Types.Command
+import           Periodic.Types.Error
+import           Periodic.Types.Payload
+
+import           Periodic.Types          (ClientType (TypeWorker))
 
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HM (delete, empty, insert, lookup)
 import           Data.IORef              (IORef, atomicModifyIORef', newIORef)
 
-import           Control.Concurrent      (forkIO, threadDelay)
+import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.QSem
 import           Control.Exception       (SomeException, catch, handle)
 import           Control.Exception       (throwIO)
@@ -51,7 +54,11 @@ newWorker sock = do
   bc <- newBaseClient sock TypeWorker
   tasks <- newIORef HM.empty
   let w = Worker { .. }
-  void $ forkIO $ forever $ checkHealth w
+
+  timer <- newTimer
+  initTimer timer $ checkHealth w
+  repeatTimer' timer 100
+
   return w
 
 addTask :: Worker -> ByteString -> Task -> IO ()
@@ -124,5 +131,5 @@ checkHealth w = do
   case ret of
     Nothing -> noopAgent (bc w) SocketTimeout
     Just r ->
-      if r then threadDelay 10000000
+      if r then return ()
            else noopAgent (bc w) SocketClosed

@@ -9,8 +9,7 @@ module Periodic.Server.Client
   , cClose
   ) where
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread,
-                                            threadDelay)
+import           Control.Concurrent        (ThreadId, forkIO, killThread)
 import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
@@ -29,6 +28,7 @@ import           Periodic.Types            (Job, parseJob)
 import           Data.Aeson                (FromJSON (..), decode, encode,
                                             object, withObject, (.:), (.=))
 
+import           Periodic.Timer
 import           Periodic.Types            (Command (..), Payload (..))
 import           Periodic.Utils            (getEpochTime, parsePayload)
 
@@ -38,22 +38,24 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 data Client = Client { cConn      :: Connection
                      , cSched     :: Scheduler
                      , cThreadID  :: IORef (Maybe ThreadId)
-                     , cThreadID1 :: IORef (Maybe ThreadId)
                      , cKeepAlive :: Int64
+                     , cTimer     :: Timer
                      , cLastVist  :: IORef Int64
                      }
 
 newClient :: Connection -> Scheduler -> Int64 -> IO Client
 newClient cConn cSched cKeepAlive = do
   cThreadID <- newIORef Nothing
-  cThreadID1 <- newIORef Nothing
   cLastVist <- newIORef =<< getEpochTime
+  cTimer <- newTimer
   let c = Client {..}
 
   threadID <- forkIO $ forever $ mainLoop c
-  threadID1 <- forkIO $ forever $ checkAlive c
+  initTimer cTimer $ checkAlive c
+
   atomicModifyIORef' cThreadID (\_ -> (Just threadID, ()))
-  atomicModifyIORef' cThreadID1 (\_ -> (Just threadID1, ()))
+
+  repeatTimer' cTimer (fromIntegral cKeepAlive)
   return c
 
 mainLoop :: Client -> IO ()
@@ -79,7 +81,7 @@ checkAlive c@(Client {..}) = do
   expiredAt <- (cKeepAlive +) <$> getLastVistTime c
   now <- getEpochTime
   if now > expiredAt then cClose c
-                     else threadDelay . fromIntegral $ cKeepAlive * 1000000
+                     else return ()
 
 handlePayload :: Client -> Payload -> IO ()
 handlePayload c (Payload {..}) = go payloadCMD
@@ -158,6 +160,5 @@ cClose :: Client -> IO ()
 cClose (Client { .. }) = void $ forkIO $ do
   threadID <- atomicModifyIORef' cThreadID (\v -> (v, v))
   when (isJust threadID) $ killThread (fromJust threadID)
-  threadID1 <- atomicModifyIORef' cThreadID1 (\v -> (v, v))
-  when (isJust threadID1) $ killThread (fromJust threadID1)
+  clearTimer cTimer
   close cConn

@@ -24,6 +24,7 @@ library
                      , Periodic.Types.Payload
                      , Periodic.Types.Job
                      , Periodic.Socket
+                     , Periodic.Timer
 
   build-depends:       base >= 4.7 && < 5
                      , bytestring

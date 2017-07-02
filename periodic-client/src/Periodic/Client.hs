@@ -23,6 +23,7 @@ import           Periodic.Agent         (Agent, receive, send)
 import           Periodic.BaseClient    (BaseClient, close, newBaseClient,
                                          noopAgent, withAgent)
 import           Periodic.Socket        (Socket)
+import           Periodic.Timer
 import           Periodic.Types         (ClientType (TypeClient))
 import           Periodic.Types.Command
 import           Periodic.Types.Error
@@ -31,10 +32,8 @@ import           Periodic.Types.Payload
 
 import           Data.Int               (Int64)
 
-import           Control.Concurrent     (forkIO, threadDelay)
-
 import           Control.Exception      (catch, throwIO)
-import           Control.Monad          (forever, void)
+import           Control.Monad          (forever)
 import           GHC.IO.Handle          (Handle)
 import           Periodic.Utils         (getEpochTime, makeHeader, parseHeader)
 import           System.Timeout         (timeout)
@@ -44,7 +43,9 @@ type Client = BaseClient
 newClient :: Socket -> IO Client
 newClient sock = do
   c <- newBaseClient sock TypeClient
-  void $ forkIO $ forever $ checkHealth c
+  timer <- newTimer
+  initTimer timer $ checkHealth c
+  repeatTimer' timer 100
   return c
 
 ping :: Client -> IO Bool
@@ -119,5 +120,5 @@ checkHealth c = do
   case ret of
     Nothing -> noopAgent c SocketTimeout
     Just r ->
-      if r then threadDelay 10000000
+      if r then return ()
            else noopAgent c SocketClosed

@@ -9,8 +9,7 @@ module Periodic.Server.Worker
   , wClose
   ) where
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread,
-                                            threadDelay)
+import           Control.Concurrent        (ThreadId, forkIO, killThread)
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
 import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
@@ -25,6 +24,7 @@ import           Periodic.Server.IOList    (IOList, delete, insert, newIOList,
                                             toList)
 import           Periodic.Server.Scheduler
 
+import           Periodic.Timer
 import           Periodic.Types            (Command (..), Payload (..))
 import           Periodic.Types.Job        (FuncName, JobHandle)
 import           Periodic.Utils            (breakBS, getEpochTime, parsePayload,
@@ -35,7 +35,7 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 data Worker = Worker { wConn      :: Connection
                      , wSched     :: Scheduler
                      , wThreadID  :: IORef (Maybe ThreadId)
-                     , wThreadID1 :: IORef (Maybe ThreadId)
+                     , wTimer     :: Timer
                      , wFuncList  :: IOList FuncName
                      , wJobQueue  :: IOList JobHandle
                      , wKeepAlive :: Int64
@@ -49,7 +49,7 @@ newWorker wConn wSched wKeepAlive = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
   wThreadID <- newIORef Nothing
-  wThreadID1 <- newIORef Nothing
+  wTimer <- newTimer
   wClosed   <- newIORef False
   wLocker   <- L.new
   wLastVist <- newIORef =<< getEpochTime
@@ -57,9 +57,9 @@ newWorker wConn wSched wKeepAlive = do
   let w = Worker { .. }
 
   threadID <- forkIO $ forever $ mainLoop w
-  threadID1 <- forkIO $ forever $ checkAlive w
+  initTimer wTimer $ checkAlive w
   atomicModifyIORef' wThreadID (\_ -> (Just threadID, ()))
-  atomicModifyIORef' wThreadID1 (\_ -> (Just threadID1, ()))
+  repeatTimer' wTimer $ fromIntegral wKeepAlive
   return w
 
 mainLoop :: Worker -> IO ()
@@ -85,7 +85,7 @@ checkAlive w@(Worker {..}) = do
   expiredAt <- (wKeepAlive +) <$> getLastVistTime w
   now <- getEpochTime
   if now > expiredAt then wClose w
-                     else threadDelay . fromIntegral $ wKeepAlive * 1000000
+                     else return ()
 
 handlePayload :: Worker -> Payload -> IO ()
 handlePayload w (Payload {..}) = go payloadCMD
@@ -146,8 +146,8 @@ wClose (Worker { .. }) = void $ forkIO $ L.with wLocker $ do
   closed <- atomicModifyIORef' wClosed (\v -> (True, v))
   threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
   when (isJust threadID) $ killThread (fromJust threadID)
-  threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
-  when (isJust threadID1) $ killThread (fromJust threadID1)
+
+  clearTimer wTimer
 
   when (not closed) $ do
     mapM_ (failJob wSched) =<< toList wJobQueue

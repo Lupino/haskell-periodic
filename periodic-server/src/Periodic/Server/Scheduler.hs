@@ -36,7 +36,7 @@ import           Periodic.Server.JobQueue     (JobQueue)
 import qualified Periodic.Server.JobQueue     as JQ
 import           Periodic.Server.ProcessQueue (ProcessQueue)
 import qualified Periodic.Server.ProcessQueue as PQ
-import           Periodic.Server.Timer
+import           Periodic.Timer
 import           Periodic.Types               (Command (JobAssign), nullChar)
 import           Periodic.Types.Job
 import           Periodic.Utils               (getEpochTime)
