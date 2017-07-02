@@ -27,10 +27,10 @@ import           Control.Monad                (forever, void, when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Server.Agent        (Agent, aAlive, send)
-import           Periodic.Server.FuncList     (newFuncList)
-import qualified Periodic.Server.FuncList     as FL
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
+import           Periodic.Server.IOHashMap    (newIOHashMap)
+import qualified Periodic.Server.IOHashMap    as FL
 import           Periodic.Server.IOList       (IOList)
 import qualified Periodic.Server.IOList       as IL
 import           Periodic.Server.JobQueue     (JobQueue)
@@ -64,11 +64,11 @@ data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
 
 newScheduler :: Store -> IO Scheduler
 newScheduler sStore = do
-  sFuncStatList  <- newFuncList
+  sFuncStatList  <- newIOHashMap
   sFuncStatLock  <- L.new
   sGrabQueue     <- newGrabQueue
-  sJobQueue      <- newFuncList
-  sProcessJob    <- newFuncList
+  sJobQueue      <- newIOHashMap
+  sProcessJob    <- newIOHashMap
   sMainTimer     <- newIORef Nothing
   sMainWaiter    <- newEmptyMVar
   sMainRunner    <- newIORef Nothing

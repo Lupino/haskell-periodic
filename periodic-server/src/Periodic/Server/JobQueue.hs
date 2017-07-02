@@ -14,18 +14,18 @@ module Periodic.Server.JobQueue
   , sizeJob
   ) where
 
-import           Data.ByteString          (ByteString)
-import           Data.HashPSQ             (HashPSQ, delete, findMin, fromList,
-                                           insert, member, size, toList)
-import           Data.Int                 (Int64)
-import           Periodic.Server.FuncList (FuncList, FuncName, adjust, alter,
-                                           elems, lookup)
-import           Periodic.Types           (Job (..))
-import           Prelude                  hiding (lookup, null)
+import           Data.ByteString           (ByteString)
+import           Data.HashPSQ              (HashPSQ, delete, findMin, fromList,
+                                            insert, member, size, toList)
+import           Data.Int                  (Int64)
+import           Periodic.Server.IOHashMap (IOHashMap, adjust, alter, elems,
+                                            lookup)
+import           Periodic.Types            (FuncName, Job (..))
+import           Prelude                   hiding (lookup, null)
 
 type SubJobQueue = HashPSQ FuncName Int64 Job
 
-type JobQueue = FuncList SubJobQueue
+type JobQueue = IOHashMap SubJobQueue
 
 pushJob :: JobQueue -> Job -> IO ()
 pushJob q j@(Job {..}) = alter q update jFuncName

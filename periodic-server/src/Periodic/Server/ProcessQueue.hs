@@ -13,18 +13,18 @@ module Periodic.Server.ProcessQueue
   , sizeJob
   ) where
 
-import           Data.ByteString          (ByteString)
-import           Data.HashMap.Strict      (HashMap, delete, fromList, insert,
-                                           member, size, toList)
-import qualified Data.HashMap.Strict      as HM (lookup)
-import           Periodic.Server.FuncList (FuncList, FuncName, adjust, alter,
-                                           elems, lookup)
-import           Periodic.Types           (Job (..))
-import           Prelude                  hiding (lookup, null)
+import           Data.ByteString           (ByteString)
+import           Data.HashMap.Strict       (HashMap, delete, fromList, insert,
+                                            member, size, toList)
+import qualified Data.HashMap.Strict       as HM (lookup)
+import           Periodic.Server.IOHashMap (IOHashMap, adjust, alter, elems,
+                                            lookup)
+import           Periodic.Types            (FuncName, Job (..))
+import           Prelude                   hiding (lookup, null)
 
 type SubProcessQueue = HashMap FuncName Job
 
-type ProcessQueue = FuncList SubProcessQueue
+type ProcessQueue = IOHashMap SubProcessQueue
 
 insertJob :: ProcessQueue -> Job -> IO ()
 insertJob q j@(Job {..}) = alter q update jFuncName

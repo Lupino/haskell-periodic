@@ -10,8 +10,9 @@ module Periodic.Server.FuncStat
   ) where
 
 import           Data.Int                  (Int64)
-import           Periodic.Server.FuncList  (FuncList, FuncName, elems)
 import           Periodic.Server.GrabQueue (GrabQueue, hasAgent)
+import           Periodic.Server.IOHashMap (IOHashMap, elems)
+import           Periodic.Types            (FuncName)
 
 data FuncStat = FuncStat { sSchedAt  :: Int64
                          , sWorker   :: Int64
@@ -20,7 +21,7 @@ data FuncStat = FuncStat { sSchedAt  :: Int64
                          , sFuncName :: FuncName
                          }
 
-type FuncStatList = FuncList FuncStat
+type FuncStatList = IOHashMap FuncStat
 
 funcStat :: FuncName -> FuncStat
 funcStat sFuncName = FuncStat { sSchedAt = 0, sWorker = 0, sJob = 0, sProcess = 0, .. }
