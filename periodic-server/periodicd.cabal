@@ -27,6 +27,7 @@ library
                      , Periodic.Server.JobQueue
                      , Periodic.Server.ProcessQueue
                      , Periodic.Server.Store
+                     , Periodic.Server.Timer
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring

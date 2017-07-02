@@ -21,10 +21,8 @@ module Periodic.Server.Scheduler
   ) where
 
 import qualified Control.Concurrent.Lock      as L (Lock, new, with)
-import           Control.Concurrent.MVar      (MVar, newEmptyMVar, putMVar,
-                                               takeMVar)
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (forever, void, when)
+import           Control.Monad                (forever, when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Server.Agent        (Agent, aAlive, send)
@@ -38,9 +36,10 @@ import           Periodic.Server.JobQueue     (JobQueue)
 import qualified Periodic.Server.JobQueue     as JQ
 import           Periodic.Server.ProcessQueue (ProcessQueue)
 import qualified Periodic.Server.ProcessQueue as PQ
+import           Periodic.Server.Timer
 import           Periodic.Types               (Command (JobAssign), nullChar)
 import           Periodic.Types.Job
-import           Periodic.Utils               (getEpochTime, tryIO)
+import           Periodic.Utils               (getEpochTime)
 
 import           Control.Concurrent           (ThreadId, forkIO, killThread,
                                                threadDelay)
@@ -51,17 +50,14 @@ import           Data.Maybe                   (fromJust, isJust)
 import           Periodic.Server.Store        (Store)
 import qualified Periodic.Server.Store        as Store
 
-data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
-                           , sFuncStatLock  :: L.Lock
-                           , sGrabQueue     :: GrabQueue
-                           , sJobQueue      :: JobQueue
-                           , sProcessJob    :: ProcessQueue
-                           , sMainTimer     :: IORef (Maybe ThreadId)
-                           , sMainWaiter    :: MVar Bool
-                           , sMainRunner    :: IORef (Maybe ThreadId)
-                           , sRevertRunner  :: IORef (Maybe ThreadId)
-                           , sMainTimerLock :: L.Lock
-                           , sStore         :: Store
+data Scheduler = Scheduler { sFuncStatList :: FuncStatList
+                           , sFuncStatLock :: L.Lock
+                           , sGrabQueue    :: GrabQueue
+                           , sJobQueue     :: JobQueue
+                           , sProcessJob   :: ProcessQueue
+                           , sMainTimer    :: Timer
+                           , sRevertRunner :: IORef (Maybe ThreadId)
+                           , sStore        :: Store
                            }
 
 newScheduler :: Store -> IO Scheduler
@@ -71,23 +67,19 @@ newScheduler sStore = do
   sGrabQueue     <- newGrabQueue
   sJobQueue      <- newIOHashMap
   sProcessJob    <- newIOHashMap
-  sMainTimer     <- newIORef Nothing
-  sMainWaiter    <- newEmptyMVar
-  sMainRunner    <- newIORef Nothing
+  sMainTimer     <- newTimer
   sRevertRunner  <- newIORef Nothing
-  sMainTimerLock <- L.new
   let sched = Scheduler {..}
 
   mapM_ (restoreJob sched) =<< Store.dumpJob sStore
   mapM_ (adjustFuncStat sched) =<< (FL.keys sJobQueue)
 
-  threadID <- forkIO $ forever $ processJob sched
-  atomicModifyIORef' sMainRunner (\_ -> (Just threadID, ()))
+  initTimer sMainTimer $ processJob sched
 
   threadID' <- forkIO $ forever $ revertProcessQueue sched
   atomicModifyIORef' sRevertRunner (\_ -> (Just threadID', ()))
 
-  nextMainTimer sched 0
+  startTimer sMainTimer 0
   return sched
 
 pushJob :: Scheduler -> Job -> IO ()
@@ -103,7 +95,7 @@ pushJob sched@(Scheduler {..}) job = do
     JQ.pushJob sJobQueue job
 
   adjustFuncStat sched fn
-  nextMainTimer sched 0
+  startTimer sMainTimer 0
 
   where fn = jFuncName job
         jh = jHandle job
@@ -146,24 +138,24 @@ removeJob sched@(Scheduler {..}) job = do
   Store.deleteJob sStore (jHandle job)
   adjustFuncStat sched (jFuncName job)
 
-  nextMainTimer sched 0
+  startTimer sMainTimer 0
 
 dumpJob :: Scheduler -> IO [Job]
 dumpJob (Scheduler {..}) = Store.dumpJob sStore
 
 addFunc :: Scheduler -> FuncName -> IO ()
-addFunc sched@(Scheduler {..}) n = L.with sFuncStatLock $ do
+addFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
   FL.alter sFuncStatList updateStat n
-  nextMainTimer sched 0
+  startTimer sMainTimer 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) { sWorker = 1 })
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc sched@(Scheduler {..}) n = L.with sFuncStatLock $ do
+removeFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
   FL.alter sFuncStatList updateStat n
-  nextMainTimer sched 0
+  startTimer sMainTimer 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
@@ -183,25 +175,24 @@ dropFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
                            mapM_ (Store.deleteJob sStore) jhs
 
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
-pushGrab sched@(Scheduler {..}) fl jh ag = do
+pushGrab (Scheduler {..}) fl jh ag = do
   pushAgent sGrabQueue fl jh ag
-  nextMainTimer sched 0
+  startTimer sMainTimer 0
 
 processJob :: Scheduler -> IO ()
 processJob sched@(Scheduler {..}) = do
-  void $ takeMVar sMainWaiter
   st <- getFirstSched sFuncStatList sGrabQueue
   case st of
-    Nothing -> nextMainTimer sched 10
+    Nothing -> startTimer' sMainTimer 100
     Just st' -> do
       now <- getEpochTime
-      if now < (sSchedAt st') then nextMainTimer sched (sSchedAt st' - now)
+      if now < (sSchedAt st') then startTimer' sMainTimer (fromIntegral $ sSchedAt st' - now)
                               else submitJob now st'
 
   where revertJob :: Job -> IO ()
         revertJob job = do
           JQ.pushJob sJobQueue job
-          nextMainTimer sched 0
+          startTimer sMainTimer 0
 
         popJobThen :: Int64 -> FuncStat -> (Job -> IO ()) -> IO ()
         popJobThen now st done = do
@@ -209,7 +200,7 @@ processJob sched@(Scheduler {..}) = do
           case job of
             Nothing -> do
               adjustFuncStat sched (sFuncName st)
-              nextMainTimer sched 0
+              startTimer sMainTimer 0
             Just job' -> if jSchedAt job' > now then revertJob job'
                                                 else done job'
 
@@ -232,7 +223,7 @@ processJob sched@(Scheduler {..}) = do
               nextSchedAt <- getEpochTime
               PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
               adjustFuncStat sched (jFuncName job)
-              nextMainTimer sched 0
+              startTimer sMainTimer 0
 
         submitJob :: Int64 -> FuncStat -> IO ()
         submitJob now st = popJobThen now st $ popMaybeAgentThen st doneSubmitJob
@@ -242,17 +233,6 @@ assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
                                                       , nullChar
                                                       , unparseJob job
                                                       ]
-
-nextMainTimer :: Scheduler -> Int64 -> IO ()
-nextMainTimer (Scheduler {..}) t = L.with sMainTimerLock $ do
-  threadID <- atomicModifyIORef' sMainTimer (\v -> (v, v))
-  when (isJust threadID) $ killThread (fromJust threadID)
-  threadID' <- forkIO $ do
-    when (t > 0) $ do
-      void . tryIO . threadDelay $ fromIntegral t * 1000000
-    putMVar sMainWaiter True
-
-  atomicModifyIORef' sMainTimer (\_ -> (Just threadID', ()))
 
 failJob :: Scheduler -> JobHandle -> IO ()
 failJob sched@(Scheduler {..}) jh = do
@@ -268,7 +248,7 @@ failJob sched@(Scheduler {..}) jh = do
 
       PQ.removeJob sProcessJob fn jn
       adjustFuncStat sched fn
-      nextMainTimer sched 0
+      startTimer sMainTimer 0
 
   where (fn, jn) = unHandle jh
 
@@ -298,7 +278,7 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
 
       PQ.removeJob sProcessJob fn jn
       adjustFuncStat sched fn
-      nextMainTimer sched 0
+      startTimer sMainTimer 0
 
   where (fn, jn) = unHandle jh
 
@@ -315,11 +295,7 @@ revertProcessQueue sched@(Scheduler {..}) = do
 
 shutdown :: Scheduler -> IO ()
 shutdown (Scheduler {..}) = do
-  timer <- atomicModifyIORef' sMainTimer (\v -> (v, v))
-  when (isJust timer) $ killThread (fromJust timer)
-
-  runner <- atomicModifyIORef' sMainRunner (\v -> (v, v))
-  when (isJust runner) $ killThread (fromJust runner)
+  clearTimer sMainTimer
 
   revert <- atomicModifyIORef' sRevertRunner (\v -> (v, v))
   when (isJust revert) $ killThread (fromJust revert)
