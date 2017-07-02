@@ -35,7 +35,7 @@ import           System.Entropy        (getEntropy)
 import           Periodic.Utils        (parsePayload)
 
 import           Control.Concurrent    (ThreadId, forkIO, killThread)
-import           Control.Monad         (forever, when)
+import           Control.Monad         (forever, void, when)
 
 import           Data.Maybe            (fromJust, isJust)
 
@@ -50,6 +50,7 @@ newBaseClient :: Socket -> ClientType -> IO BaseClient
 newBaseClient sock agentType = do
   conn <- newClientConn sock
   send conn $ (toEnum $ fromEnum agentType) `B.cons` B.empty
+  void $ receive conn
 
   agents <- newIORef HM.empty
   threadID <- newIORef Nothing
@@ -70,9 +71,7 @@ writePayload :: BaseClient -> Payload -> IO ()
 writePayload bc pl@(Payload { payloadID = pid }) = do
   v <- atomicModifyIORef' (agents bc) $ \v -> (v, HM.lookup pid v)
   case v of
-    Nothing    -> do
-      errorM "Periodic.BaseClient" $ "Agent [" ++ B.unpack pid ++ "] not found."
-      noopAgent bc SocketClosed
+    Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ B.unpack pid ++ "] not found."
     Just agent -> feed agent pl
 
 newAgent :: BaseClient -> IO Agent
