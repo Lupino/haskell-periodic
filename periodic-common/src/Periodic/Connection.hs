@@ -17,8 +17,8 @@ module Periodic.Connection
   ) where
 
 import qualified Control.Concurrent.Lock   as L (Lock, new, with)
-import qualified Data.ByteString.Char8     as B (ByteString, concat, length,
-                                                 null)
+import qualified Data.ByteString.Char8     as B (ByteString, concat, drop,
+                                                 empty, length, null, take)
 import           Network.Socket.ByteString (recv, sendAll)
 import           Periodic.Socket           (Socket)
 import qualified Periodic.Socket           as Socket (close)
@@ -37,6 +37,7 @@ data Connection = Connection { sock          :: Socket
                              , writeLock     :: L.Lock
                              , status        :: IORef Bool
                              , connid        :: B.ByteString
+                             , buffer        :: IORef B.ByteString
                              }
 
 magicREQ :: B.ByteString
@@ -51,6 +52,7 @@ newConn sock requestMagic responseMagic = do
   writeLock <- L.new
   status <- newIORef True
   connid <- getEntropy 4
+  buffer <- newIORef B.empty
   return Connection {..}
 
 newServerConn :: Socket -> IO Connection
@@ -62,15 +64,37 @@ newClientConn sock = newConn sock magicRES magicREQ
 receive :: Connection -> IO B.ByteString
 receive c@(Connection {..}) = do
   L.with readLock $ do
-    magic <- recv sock 4
+    magic <- recv' c 4
     case magic == requestMagic of
       False -> do
         setStatus c False
         if B.null magic then throwIO SocketClosed
                         else throwIO MagicNotMatch
       True -> do
-        header <- recv sock 4
-        recv sock (parseHeader header)
+        header <- recv' c 4
+        recv' c (parseHeader header)
+
+recv' :: Connection -> Int -> IO B.ByteString
+recv' (Connection {..}) nbytes = do
+  buf <- atomicModifyIORef' buffer $ \v -> (B.drop nbytes v, B.take nbytes v)
+  if B.length buf == nbytes then return buf
+                            else do
+                              otherBuf <- readBuf (nbytes - B.length buf)
+                              let out = B.concat [ buf, otherBuf ]
+                              atomicModifyIORef' buffer $
+                                \_ -> (B.drop nbytes out, B.take nbytes out)
+
+  where readBuf :: Int -> IO B.ByteString
+        readBuf 0  = return B.empty
+        readBuf nb = do
+          buf <- recv sock 1024
+          when (B.null buf) $ throwIO SocketClosed
+          if B.length buf >= nb then return buf
+                                else do
+                                  otherBuf <- readBuf (nb - B.length buf)
+                                  return $ B.concat [ buf, otherBuf ]
+
+
 
 send :: Connection -> B.ByteString -> IO ()
 send (Connection {..}) dat = do
