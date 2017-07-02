@@ -58,6 +58,7 @@ data Scheduler = Scheduler { sFuncStatList  :: FuncStatList
                            , sMainTimer     :: IORef (Maybe ThreadId)
                            , sMainWaiter    :: MVar Bool
                            , sMainRunner    :: IORef (Maybe ThreadId)
+                           , sRevertRunner  :: IORef (Maybe ThreadId)
                            , sMainTimerLock :: L.Lock
                            , sStore         :: Store
                            }
@@ -72,6 +73,7 @@ newScheduler sStore = do
   sMainTimer     <- newIORef Nothing
   sMainWaiter    <- newEmptyMVar
   sMainRunner    <- newIORef Nothing
+  sRevertRunner  <- newIORef Nothing
   sMainTimerLock <- L.new
   let sched = Scheduler {..}
 
@@ -80,6 +82,9 @@ newScheduler sStore = do
 
   threadID <- forkIO $ forever $ processJob sched
   atomicModifyIORef' sMainRunner (\_ -> (Just threadID, ()))
+
+  threadID' <- forkIO $ forever $ revertProcessQueue sched
+  atomicModifyIORef' sRevertRunner (\_ -> (Just threadID', ()))
 
   nextMainTimer sched 0
   return sched
@@ -223,7 +228,8 @@ processJob sched@(Scheduler {..}) = do
           case e of
             Left (_::SomeException) -> revertJob job
             Right _ -> do
-              PQ.insertJob sProcessJob job
+              nextSchedAt <- getEpochTime
+              PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
               adjustFuncStat sched (jFuncName job)
               nextMainTimer sched 0
 
@@ -253,7 +259,12 @@ failJob sched@(Scheduler {..}) jh = do
   case job of
     Nothing -> return ()
     Just job' -> do
-      JQ.pushJob sJobQueue job'
+      nextSchedAt <- getEpochTime
+      let nextJob = job' { jSchedAt = nextSchedAt }
+
+      JQ.pushJob sJobQueue nextJob
+      Store.insertJob sStore nextJob
+
       PQ.removeJob sProcessJob fn jn
       adjustFuncStat sched fn
       nextMainTimer sched 0
@@ -292,3 +303,11 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
 
 status :: Scheduler -> IO [FuncStat]
 status (Scheduler {..}) = FL.elems sFuncStatList
+
+revertProcessQueue :: Scheduler -> IO ()
+revertProcessQueue sched@(Scheduler {..}) = do
+  threadDelay 30000000
+  now <- getEpochTime
+  mapM_ (failJob sched . jHandle) =<< filter (isTimeout now) <$> PQ.dumpJob sProcessJob
+  where isTimeout :: Int64 -> Job -> Bool
+        isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
