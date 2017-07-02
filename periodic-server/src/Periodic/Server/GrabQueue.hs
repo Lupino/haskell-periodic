@@ -4,52 +4,64 @@
 module Periodic.Server.GrabQueue
   (
     GrabQueue
+  , newGrabQueue
   , GrabItem (..)
   , pushAgent
   , popMaybeAgent
   , hasAgent
   ) where
 
-import           Data.ByteString.Char8    (ByteString)
-import           Periodic.Server.Agent    (Agent, agentid)
-import           Periodic.Server.FuncList (FuncList, FuncName, delete, elems,
-                                           insert, member)
+import           Data.ByteString.Char8  (ByteString)
+import           Periodic.Server.Agent  (Agent, agentid)
+import           Periodic.Server.IOList (IOList, append, delete, elem,
+                                         newIOList, toList)
+import           Periodic.Types         (FuncName, JobHandle)
+import           Prelude                hiding (elem)
 
-data GrabItem = GrabItem { gFuncList :: FuncList Bool
+data GrabItem = GrabItem { gFuncList :: IOList FuncName
                          , gAgent    :: Agent
-                         , gJobQueue :: FuncList Bool
+                         , gJobQueue :: IOList JobHandle
                          }
+
+instance Eq GrabItem where
+    (==) = eqGrabItem
 
 key :: GrabItem -> ByteString
 key (GrabItem { gAgent = a }) = agentid a
 
-type GrabQueue = FuncList GrabItem
+eqGrabItem :: GrabItem -> GrabItem -> Bool
+eqGrabItem a b = key a == key b
 
-pushAgent :: GrabQueue -> FuncList Bool -> FuncList Bool -> Agent -> IO ()
-pushAgent q gFuncList gJobQueue gAgent = insert q (key i) i
+type GrabQueue = IOList GrabItem
+
+newGrabQueue :: IO GrabQueue
+newGrabQueue = newIOList
+
+pushAgent :: GrabQueue -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
+pushAgent q gFuncList gJobQueue gAgent = append q i
   where i = GrabItem {..}
 
-popMaybeAgent :: GrabQueue -> FuncName -> IO (Maybe (FuncList Bool, Agent))
+popMaybeAgent :: GrabQueue -> FuncName -> IO (Maybe (IOList JobHandle, Agent))
 popMaybeAgent q n = do
-  item <- go =<< elems q
+  item <- go =<< toList q
   case item of
     Nothing -> return Nothing
     Just i  -> do
-      delete q (key i)
+      delete q i
       return (Just (gJobQueue i, gAgent i))
 
  where go :: [GrabItem] -> IO (Maybe GrabItem)
        go [] = return Nothing
        go (x:xs) = do
-         has <- member (gFuncList x) n
+         has <- elem (gFuncList x) n
          if has then return (Just x)
                 else go xs
 
 hasAgent :: GrabQueue -> FuncName -> IO Bool
-hasAgent q n = go =<< elems q
+hasAgent q n = go =<< toList q
  where go :: [GrabItem] -> IO Bool
        go [] = return False
        go (x:xs) = do
-         has <- member (gFuncList x) n
+         has <- elem (gFuncList x) n
          if has then return True
                 else go xs

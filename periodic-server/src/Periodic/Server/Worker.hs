@@ -20,11 +20,12 @@ import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 
 import           Periodic.Server.Agent     (Agent, newAgent, send)
-import           Periodic.Server.FuncList  (FuncList, newFuncList)
-import qualified Periodic.Server.FuncList  as FL
+import           Periodic.Server.IOList    (IOList, delete, insert, newIOList,
+                                            toList)
 import           Periodic.Server.Scheduler
 
 import           Periodic.Types            (Command (..), Payload (..))
+import           Periodic.Types.Job        (FuncName, JobHandle)
 import           Periodic.Utils            (breakBS, getEpochTime, parsePayload,
                                             readBS)
 
@@ -34,8 +35,8 @@ data Worker = Worker { wConn      :: Connection
                      , wSched     :: Scheduler
                      , wThreadID  :: IORef (Maybe ThreadId)
                      , wThreadID1 :: IORef (Maybe ThreadId)
-                     , wFuncList  :: FuncList Bool
-                     , wJobQueue  :: FuncList Bool
+                     , wFuncList  :: IOList FuncName
+                     , wJobQueue  :: IOList JobHandle
                      , wKeepAlive :: Int64
                      , wLastVist  :: IORef Int64
                      , wClosed    :: IORef Bool
@@ -43,8 +44,8 @@ data Worker = Worker { wConn      :: Connection
 
 newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
 newWorker wConn wSched wKeepAlive = do
-  wFuncList <- newFuncList
-  wJobQueue <- newFuncList
+  wFuncList <- newIOList
+  wJobQueue <- newIOList
   wThreadID <- newIORef Nothing
   wThreadID1 <- newIORef Nothing
   wClosed   <- newIORef False
@@ -101,25 +102,25 @@ handlePayload w (Payload {..}) = go payloadCMD
         funcList = wFuncList w
         jobQueue = wJobQueue w
 
-handleGrabJob :: Scheduler -> FuncList Bool -> FuncList Bool -> Agent -> IO ()
+handleGrabJob :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
 handleGrabJob = pushGrab
 
-handleWorkDone :: Scheduler -> FuncList Bool -> ByteString -> IO ()
+handleWorkDone :: Scheduler -> IOList JobHandle -> ByteString -> IO ()
 handleWorkDone sched jq jh = do
   doneJob sched jh
-  FL.delete jq jh
+  delete jq jh
 
-handleWorkFail :: Scheduler -> FuncList Bool -> ByteString -> IO ()
+handleWorkFail :: Scheduler -> IOList JobHandle -> ByteString -> IO ()
 handleWorkFail sched jq jh = do
   failJob sched jh
-  FL.delete jq jh
+  delete jq jh
 
-handleSchedLater :: Scheduler -> FuncList Bool -> ByteString -> IO ()
+handleSchedLater :: Scheduler -> IOList JobHandle -> ByteString -> IO ()
 handleSchedLater sched jq pl = do
   let (jh, later, step) = parse (breakBS 3 pl)
 
   schedLaterJob sched jh later step
-  FL.delete jq jh
+  delete jq jh
 
   where parse :: [ByteString] -> (ByteString, Int64, Int)
         parse (a:b:c:_) = (a, readBS b, readBS c)
@@ -127,15 +128,15 @@ handleSchedLater sched jq pl = do
         parse (a:[])    = (a, 0, 0)
         parse []        = (B.empty, 0, 0)
 
-handleCanDo :: Scheduler -> FuncList Bool -> ByteString -> IO ()
+handleCanDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
 handleCanDo sched fl fn = do
   addFunc sched fn
-  FL.insert fl fn True
+  insert fl fn
 
-handleCantDo :: Scheduler -> FuncList Bool -> ByteString -> IO ()
+handleCantDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
 handleCantDo sched fl fn = do
   removeFunc sched fn
-  FL.delete fl fn
+  delete fl fn
 
 wClose :: Worker -> IO ()
 wClose (Worker { .. }) = void $ forkIO $ do
@@ -146,6 +147,6 @@ wClose (Worker { .. }) = void $ forkIO $ do
     threadID1 <- atomicModifyIORef' wThreadID1 (\v -> (v, v))
     when (isJust threadID1) $ killThread (fromJust threadID1)
 
-    mapM_ (failJob wSched) =<< FL.keys wJobQueue
-    mapM_ (removeFunc wSched) =<< FL.keys wFuncList
+    mapM_ (failJob wSched) =<< toList wJobQueue
+    mapM_ (removeFunc wSched) =<< toList wFuncList
     close wConn

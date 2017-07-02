@@ -27,17 +27,18 @@ import           Control.Monad                (forever, void, when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Server.Agent        (Agent, aAlive, send)
-import           Periodic.Server.FuncList     (FuncList, FuncName, newFuncList)
+import           Periodic.Server.FuncList     (newFuncList)
 import qualified Periodic.Server.FuncList     as FL
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
+import           Periodic.Server.IOList       (IOList)
+import qualified Periodic.Server.IOList       as IL
 import           Periodic.Server.JobQueue     (JobQueue)
 import qualified Periodic.Server.JobQueue     as JQ
 import           Periodic.Server.ProcessQueue (ProcessQueue)
 import qualified Periodic.Server.ProcessQueue as PQ
-import           Periodic.Types               (Command (JobAssign), Job (..),
-                                               JobHandle, jHandle, nullChar,
-                                               unHandle, unparseJob)
+import           Periodic.Types               (Command (JobAssign), nullChar)
+import           Periodic.Types.Job
 import           Periodic.Utils               (getEpochTime, tryIO)
 
 import           Control.Concurrent           (ThreadId, forkIO, killThread,
@@ -65,7 +66,7 @@ newScheduler :: Store -> IO Scheduler
 newScheduler sStore = do
   sFuncStatList  <- newFuncList
   sFuncStatLock  <- L.new
-  sGrabQueue     <- newFuncList
+  sGrabQueue     <- newGrabQueue
   sJobQueue      <- newFuncList
   sProcessJob    <- newFuncList
   sMainTimer     <- newIORef Nothing
@@ -175,7 +176,7 @@ dropFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
                            FL.delete sJobQueue n
                            mapM_ (Store.deleteJob sStore) jhs
 
-pushGrab :: Scheduler -> FuncList Bool -> FuncList Bool -> Agent -> IO ()
+pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
 pushGrab sched@(Scheduler {..}) fl jh ag = do
   pushAgent sGrabQueue fl jh ag
   nextMainTimer sched 0
@@ -213,7 +214,7 @@ processJob sched@(Scheduler {..}) = do
             Nothing           -> revertJob job
             Just (jq, agent') -> do
               alive <- aAlive agent'
-              if alive then FL.insert jq (jHandle job) True >> done agent' job
+              if alive then IL.insert jq (jHandle job) >> done agent' job
                        else revertJob job
 
         doneSubmitJob :: Agent -> Job -> IO ()
