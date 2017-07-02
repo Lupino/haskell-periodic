@@ -22,7 +22,7 @@ module Periodic.Server.Scheduler
 
 import qualified Control.Concurrent.Lock      as L (Lock, new, with)
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (forever, when)
+import           Control.Monad                (when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Server.Agent        (Agent, aAlive, send)
@@ -41,12 +41,6 @@ import           Periodic.Types               (Command (JobAssign), nullChar)
 import           Periodic.Types.Job
 import           Periodic.Utils               (getEpochTime)
 
-import           Control.Concurrent           (ThreadId, forkIO, killThread,
-                                               threadDelay)
-import           Data.IORef                   (IORef, atomicModifyIORef',
-                                               newIORef)
-import           Data.Maybe                   (fromJust, isJust)
-
 import           Periodic.Server.Store        (Store)
 import qualified Periodic.Server.Store        as Store
 
@@ -56,7 +50,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sJobQueue     :: JobQueue
                            , sProcessJob   :: ProcessQueue
                            , sMainTimer    :: Timer
-                           , sRevertRunner :: IORef (Maybe ThreadId)
+                           , sRevertTimer  :: Timer
                            , sStore        :: Store
                            }
 
@@ -68,18 +62,18 @@ newScheduler sStore = do
   sJobQueue      <- newIOHashMap
   sProcessJob    <- newIOHashMap
   sMainTimer     <- newTimer
-  sRevertRunner  <- newIORef Nothing
+  sRevertTimer   <- newTimer
   let sched = Scheduler {..}
 
   mapM_ (restoreJob sched) =<< Store.dumpJob sStore
   mapM_ (adjustFuncStat sched) =<< (FL.keys sJobQueue)
 
-  initTimer sMainTimer $ processJob sched
-
-  threadID' <- forkIO $ forever $ revertProcessQueue sched
-  atomicModifyIORef' sRevertRunner (\_ -> (Just threadID', ()))
+  initTimer sMainTimer   $ processJob sched
+  initTimer sRevertTimer $ revertProcessQueue sched
 
   startTimer sMainTimer 0
+  startTimer' sRevertTimer 300
+
   return sched
 
 pushJob :: Scheduler -> Job -> IO ()
@@ -287,15 +281,13 @@ status (Scheduler {..}) = FL.elems sFuncStatList
 
 revertProcessQueue :: Scheduler -> IO ()
 revertProcessQueue sched@(Scheduler {..}) = do
-  threadDelay 30000000
   now <- getEpochTime
   mapM_ (failJob sched . jHandle) =<< filter (isTimeout now) <$> PQ.dumpJob sProcessJob
+  startTimer' sRevertTimer 300
   where isTimeout :: Int64 -> Job -> Bool
         isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
 
 shutdown :: Scheduler -> IO ()
 shutdown (Scheduler {..}) = do
   clearTimer sMainTimer
-
-  revert <- atomicModifyIORef' sRevertRunner (\v -> (v, v))
-  when (isJust revert) $ killThread (fromJust revert)
+  clearTimer sRevertTimer
