@@ -51,6 +51,7 @@ startServer storePath sock = do
         handleExit bye
   void $ takeMVar bye
   killThread thread
+  shutdown sched
   Socket.close sock
 
 mainLoop :: Socket -> Scheduler -> IO ()

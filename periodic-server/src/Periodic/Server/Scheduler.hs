@@ -17,6 +17,7 @@ module Periodic.Server.Scheduler
   , removeJob
   , dumpJob
   , status
+  , shutdown
   ) where
 
 import qualified Control.Concurrent.Lock      as L (Lock, new, with)
@@ -311,3 +312,14 @@ revertProcessQueue sched@(Scheduler {..}) = do
   mapM_ (failJob sched . jHandle) =<< filter (isTimeout now) <$> PQ.dumpJob sProcessJob
   where isTimeout :: Int64 -> Job -> Bool
         isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
+
+shutdown :: Scheduler -> IO ()
+shutdown (Scheduler {..}) = do
+  timer <- atomicModifyIORef' sMainTimer (\v -> (v, v))
+  when (isJust timer) $ killThread (fromJust timer)
+
+  runner <- atomicModifyIORef' sMainRunner (\v -> (v, v))
+  when (isJust runner) $ killThread (fromJust runner)
+
+  revert <- atomicModifyIORef' sRevertRunner (\v -> (v, v))
+  when (isJust revert) $ killThread (fromJust revert)
