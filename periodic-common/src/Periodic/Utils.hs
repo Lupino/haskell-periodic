@@ -11,9 +11,7 @@ module Periodic.Utils
   ) where
 
 import           Data.Bits              (shiftL, shiftR, (.&.), (.|.))
-import qualified Data.ByteString.Char8  as B (ByteString, breakSubstring, cons,
-                                              drop, empty, head, length, null,
-                                              tail, unpack)
+import qualified Data.ByteString.Char8  as B
 
 import           Periodic.Types.Command
 import           Periodic.Types.Payload
@@ -42,7 +40,8 @@ parseHeader = go [24, 16, 8, 0]
 parsePayload :: B.ByteString -> Payload
 parsePayload = go . breakBS 3
   where go :: [B.ByteString] -> Payload
-        go (a:b:c:_) = (payload a (cmd b)) { payloadData = c }
+        go (a:b:c:_) | B.length b == 1 = (payload a (cmd b)) { payloadData = c }
+                     | otherwise       = (payload a Noop) { payloadData = B.concat [ b, nullChar, c ] }
         go (a:b:[]) | B.length b == 1 = payload a (cmd b)
                     | otherwise       = (payload a Noop) { payloadData = b }
         go (a:[]) = payload a Unknown
