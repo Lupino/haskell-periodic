@@ -78,11 +78,9 @@ unparseJob = toStrict . encode
 encodeJob :: Job -> ByteString
 encodeJob Job {..} = concatBS [ Just jFuncName
                               , Just jName
-                              , if B.null jWorkload then Nothing else Just jWorkload
-                              , if jSchedAt > 0 then Just (B.pack $ show jSchedAt)
-                                                else Nothing
-                              , if jCount == 0 && B.null jWorkload then Nothing
-                                                                   else Just (B.pack $ show jCount)
+                              , schedAt
+                              , counter
+                              , workload
                               ]
 
  where join :: [ByteString] -> [ByteString]
@@ -92,6 +90,20 @@ encodeJob Job {..} = concatBS [ Just jFuncName
 
        concatBS = B.concat . join . catMaybes
 
+       sched = B.pack $ show jSchedAt
+       count = B.pack $ show jCount
+
+       schedAt | not (B.null jWorkload) = Just sched
+               | jCount > 0             = Just sched
+               | jSchedAt > 0           = Just sched
+               | otherwise              = Nothing
+       counter | not (B.null jWorkload) = Just count
+               | jCount > 0             = Just count
+               | otherwise              = Nothing
+
+       workload | B.null jWorkload      = Nothing
+                | otherwise             = Just jWorkload
+
 decodeJob :: ByteString -> Maybe Job
 decodeJob = go . breakBS 5
   where go :: [ByteString] -> Maybe Job
@@ -100,11 +112,11 @@ decodeJob = go . breakBS 5
         go (x:y:[])      = Just $ newJob x y
         go (x:y:z:[])    = Just $ (newJob x y) { jSchedAt = readBS z }
         go (x:y:z:a:[])  = Just $ (newJob x y) { jSchedAt = readBS z
-                                               , jCount = readBS a
+                                               , jCount   = readBS a
                                                }
-        go (x:y:z:a:b:_) = Just $ (newJob x y) { jWorkload = z
-                                               , jSchedAt = readBS a
-                                               , jCount = readBS b
+        go (x:y:z:a:b:_) = Just $ (newJob x y) { jWorkload = b
+                                               , jSchedAt  = readBS z
+                                               , jCount    = readBS a
                                                }
 
 sep :: ByteString
