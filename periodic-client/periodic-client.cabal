@@ -15,8 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Periodic.Agent
-                     , Periodic.BaseClient
+  exposed-modules:     Periodic.BaseClient
                      , Periodic.Client
                      , Periodic.Job
                      , Periodic.Worker

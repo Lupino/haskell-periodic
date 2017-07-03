@@ -25,11 +25,11 @@ import           Control.Exception            (SomeException, try)
 import           Control.Monad                (when)
 import qualified Data.ByteString.Char8        as B (concat)
 import           Data.Int                     (Int64)
+import           Periodic.Agent               (Agent, aAlive, send)
 import           Periodic.IOHashMap           (newIOHashMap)
 import qualified Periodic.IOHashMap           as FL
 import           Periodic.IOList              (IOList)
 import qualified Periodic.IOList              as IL
-import           Periodic.Server.Agent        (Agent, aAlive, send)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
 import           Periodic.Server.JobQueue     (JobQueue)

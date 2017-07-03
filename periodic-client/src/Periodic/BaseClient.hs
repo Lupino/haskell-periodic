@@ -27,8 +27,8 @@ import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
 import           Periodic.IOHashMap    (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap    as HM (delete, elems, insert, lookup)
 
-import           Periodic.Agent        (Agent, agentID, feed)
-import qualified Periodic.Agent        as Agent (newAgent)
+import           Periodic.Agent        (Agent, feed, msgid)
+import qualified Periodic.Agent        as Agent (newAgent')
 import           System.Entropy        (getEntropy)
 
 import           Periodic.Utils        (parsePayload)
@@ -61,10 +61,10 @@ newBaseClient sock agentType = do
   return bc
 
 addAgent :: BaseClient -> Agent -> IO ()
-addAgent bc a = HM.insert (agents bc) (agentID a) a
+addAgent bc a = HM.insert (agents bc) (msgid a) a
 
 removeAgent :: BaseClient -> Agent -> IO ()
-removeAgent bc a = HM.delete (agents bc) (agentID a)
+removeAgent bc a = HM.delete (agents bc) (msgid a)
 
 writePayload :: BaseClient -> Payload -> IO ()
 writePayload bc pl@(Payload { payloadID = pid }) = do
@@ -81,7 +81,7 @@ newAgent bc = do
 
   where done :: ByteString -> IO Agent
         done aid = do
-          agent <- Agent.newAgent (conn bc) aid
+          agent <- Agent.newAgent' aid $ conn bc
           addAgent bc agent
           return agent
 

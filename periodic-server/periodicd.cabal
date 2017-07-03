@@ -18,7 +18,6 @@ library
   exposed-modules:     Periodic.Server
                      , Periodic.Server.Client
                      , Periodic.Server.Scheduler
-                     , Periodic.Server.Agent
                      , Periodic.Server.Worker
                      , Periodic.Server.GrabQueue
                      , Periodic.Server.FuncStat

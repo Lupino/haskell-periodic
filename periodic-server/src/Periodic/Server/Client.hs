@@ -19,7 +19,7 @@ import           Data.ByteString.Lazy      (fromStrict, toStrict)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 
-import           Periodic.Server.Agent     (Agent, newAgent, send, send_)
+import           Periodic.Agent            (Agent, newAgent, send, send_)
 import           Periodic.Server.FuncStat  (FuncStat (..))
 import           Periodic.Server.Scheduler (Scheduler, dropFunc, dumpJob,
                                             pushJob, removeJob, status)

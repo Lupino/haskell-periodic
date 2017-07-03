@@ -12,9 +12,9 @@ module Periodic.Server.GrabQueue
   ) where
 
 import           Data.ByteString.Char8 (ByteString)
+import           Periodic.Agent        (Agent, agentid)
 import           Periodic.IOList       (IOList, append, delete, elem, newIOList,
                                         toList)
-import           Periodic.Server.Agent (Agent, agentid)
 import           Periodic.Types        (FuncName, JobHandle)
 import           Prelude               hiding (elem)
 

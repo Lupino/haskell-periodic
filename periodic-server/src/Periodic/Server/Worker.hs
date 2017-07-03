@@ -19,9 +19,9 @@ import           Data.Int                  (Int64)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 
+import           Periodic.Agent            (Agent, newAgent, send)
 import           Periodic.IOList           (IOList, delete, insert, newIOList,
                                             toList)
-import           Periodic.Server.Agent     (Agent, newAgent, send)
 import           Periodic.Server.Scheduler
 
 import           Periodic.Timer
