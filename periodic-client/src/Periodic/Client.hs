@@ -56,7 +56,7 @@ ping c = withAgent c $ \agent -> do
 
 submitJob_ :: Client -> Job -> IO Bool
 submitJob_ c j = withAgent c $ \agent -> do
-  send agent SubmitJob (unparseJob j)
+  send agent SubmitJob (encodeJob j)
   isSuccess agent
 
 submitJob :: Client -> FuncName -> JobName -> Int64 -> IO Bool
@@ -72,7 +72,7 @@ dropFunc c func = withAgent c $ \agent -> do
 
 removeJob_ :: Client -> Job -> IO Bool
 removeJob_ c j = withAgent c $ \agent -> do
-  send agent RemoveJob (unparseJob j)
+  send agent RemoveJob (encodeJob j)
   isSuccess agent
 
 removeJob :: Client -> FuncName -> JobName -> IO Bool

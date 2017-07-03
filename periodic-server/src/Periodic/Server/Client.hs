@@ -15,7 +15,6 @@ import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
                                                  pack)
-import           Data.ByteString.Lazy      (fromStrict, toStrict)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 
@@ -23,10 +22,7 @@ import           Periodic.Agent            (Agent, newAgent, send, send_)
 import           Periodic.Server.FuncStat  (FuncStat (..))
 import           Periodic.Server.Scheduler (Scheduler, dropFunc, dumpJob,
                                             pushJob, removeJob, status)
-import           Periodic.Types            (Job, parseJob)
-
-import           Data.Aeson                (FromJSON (..), decode, encode,
-                                            object, withObject, (.:), (.=))
+import           Periodic.Types            (Job, decodeJob, encodeJob)
 
 import           Periodic.Timer
 import           Periodic.Types            (Command (..), Payload (..))
@@ -100,7 +96,7 @@ handlePayload c (Payload {..}) = go payloadCMD
 
 handleSubmitJob :: Scheduler -> Agent -> ByteString -> IO ()
 handleSubmitJob sc ag pl = do
-  case parseJob pl of
+  case decodeJob pl of
     Nothing -> send ag Noop B.empty
     Just job -> do
       pushJob sc job
@@ -130,7 +126,7 @@ handleDropFunc sc ag pl = do
 
 handleRemoveJob :: Scheduler -> Agent -> ByteString -> IO ()
 handleRemoveJob sc ag pl = do
-  case parseJob pl of
+  case decodeJob pl of
     Nothing -> send ag Noop B.empty
     Just job -> do
       removeJob sc job
@@ -139,22 +135,18 @@ handleRemoveJob sc ag pl = do
 handleDump :: Scheduler -> Agent -> IO ()
 handleDump sc ag = do
   jobs <- dumpJob sc
-  send_ ag . toStrict . encode $ object [ "jobs" .= jobs ]
+  mapM_ doSend jobs
   send_ ag "EOF"
 
-data LoadPayload = LoadPayload { lpJobs :: [Job] }
-
-instance FromJSON LoadPayload where
-  parseJSON = withObject "LoadPayload" $ \o -> do
-    lpJobs <- o .: "jobs"
-    return LoadPayload {..}
+  where doSend :: Job -> IO ()
+        doSend = send_ ag . encodeJob
 
 handleLoad :: Scheduler -> ByteString -> IO ()
 handleLoad sc pl = do
-  case decode (fromStrict pl) of
+  case decodeJob pl of
     Nothing -> return ()
-    Just (LoadPayload {..}) -> do
-      mapM_ (pushJob sc) lpJobs
+    Just job -> do
+      pushJob sc job
 
 cClose :: Client -> IO ()
 cClose (Client { .. }) = void $ forkIO $ do

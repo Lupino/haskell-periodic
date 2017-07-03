@@ -225,7 +225,7 @@ processJob sched@(Scheduler {..}) = do
 assignJob :: Agent -> Job -> IO ()
 assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
                                                       , nullChar
-                                                      , unparseJob job
+                                                      , encodeJob job
                                                       ]
 
 failJob :: Scheduler -> JobHandle -> IO ()

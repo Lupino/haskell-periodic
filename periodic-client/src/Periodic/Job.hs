@@ -34,7 +34,7 @@ newJob c = go . breakBS 2
   where go :: [ByteString] -> Maybe Job
         go []        = Nothing
         go (_:[])    = Nothing
-        go (h:dat:_) = parse h (J.parseJob dat)
+        go (h:dat:_) = parse h (J.decodeJob dat)
 
         parse :: ByteString -> Maybe J.Job -> Maybe Job
         parse _ Nothing = Nothing

@@ -30,9 +30,7 @@ library
                      , network
                      , concurrent-extra
                      , unordered-containers
-                     , aeson
                      , psqueues
-                     , text
                      , acid-state
                      , safecopy
                      , mtl

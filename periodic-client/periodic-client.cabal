@@ -23,9 +23,7 @@ library
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring
-                     , unordered-containers
                      , entropy
-                     , aeson
                      , hslogger
   default-language:    Haskell2010
 

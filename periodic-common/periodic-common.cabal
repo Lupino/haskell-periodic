@@ -35,8 +35,6 @@ library
                      , concurrent-extra
                      , entropy
                      , unix-time
-                     , aeson
-                     , text
                      , unordered-containers
   default-language:    Haskell2010
 
