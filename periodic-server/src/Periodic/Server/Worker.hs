@@ -34,7 +34,7 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
 data Worker = Worker { wConn      :: Connection
                      , wSched     :: Scheduler
-                     , wThreadID  :: IORef (Maybe ThreadId)
+                     , wRunner    :: IORef (Maybe ThreadId)
                      , wTimer     :: Timer
                      , wFuncList  :: IOList FuncName
                      , wJobQueue  :: IOList JobHandle
@@ -48,7 +48,7 @@ newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
 newWorker wConn wSched wKeepAlive = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
-  wThreadID <- newIORef Nothing
+  wRunner <- newIORef Nothing
   wTimer <- newTimer
   wClosed   <- newIORef False
   wLocker   <- L.new
@@ -56,9 +56,9 @@ newWorker wConn wSched wKeepAlive = do
 
   let w = Worker { .. }
 
-  threadID <- forkIO $ forever $ mainLoop w
+  runner <- forkIO $ forever $ mainLoop w
   initTimer wTimer $ checkAlive w
-  atomicModifyIORef' wThreadID (\_ -> (Just threadID, ()))
+  atomicModifyIORef' wRunner (\_ -> (Just runner, ()))
   repeatTimer' wTimer $ fromIntegral wKeepAlive
   return w
 
@@ -144,8 +144,8 @@ handleCantDo sched fl fn = do
 wClose :: Worker -> IO ()
 wClose (Worker { .. }) = void $ forkIO $ L.with wLocker $ do
   closed <- atomicModifyIORef' wClosed (\v -> (True, v))
-  threadID <- atomicModifyIORef' wThreadID (\v -> (v, v))
-  when (isJust threadID) $ killThread (fromJust threadID)
+  runner <- atomicModifyIORef' wRunner (\v -> (v, v))
+  when (isJust runner) $ killThread (fromJust runner)
 
   clearTimer wTimer
 

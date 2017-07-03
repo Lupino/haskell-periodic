@@ -37,7 +37,7 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
 data Client = Client { cConn      :: Connection
                      , cSched     :: Scheduler
-                     , cThreadID  :: IORef (Maybe ThreadId)
+                     , cRunner    :: IORef (Maybe ThreadId)
                      , cKeepAlive :: Int64
                      , cTimer     :: Timer
                      , cLastVist  :: IORef Int64
@@ -45,15 +45,15 @@ data Client = Client { cConn      :: Connection
 
 newClient :: Connection -> Scheduler -> Int64 -> IO Client
 newClient cConn cSched cKeepAlive = do
-  cThreadID <- newIORef Nothing
+  cRunner <- newIORef Nothing
   cLastVist <- newIORef =<< getEpochTime
   cTimer <- newTimer
   let c = Client {..}
 
-  threadID <- forkIO $ forever $ mainLoop c
+  runner <- forkIO $ forever $ mainLoop c
   initTimer cTimer $ checkAlive c
 
-  atomicModifyIORef' cThreadID (\_ -> (Just threadID, ()))
+  atomicModifyIORef' cRunner (\_ -> (Just runner, ()))
 
   repeatTimer' cTimer (fromIntegral cKeepAlive)
   return c
@@ -158,7 +158,7 @@ handleLoad sc pl = do
 
 cClose :: Client -> IO ()
 cClose (Client { .. }) = void $ forkIO $ do
-  threadID <- atomicModifyIORef' cThreadID (\v -> (v, v))
-  when (isJust threadID) $ killThread (fromJust threadID)
+  runner <- atomicModifyIORef' cRunner (\v -> (v, v))
+  when (isJust runner) $ killThread (fromJust runner)
   clearTimer cTimer
   close cConn

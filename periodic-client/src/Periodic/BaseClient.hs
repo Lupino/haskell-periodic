@@ -40,9 +40,9 @@ import           Data.Maybe            (fromJust, isJust)
 
 import           System.Log.Logger     (errorM, infoM)
 
-data BaseClient = BaseClient { agents   :: IOHashMap Agent
-                             , conn     :: Connection
-                             , threadID :: IORef (Maybe ThreadId)
+data BaseClient = BaseClient { agents :: IOHashMap Agent
+                             , conn   :: Connection
+                             , runner :: IORef (Maybe ThreadId)
                              }
 
 newBaseClient :: Socket -> ClientType -> IO BaseClient
@@ -52,11 +52,11 @@ newBaseClient sock agentType = do
   void $ receive conn
 
   agents <- newIOHashMap
-  threadID <- newIORef Nothing
+  runner <- newIORef Nothing
   let bc = BaseClient {..}
 
   t <- forkIO $ forever $ mainLoop bc
-  atomicModifyIORef' threadID (\_ -> (Just t, ()))
+  atomicModifyIORef' runner (\_ -> (Just t, ()))
   infoM "Periodic.BaseClient" "Connected to periodic task system"
   return bc
 
@@ -90,7 +90,7 @@ withAgent bc = bracket (newAgent bc) (removeAgent bc)
 
 close :: BaseClient -> IO ()
 close (BaseClient {..}) = do
-  tid <- atomicModifyIORef' threadID (\v -> (v, v))
+  tid <- atomicModifyIORef' runner (\v -> (v, v))
   when (isJust tid) $ killThread (fromJust tid)
   Conn.close conn
 
