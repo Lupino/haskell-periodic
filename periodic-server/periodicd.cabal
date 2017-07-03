@@ -20,8 +20,6 @@ library
                      , Periodic.Server.Scheduler
                      , Periodic.Server.Agent
                      , Periodic.Server.Worker
-                     , Periodic.Server.IOHashMap
-                     , Periodic.Server.IOList
                      , Periodic.Server.GrabQueue
                      , Periodic.Server.FuncStat
                      , Periodic.Server.JobQueue

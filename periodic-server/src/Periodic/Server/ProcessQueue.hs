@@ -13,14 +13,12 @@ module Periodic.Server.ProcessQueue
   , sizeJob
   ) where
 
-import           Data.ByteString           (ByteString)
-import           Data.HashMap.Strict       (HashMap, delete, fromList, insert,
-                                            member, size, toList)
-import qualified Data.HashMap.Strict       as HM (lookup)
-import           Periodic.Server.IOHashMap (IOHashMap, adjust, alter, elems,
-                                            lookup)
-import           Periodic.Types            (FuncName, Job (..))
-import           Prelude                   hiding (lookup, null)
+import           Data.ByteString     (ByteString)
+import           Data.HashMap.Strict (HashMap, delete, insert, member, size)
+import qualified Data.HashMap.Strict as HM (elems, fromList, lookup)
+import           Periodic.IOHashMap  (IOHashMap, adjust, alter, elems, lookup)
+import           Periodic.Types      (FuncName, Job (..))
+import           Prelude             hiding (lookup, null)
 
 type SubProcessQueue = HashMap FuncName Job
 
@@ -29,7 +27,7 @@ type ProcessQueue = IOHashMap SubProcessQueue
 insertJob :: ProcessQueue -> Job -> IO ()
 insertJob q j@(Job {..}) = alter q update jFuncName
   where update :: Maybe SubProcessQueue -> Maybe SubProcessQueue
-        update Nothing   = Just (fromList [(jName, j)])
+        update Nothing   = Just (HM.fromList [(jName, j)])
         update (Just q') = Just (insert jName j q')
 
 lookupJob :: ProcessQueue -> FuncName -> ByteString -> IO (Maybe Job)
@@ -48,14 +46,14 @@ dumpJob :: ProcessQueue -> IO [Job]
 dumpJob jq = concat . map go <$> elems jq
 
   where go :: SubProcessQueue -> [Job]
-        go sq = map (\(_, v) -> v) $ toList sq
+        go sq = HM.elems sq
 
 dumpJobByFuncName :: ProcessQueue -> FuncName -> IO [Job]
 dumpJobByFuncName jq n = do
   q <- lookup jq n
   case q of
     Nothing -> return []
-    Just q' -> return $ map (\(_, v) -> v) $ toList q'
+    Just q' -> return $ HM.elems q'
 
 sizeJob :: ProcessQueue -> FuncName -> IO Int
 sizeJob q n = go <$> lookup q n

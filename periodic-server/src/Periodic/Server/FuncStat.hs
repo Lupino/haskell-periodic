@@ -10,8 +10,8 @@ module Periodic.Server.FuncStat
   ) where
 
 import           Data.Int                  (Int64)
+import           Periodic.IOHashMap        (IOHashMap, elems)
 import           Periodic.Server.GrabQueue (GrabQueue, hasAgent)
-import           Periodic.Server.IOHashMap (IOHashMap, elems)
 import           Periodic.Types            (FuncName)
 
 data FuncStat = FuncStat { sSchedAt  :: Int64

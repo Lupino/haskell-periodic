@@ -65,7 +65,7 @@ submitJob c jFuncName jName later = do
   jSchedAt <- (+later) <$> getEpochTime
   submitJob_ c $ Job { jWorkload = "", jCount = 0, .. }
 
-dropFunc :: Client -> ByteString -> IO Bool
+dropFunc :: Client -> FuncName -> IO Bool
 dropFunc c func = withAgent c $ \agent -> do
   send agent DropFunc func
   isSuccess agent

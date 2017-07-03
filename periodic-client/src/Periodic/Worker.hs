@@ -14,7 +14,6 @@ module Periodic.Worker
   , close
   ) where
 
-import           Data.ByteString.Char8   (ByteString)
 import qualified Data.ByteString.Char8   as B (empty, unpack)
 import           Periodic.Agent          (receive, send)
 import           Periodic.BaseClient     (BaseClient, newBaseClient, noopAgent,
@@ -27,11 +26,10 @@ import           Periodic.Types.Command
 import           Periodic.Types.Error
 import           Periodic.Types.Payload
 
-import           Periodic.Types          (ClientType (TypeWorker))
+import           Periodic.Types          (ClientType (TypeWorker), FuncName)
 
-import           Data.HashMap.Strict     (HashMap)
-import qualified Data.HashMap.Strict     as HM (delete, empty, insert, lookup)
-import           Data.IORef              (IORef, atomicModifyIORef', newIORef)
+import           Periodic.IOHashMap      (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap      as HM (delete, insert, lookup)
 
 import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.QSem
@@ -45,14 +43,14 @@ import           System.Log.Logger       (errorM)
 newtype Task = Task (Job -> IO ())
 
 data Worker = Worker { bc    :: BaseClient
-                     , tasks :: IORef (HashMap ByteString Task)
+                     , tasks :: IOHashMap Task
                      }
 
 
 newWorker :: Socket -> IO Worker
 newWorker sock = do
   bc <- newBaseClient sock TypeWorker
-  tasks <- newIORef HM.empty
+  tasks <- newIOHashMap
   let w = Worker { .. }
 
   timer <- newTimer
@@ -61,14 +59,14 @@ newWorker sock = do
 
   return w
 
-addTask :: Worker -> ByteString -> Task -> IO ()
-addTask w f t = atomicModifyIORef' (tasks w) $ \v -> (HM.insert f t v, ())
+addTask :: Worker -> FuncName -> Task -> IO ()
+addTask w f t = HM.insert (tasks w) f t
 
-removeTask :: Worker -> ByteString -> IO ()
-removeTask w f = atomicModifyIORef' (tasks w) $ \v -> (HM.delete f v, ())
+removeTask :: Worker -> FuncName -> IO ()
+removeTask w f = HM.delete (tasks w) f
 
-getTask :: Worker -> ByteString -> IO (Maybe Task)
-getTask w f = atomicModifyIORef' (tasks w) $ \v -> (v, HM.lookup f v)
+getTask :: Worker -> FuncName -> IO (Maybe Task)
+getTask w f = HM.lookup (tasks w) f
 
 ping :: Worker -> IO Bool
 ping (Worker { bc = c }) = withAgent c $ \agent -> do
@@ -85,12 +83,12 @@ grabJob w@(Worker { bc = c }) = withAgent c $ \agent -> do
     Noop      -> throwIO $ payloadError pl
     _         -> grabJob w
 
-addFunc :: Worker -> ByteString -> (Job -> IO ()) -> IO ()
+addFunc :: Worker -> FuncName -> (Job -> IO ()) -> IO ()
 addFunc w@(Worker { bc = c }) f t = withAgent c $ \agent -> do
   send agent CanDo f
   addTask w f (Task t)
 
-removeFunc :: Worker -> ByteString -> IO ()
+removeFunc :: Worker -> FuncName -> IO ()
 removeFunc w@(Worker { bc = c }) f = withAgent c $ \agent -> do
   send agent CantDo f
   removeTask w f

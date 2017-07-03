@@ -1,4 +1,4 @@
-module Periodic.Server.IOList
+module Periodic.IOList
   (
     IOList
   , newIOList

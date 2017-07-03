@@ -23,10 +23,9 @@ import           Periodic.Types        (ClientType, Error (..), Payload (..),
                                         noopError, nullChar)
 
 import           Control.Exception     (bracket, try)
-import           Data.HashMap.Strict   (HashMap)
-import qualified Data.HashMap.Strict   as HM (delete, elems, empty, insert,
-                                              lookup)
 import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
+import           Periodic.IOHashMap    (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap    as HM (delete, elems, insert, lookup)
 
 import           Periodic.Agent        (Agent, agentID, feed)
 import qualified Periodic.Agent        as Agent (newAgent)
@@ -41,7 +40,7 @@ import           Data.Maybe            (fromJust, isJust)
 
 import           System.Log.Logger     (errorM, infoM)
 
-data BaseClient = BaseClient { agents   :: IORef (HashMap ByteString Agent)
+data BaseClient = BaseClient { agents   :: IOHashMap Agent
                              , conn     :: Connection
                              , threadID :: IORef (Maybe ThreadId)
                              }
@@ -52,7 +51,7 @@ newBaseClient sock agentType = do
   send conn $ (toEnum $ fromEnum agentType) `B.cons` B.empty
   void $ receive conn
 
-  agents <- newIORef HM.empty
+  agents <- newIOHashMap
   threadID <- newIORef Nothing
   let bc = BaseClient {..}
 
@@ -62,14 +61,14 @@ newBaseClient sock agentType = do
   return bc
 
 addAgent :: BaseClient -> Agent -> IO ()
-addAgent bc a = atomicModifyIORef' (agents bc) $ \v -> (HM.insert (agentID a) a v, ())
+addAgent bc a = HM.insert (agents bc) (agentID a) a
 
 removeAgent :: BaseClient -> Agent -> IO ()
-removeAgent bc a = atomicModifyIORef' (agents bc) $ \v -> (HM.delete (agentID a) v, ())
+removeAgent bc a = HM.delete (agents bc) (agentID a)
 
 writePayload :: BaseClient -> Payload -> IO ()
 writePayload bc pl@(Payload { payloadID = pid }) = do
-  v <- atomicModifyIORef' (agents bc) $ \v -> (v, HM.lookup pid v)
+  v <- HM.lookup (agents bc) pid
   case v of
     Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ B.unpack pid ++ "] not found."
     Just agent -> feed agent pl
@@ -96,9 +95,8 @@ close (BaseClient {..}) = do
   Conn.close conn
 
 noopAgent :: BaseClient -> Error -> IO ()
-noopAgent bc e = do
-   v <- atomicModifyIORef' (agents bc) $ \v -> (v, HM.elems v)
-   mapM_ (flip feed (noopError e)) v
+noopAgent bc e =
+   mapM_ (flip feed (noopError e)) =<< HM.elems (agents bc)
 
 
 mainLoop :: BaseClient -> IO ()
