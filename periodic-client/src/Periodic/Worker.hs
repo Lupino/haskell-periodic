@@ -106,7 +106,9 @@ work w size = handle (\(_ :: Error) -> close w) $ do
       Just job -> do
         task <- getTask w (func job)
         case task of
-          Nothing -> removeFunc w (func job)
+          Nothing -> do
+            removeFunc w (func job)
+            workFail job
           Just task' -> do
             waitQSem sem
             void . forkIO $ runTask task' job >> signalQSem sem
