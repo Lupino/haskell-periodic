@@ -10,7 +10,6 @@ module Periodic.Server.Worker
   ) where
 
 import           Control.Concurrent        (ThreadId, forkIO, killThread)
-import qualified Control.Concurrent.Lock   as L (Lock, new, with)
 import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
@@ -18,6 +17,7 @@ import qualified Data.ByteString           as B (empty)
 import           Data.Int                  (Int64)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
+import qualified Periodic.Lock             as L (Lock, new, with)
 
 import           Periodic.Agent            (Agent, newAgent, send)
 import           Periodic.IOList           (IOList, delete, elem, insert,

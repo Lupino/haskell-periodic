@@ -28,7 +28,6 @@ library
                      , periodic-common
                      , bytestring
                      , network
-                     , concurrent-extra
                      , unordered-containers
                      , psqueues
                      , acid-state

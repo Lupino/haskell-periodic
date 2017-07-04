@@ -20,7 +20,6 @@ module Periodic.Server.Scheduler
   , shutdown
   ) where
 
-import qualified Control.Concurrent.Lock      as L (Lock, new, with)
 import           Control.Exception            (SomeException, try)
 import           Control.Monad                (when)
 import qualified Data.ByteString.Char8        as B (concat)
@@ -30,6 +29,7 @@ import           Periodic.IOHashMap           (newIOHashMap)
 import qualified Periodic.IOHashMap           as FL
 import           Periodic.IOList              (IOList)
 import qualified Periodic.IOList              as IL
+import qualified Periodic.Lock                as L (Lock, new, with)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
 import           Periodic.Server.JobQueue     (JobQueue)

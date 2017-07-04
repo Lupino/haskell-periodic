@@ -25,6 +25,7 @@ library
                      , Periodic.Types.Job
                      , Periodic.Socket
                      , Periodic.Timer
+                     , Periodic.Lock
                      , Periodic.IOHashMap
                      , Periodic.IOList
                      , Periodic.Agent
@@ -32,7 +33,6 @@ library
   build-depends:       base >= 4.7 && < 5
                      , bytestring
                      , network
-                     , concurrent-extra
                      , entropy
                      , unix-time
                      , unordered-containers

@@ -16,10 +16,10 @@ module Periodic.Connection
   , connid
   ) where
 
-import qualified Control.Concurrent.Lock   as L (Lock, new, with)
 import qualified Data.ByteString.Char8     as B (ByteString, concat, drop,
                                                  empty, length, null, take)
 import           Network.Socket.ByteString (recv, sendAll)
+import qualified Periodic.Lock             as L (Lock, new, with)
 import           Periodic.Socket           (Socket)
 import qualified Periodic.Socket           as Socket (close)
 
