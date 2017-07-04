@@ -20,9 +20,10 @@ import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 
 import           Periodic.Agent            (Agent, newAgent, send)
-import           Periodic.IOList           (IOList, delete, insert, newIOList,
-                                            toList)
+import           Periodic.IOList           (IOList, delete, elem, insert,
+                                            newIOList, toList)
 import           Periodic.Server.Scheduler
+import           Prelude                   hiding (elem)
 
 import           Periodic.Timer
 import           Periodic.Types            (Command (..), Payload (..))
@@ -133,13 +134,17 @@ handleSchedLater sched jq pl = do
 
 handleCanDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
 handleCanDo sched fl fn = do
-  addFunc sched fn
-  insert fl fn
+  has <- elem fl fn
+  when (not has) $ do
+    addFunc sched fn
+    insert fl fn
 
 handleCantDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
 handleCantDo sched fl fn = do
-  removeFunc sched fn
-  delete fl fn
+  has <- elem fl fn
+  when has $ do
+    removeFunc sched fn
+    delete fl fn
 
 wClose :: Worker -> IO ()
 wClose (Worker { .. }) = void $ forkIO $ L.with wLocker $ do
