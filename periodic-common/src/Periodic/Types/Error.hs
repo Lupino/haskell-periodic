@@ -6,8 +6,8 @@ module Periodic.Types.Error
 import           Control.Exception (Exception)
 
 data Error = MagicNotMatch
-           | SocketClosed
-           | SocketTimeout
+           | TransportClosed
+           | TransportTimeout
            | DataTooLarge
            | EmptyError
 

@@ -9,6 +9,7 @@ import           Control.Monad      (when)
 import           Periodic.Server
 import           Periodic.Socket    (HostName, ServiceName, listenOn,
                                      listenOnFile)
+import           Periodic.Transport (makeSocketTransport)
 import           System.Directory   (removeFile)
 import           System.Environment (getArgs)
 
@@ -54,7 +55,7 @@ main = do
   (Options {..}) <- parseOptions <$> getArgs
 
   if showHelp then printHelp
-              else startServer storePath
+              else startServer makeSocketTransport storePath
                      =<< if useSock then listenOnFile sockFile
                                     else listenOn host service
 

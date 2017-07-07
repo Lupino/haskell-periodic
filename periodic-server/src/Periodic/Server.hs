@@ -26,14 +26,15 @@ import           Periodic.Server.Client    (newClient)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Store     (newStore)
 import           Periodic.Server.Worker    (newWorker)
+import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..))
 import           Periodic.Utils            (tryIO)
 
 handleExit :: MVar Bool -> IO ()
 handleExit mv = putMVar mv True
 
-startServer :: FilePath -> Socket -> IO ()
-startServer storePath sock = do
+startServer :: (Socket -> IO Transport) -> FilePath -> Socket -> IO ()
+startServer makeTransport storePath sock = do
   store <- newStore storePath
   sched <- newScheduler store
   -- Handle dying
@@ -43,7 +44,7 @@ startServer storePath sock = do
 
   thread <- forkIO $ forever $ do
     -- if accept failed exit
-    e <- tryIO $ mainLoop sock sched
+    e <- tryIO $ mainLoop makeTransport sock sched
     case e of
       Right _ -> return ()
       Left e'  -> do
@@ -54,14 +55,14 @@ startServer storePath sock = do
   shutdown sched
   Socket.close sock
 
-mainLoop :: Socket -> Scheduler -> IO ()
-mainLoop sock sched = do
+mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IO ()
+mainLoop makeTransport sock sched = do
   (sock', _) <- accept sock
-  void $ forkIO $ handleConnection sock' sched
+  void $ forkIO $ handleConnection sched =<< makeTransport sock'
 
-handleConnection :: Socket -> Scheduler -> IO ()
-handleConnection sock sched = do
-  conn <- newServerConn sock
+handleConnection :: Scheduler -> Transport -> IO ()
+handleConnection sched transport = do
+  conn <- newServerConn transport
   receiveThen conn $ \pl ->
     sendThen conn $ do
       case tp pl of

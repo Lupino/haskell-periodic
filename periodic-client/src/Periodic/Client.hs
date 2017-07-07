@@ -22,8 +22,8 @@ import qualified Data.ByteString.Char8  as B (empty, hGet, hPut, length)
 import           Periodic.Agent         (Agent, receive, send)
 import           Periodic.BaseClient    (BaseClient, close, newBaseClient,
                                          noopAgent, withAgent)
-import           Periodic.Socket        (Socket)
 import           Periodic.Timer
+import           Periodic.Transport     (Transport)
 import           Periodic.Types         (ClientType (TypeClient))
 import           Periodic.Types.Command
 import           Periodic.Types.Error
@@ -40,9 +40,9 @@ import           System.Timeout         (timeout)
 
 type Client = BaseClient
 
-newClient :: Socket -> IO Client
-newClient sock = do
-  c <- newBaseClient sock TypeClient
+newClient :: Transport -> IO Client
+newClient transport = do
+  c <- newBaseClient transport TypeClient
   timer <- newTimer
   initTimer timer $ checkHealth c
   repeatTimer' timer 100
@@ -118,7 +118,7 @@ checkHealth :: Client -> IO ()
 checkHealth c = do
   ret <- timeout 10000000 $ ping c
   case ret of
-    Nothing -> noopAgent c SocketTimeout
+    Nothing -> noopAgent c TransportTimeout
     Just r ->
       if r then return ()
-           else noopAgent c SocketClosed
+           else noopAgent c TransportClosed

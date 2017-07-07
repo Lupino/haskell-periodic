@@ -18,7 +18,7 @@ import           Periodic.Connection   (Connection, newClientConn, receive,
                                         send)
 
 import qualified Periodic.Connection   as Conn (close)
-import           Periodic.Socket       (Socket)
+import           Periodic.Transport    (Transport)
 import           Periodic.Types        (ClientType, Error (..), Payload (..),
                                         noopError, nullChar)
 
@@ -45,9 +45,9 @@ data BaseClient = BaseClient { agents :: IOHashMap Agent
                              , runner :: IORef (Maybe ThreadId)
                              }
 
-newBaseClient :: Socket -> ClientType -> IO BaseClient
-newBaseClient sock agentType = do
-  conn <- newClientConn sock
+newBaseClient :: Transport -> ClientType -> IO BaseClient
+newBaseClient transport agentType = do
+  conn <- newClientConn transport
   send conn $ (toEnum $ fromEnum agentType) `B.cons` B.empty
   void $ receive conn
 
@@ -103,7 +103,7 @@ mainLoop :: BaseClient -> IO ()
 mainLoop bc = do
   e <- try $ receive (conn bc)
   case e of
-    Left SocketClosed  -> noopAgent bc SocketClosed
-    Left MagicNotMatch -> noopAgent bc MagicNotMatch
-    Left _             -> return ()
-    Right pl           -> writePayload bc (parsePayload pl)
+    Left TransportClosed -> noopAgent bc TransportClosed
+    Left MagicNotMatch   -> noopAgent bc MagicNotMatch
+    Left _               -> return ()
+    Right pl             -> writePayload bc (parsePayload pl)

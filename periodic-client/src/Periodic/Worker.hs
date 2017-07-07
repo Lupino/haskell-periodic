@@ -20,8 +20,8 @@ import           Periodic.BaseClient     (BaseClient, newBaseClient, noopAgent,
                                           withAgent)
 import qualified Periodic.BaseClient     as BC (close)
 import           Periodic.Job            (Job, func, name, newJob, workFail)
-import           Periodic.Socket         (Socket)
 import           Periodic.Timer
+import           Periodic.Transport      (Transport)
 import           Periodic.Types.Command
 import           Periodic.Types.Error
 import           Periodic.Types.Payload
@@ -47,9 +47,9 @@ data Worker = Worker { bc    :: BaseClient
                      }
 
 
-newWorker :: Socket -> IO Worker
-newWorker sock = do
-  bc <- newBaseClient sock TypeWorker
+newWorker :: Transport -> IO Worker
+newWorker transport = do
+  bc <- newBaseClient transport TypeWorker
   tasks <- newIOHashMap
   let w = Worker { .. }
 
@@ -129,7 +129,7 @@ checkHealth :: Worker -> IO ()
 checkHealth w = do
   ret <- timeout 10000000 $ ping w
   case ret of
-    Nothing -> noopAgent (bc w) SocketTimeout
+    Nothing -> noopAgent (bc w) TransportTimeout
     Just r ->
       if r then return ()
-           else noopAgent (bc w) SocketClosed
+           else noopAgent (bc w) TransportClosed

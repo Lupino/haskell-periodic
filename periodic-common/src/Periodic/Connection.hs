@@ -16,21 +16,20 @@ module Periodic.Connection
   , connid
   ) where
 
-import qualified Data.ByteString.Char8     as B (ByteString, concat, drop,
-                                                 empty, length, null, take)
-import           Network.Socket.ByteString (recv, sendAll)
-import qualified Periodic.Lock             as L (Lock, new, with)
-import           Periodic.Socket           (Socket)
-import qualified Periodic.Socket           as Socket (close)
+import qualified Data.ByteString.Char8 as B (ByteString, concat, drop, empty,
+                                             length, null, take)
+import qualified Periodic.Lock         as L (Lock, new, with)
+import           Periodic.Transport    (Transport (recvData, sendData))
+import qualified Periodic.Transport    as T (Transport (close))
 
-import           Control.Exception         (throwIO)
-import           Control.Monad             (when)
-import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
-import           Periodic.Types            (Error (..))
-import           Periodic.Utils            (makeHeader, maxLength, parseHeader)
-import           System.Entropy            (getEntropy)
+import           Control.Exception     (throwIO)
+import           Control.Monad         (when)
+import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
+import           Periodic.Types        (Error (..))
+import           Periodic.Utils        (makeHeader, maxLength, parseHeader)
+import           System.Entropy        (getEntropy)
 
-data Connection = Connection { sock          :: Socket
+data Connection = Connection { transport     :: Transport
                              , requestMagic  :: B.ByteString
                              , responseMagic :: B.ByteString
                              , readLock      :: L.Lock
@@ -46,8 +45,8 @@ magicREQ = "\x00REQ"
 magicRES :: B.ByteString
 magicRES = "\x00RES"
 
-newConn :: Socket -> B.ByteString -> B.ByteString -> IO Connection
-newConn sock requestMagic responseMagic = do
+newConn :: Transport -> B.ByteString -> B.ByteString -> IO Connection
+newConn transport requestMagic responseMagic = do
   readLock <- L.new
   writeLock <- L.new
   status <- newIORef True
@@ -55,11 +54,11 @@ newConn sock requestMagic responseMagic = do
   buffer <- newIORef B.empty
   return Connection {..}
 
-newServerConn :: Socket -> IO Connection
-newServerConn sock = newConn sock magicREQ magicRES
+newServerConn :: Transport -> IO Connection
+newServerConn transport = newConn transport magicREQ magicRES
 
-newClientConn :: Socket -> IO Connection
-newClientConn sock = newConn sock magicRES magicREQ
+newClientConn :: Transport -> IO Connection
+newClientConn transport = newConn transport magicRES magicREQ
 
 receive :: Connection -> IO B.ByteString
 receive c@(Connection {..}) = do
@@ -68,7 +67,7 @@ receive c@(Connection {..}) = do
     case magic == requestMagic of
       False -> do
         setStatus c False
-        if B.null magic then throwIO SocketClosed
+        if B.null magic then throwIO TransportClosed
                         else throwIO MagicNotMatch
       True -> do
         header <- recv' c 4
@@ -87,8 +86,8 @@ recv' (Connection {..}) nbytes = do
   where readBuf :: Int -> IO B.ByteString
         readBuf 0  = return B.empty
         readBuf nb = do
-          buf <- recv sock 1024
-          when (B.null buf) $ throwIO SocketClosed
+          buf <- recvData transport 1024
+          when (B.null buf) $ throwIO TransportClosed
           if B.length buf >= nb then return buf
                                 else do
                                   otherBuf <- readBuf (nb - B.length buf)
@@ -100,7 +99,7 @@ send :: Connection -> B.ByteString -> IO ()
 send (Connection {..}) dat = do
   L.with writeLock $ do
     when (B.length dat > maxLength) $ throwIO DataTooLarge
-    sendAll sock $ B.concat [ responseMagic, makeHeader $ B.length dat, dat ]
+    sendData transport $ B.concat [ responseMagic, makeHeader $ B.length dat, dat ]
 
 connected :: Connection -> IO Bool
 connected (Connection {..}) = atomicModifyIORef' status $ \v -> (v, v)
@@ -111,4 +110,4 @@ setStatus (Connection {..}) v' = atomicModifyIORef' status $ \_ -> (v', ())
 close :: Connection -> IO ()
 close c@(Connection { .. }) = do
   setStatus c False
-  Socket.close sock
+  T.close transport
