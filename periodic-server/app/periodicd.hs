@@ -8,67 +8,97 @@ module Main
 
 import           Control.Monad          (when)
 import qualified Data.ByteString        as B (readFile)
+import           Data.List              (isPrefixOf)
 import           Periodic.Server
-import           Periodic.Socket        (HostName, ServiceName, listenOn,
-                                         listenOnFile)
+import           Periodic.Socket        (HostName, ServiceName, connectToFile,
+                                         listenOn, listenOnFile)
 import           Periodic.Transport     (makeSocketTransport)
 import           Periodic.Transport.XOR (makeXORTransport)
-import           System.Directory       (removeFile)
-import           System.Environment     (getArgs)
+import           Periodic.Utils         (tryIO)
+import           System.Directory       (doesFileExist, removeFile)
+import           System.Environment     (getArgs, lookupEnv)
+import           System.Exit            (exitFailure, exitSuccess)
 
-data Options = Options { host      :: Maybe HostName
-                       , service   :: ServiceName
-                       , sockFile  :: FilePath
-                       , useSock   :: Bool
+data Options = Options { host      :: String
                        , xorFile   :: FilePath
                        , storePath :: FilePath
                        , showHelp  :: Bool
                        }
 
 defaultOptions :: Options
-defaultOptions = Options { host      = Nothing
-                         , service   = "5000"
-                         , sockFile  = "/tmp/periodicd.sock"
-                         , useSock   = True
+defaultOptions = Options { host      = "unix:///tmp/periodic.sock"
                          , xorFile   = ""
                          , storePath = "state"
                          , showHelp  = False
                          }
 
-parseOptions :: [String] -> Options
-parseOptions []              = defaultOptions
-parseOptions ("-P":x:xs)     = (parseOptions xs) { service   = x,      useSock = False }
-parseOptions ("--port":x:xs) = (parseOptions xs) { service   = x,      useSock = False }
-parseOptions ("-H":x:xs)     = (parseOptions xs) { host      = Just x, useSock = False }
-parseOptions ("--host":x:xs) = (parseOptions xs) { host      = Just x, useSock = False }
-parseOptions ("--sock":x:xs) = (parseOptions xs) { sockFile  = x }
-parseOptions ("--xor":x:xs)  = (parseOptions xs) { xorFile   = x }
-parseOptions ("-p":x:xs)     = (parseOptions xs) { storePath = x }
-parseOptions ("--path":x:xs) = (parseOptions xs) { storePath = x }
-parseOptions ("-h":xs)       = (parseOptions xs) { showHelp  = True }
-parseOptions ("--help":xs)   = (parseOptions xs) { showHelp  = True }
-parseOptions (_:xs)          = parseOptions xs
+parseOptions :: Maybe String -> [String] -> Options
+parseOptions Nothing []        = defaultOptions
+parseOptions (Just v) []       = defaultOptions { host = v }
+parseOptions e ("-H":x:xs)     = (parseOptions e xs) { host      = x }
+parseOptions e ("--host":x:xs) = (parseOptions e xs) { host      = x }
+parseOptions e ("--xor":x:xs)  = (parseOptions e xs) { xorFile   = x }
+parseOptions e ("-p":x:xs)     = (parseOptions e xs) { storePath = x }
+parseOptions e ("--path":x:xs) = (parseOptions e xs) { storePath = x }
+parseOptions e ("-h":xs)       = (parseOptions e xs) { showHelp  = True }
+parseOptions e ("--help":xs)   = (parseOptions e xs) { showHelp  = True }
+parseOptions e (_:xs)          = parseOptions e xs
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodicd [--port|-P 5000] [--host|-H 0.0.0.0] [--path|-p state] [--xor FILE]"
-  putStrLn "periodicd [--sock /tmp/periodicd.sock] [--path|-p state] [--xor FILE]"
-  putStrLn "periodicd --help"
-  putStrLn "periodicd -h"
+  putStrLn "periodicd [--host|-H HOST] [--path|-p PATH] [--xor FILE]"
+  putStrLn ""
+  putStrLn "Common flags:"
+  putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
+  putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "  -p --path State store path (optional: state)"
+  putStrLn "     --xor  XOR Transport encode file (optional: \"\")"
+  putStrLn "  -h --help Display help message"
+  exitSuccess
 
 main :: IO ()
 main = do
-  (Options {..}) <- parseOptions <$> getArgs
+  env <- lookupEnv "PERIODIC_PORT"
+  (Options {..}) <- parseOptions env <$> getArgs
 
-  if showHelp then printHelp
-              else startServer (makeTransport xorFile) storePath
-                     =<< if useSock then listenOnFile sockFile
-                                    else listenOn host service
+  when showHelp $ printHelp
 
-  when (useSock && not showHelp) $ removeFile sockFile
+  when (not (isPrefixOf "tcp" host) && not (isPrefixOf "unix" host)) $ do
+    putStrLn $ "Invalid host " ++ host
+    printHelp
 
- where makeTransport [] sock = makeSocketTransport sock
-       makeTransport p sock  = do
-         key <- B.readFile p
-         transport <- makeSocketTransport sock
-         makeXORTransport key transport
+  sock <- if isPrefixOf "tcp" host then listenOn (getHost host) (getService host)
+                                   else listenOnFile' (dropS host)
+
+
+  startServer (makeTransport xorFile) storePath sock
+
+  where makeTransport [] sock = makeSocketTransport sock
+        makeTransport p sock  = do
+          key <- B.readFile p
+          transport <- makeSocketTransport sock
+          makeXORTransport key transport
+
+        dropS :: String -> String
+        dropS = drop 3 . dropWhile (/= ':')
+
+        toMaybe :: String -> Maybe String
+        toMaybe [] = Nothing
+        toMaybe xs = Just xs
+
+        getHost :: String -> Maybe String
+        getHost = toMaybe . takeWhile (/=':') . dropS
+
+        getService :: String -> String
+        getService = drop 1 . dropWhile (/=':') . dropS
+
+        listenOnFile' sockFile = do
+          exists <- doesFileExist sockFile
+          when exists $ do
+            e <- tryIO $ connectToFile sockFile
+            case e of
+              Left _ -> removeFile sockFile
+              Right _ -> do
+                putStrLn "periodicd: bind: resource busy (Address already in use)"
+                exitFailure
+          listenOnFile sockFile
