@@ -11,7 +11,7 @@ module Periodic.Job
   , schedLater'
   ) where
 
-import           Data.ByteString.Char8 (ByteString)
+import           Data.ByteString       (ByteString)
 import qualified Data.ByteString.Char8 as B (concat, pack)
 import           Periodic.Agent        (send)
 import           Periodic.BaseClient   (BaseClient, withAgent)

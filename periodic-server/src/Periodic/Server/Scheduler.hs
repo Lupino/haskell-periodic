@@ -22,7 +22,7 @@ module Periodic.Server.Scheduler
 
 import           Control.Exception            (SomeException, try)
 import           Control.Monad                (when)
-import qualified Data.ByteString.Char8        as B (concat)
+import qualified Data.ByteString              as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (Agent, aAlive, send)
 import           Periodic.IOHashMap           (newIOHashMap)

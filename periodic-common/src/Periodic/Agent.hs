@@ -15,8 +15,8 @@ module Periodic.Agent
   , receive
   ) where
 
-import           Data.ByteString.Char8   (ByteString)
-import qualified Data.ByteString.Char8   as B (concat, cons, empty, null)
+import           Data.ByteString         (ByteString)
+import qualified Data.ByteString         as B (concat, cons, empty, null)
 
 import           Periodic.Connection     (Connection, connected, connid)
 import qualified Periodic.Connection     as Conn (send)

@@ -12,33 +12,32 @@ module Periodic.BaseClient
   , close
   ) where
 
-import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B (cons, empty, isInfixOf, unpack)
-import           Periodic.Connection   (Connection, newClientConn, receive,
-                                        send)
+import           Data.ByteString     (ByteString)
+import qualified Data.ByteString     as B (cons, empty, isInfixOf)
+import           Periodic.Connection (Connection, newClientConn, receive, send)
 
-import qualified Periodic.Connection   as Conn (close)
-import           Periodic.Transport    (Transport)
-import           Periodic.Types        (ClientType, Error (..), Payload (..),
-                                        noopError, nullChar)
+import qualified Periodic.Connection as Conn (close)
+import           Periodic.Transport  (Transport)
+import           Periodic.Types      (ClientType, Error (..), Payload (..),
+                                      noopError, nullChar)
 
-import           Control.Exception     (bracket, try)
-import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
-import           Periodic.IOHashMap    (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap    as HM (delete, elems, insert, lookup)
+import           Control.Exception   (bracket, try)
+import           Data.IORef          (IORef, atomicModifyIORef', newIORef)
+import           Periodic.IOHashMap  (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap  as HM (delete, elems, insert, lookup)
 
-import           Periodic.Agent        (Agent, feed, msgid)
-import qualified Periodic.Agent        as Agent (newAgent')
-import           System.Entropy        (getEntropy)
+import           Periodic.Agent      (Agent, feed, msgid)
+import qualified Periodic.Agent      as Agent (newAgent')
+import           System.Entropy      (getEntropy)
 
-import           Periodic.Utils        (parsePayload)
+import           Periodic.Utils      (parsePayload)
 
-import           Control.Concurrent    (ThreadId, forkIO, killThread)
-import           Control.Monad         (forever, void, when)
+import           Control.Concurrent  (ThreadId, forkIO, killThread)
+import           Control.Monad       (forever, void, when)
 
-import           Data.Maybe            (fromJust, isJust)
+import           Data.Maybe          (fromJust, isJust)
 
-import           System.Log.Logger     (errorM, infoM)
+import           System.Log.Logger   (errorM, infoM)
 
 data BaseClient = BaseClient { agents :: IOHashMap Agent
                              , conn   :: Connection
@@ -70,7 +69,7 @@ writePayload :: BaseClient -> Payload -> IO ()
 writePayload bc pl@(Payload { payloadID = pid }) = do
   v <- HM.lookup (agents bc) pid
   case v of
-    Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ B.unpack pid ++ "] not found."
+    Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ show pid ++ "] not found."
     Just agent -> feed agent pl
 
 newAgent :: BaseClient -> IO Agent

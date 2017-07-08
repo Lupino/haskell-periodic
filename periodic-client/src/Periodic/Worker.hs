@@ -14,7 +14,7 @@ module Periodic.Worker
   , close
   ) where
 
-import qualified Data.ByteString.Char8   as B (empty, unpack)
+import qualified Data.ByteString         as B (empty)
 import           Periodic.Agent          (receive, send)
 import           Periodic.BaseClient     (BaseClient, newBaseClient, noopAgent,
                                           withAgent)
@@ -116,9 +116,9 @@ work w size = handle (\(_ :: Error) -> close w) $ do
 runTask :: Task -> Job -> IO ()
 runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
   errorM "Periodic.Worker" $ concat [ "Failing on running job { name = "
-                                    , B.unpack $ name job
+                                    , show $ name job
                                     , ", "
-                                    , B.unpack $ func job
+                                    , show $ func job
                                     , " }"
                                     , "\nError: "
                                     , show e

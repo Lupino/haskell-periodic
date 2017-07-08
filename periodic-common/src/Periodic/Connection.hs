@@ -16,18 +16,17 @@ module Periodic.Connection
   , connid
   ) where
 
-import qualified Data.ByteString.Char8 as B (ByteString, concat, drop, empty,
-                                             length, null, take)
-import qualified Periodic.Lock         as L (Lock, new, with)
-import           Periodic.Transport    (Transport (recvData, sendData))
-import qualified Periodic.Transport    as T (Transport (close))
+import qualified Data.ByteString    as B
+import qualified Periodic.Lock      as L (Lock, new, with)
+import           Periodic.Transport (Transport (recvData, sendData))
+import qualified Periodic.Transport as T (Transport (close))
 
-import           Control.Exception     (throwIO)
-import           Control.Monad         (when)
-import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
-import           Periodic.Types        (Error (..))
-import           Periodic.Utils        (makeHeader, maxLength, parseHeader)
-import           System.Entropy        (getEntropy)
+import           Control.Exception  (throwIO)
+import           Control.Monad      (when)
+import           Data.IORef         (IORef, atomicModifyIORef', newIORef)
+import           Periodic.Types     (Error (..))
+import           Periodic.Utils     (makeHeader, maxLength, parseHeader)
+import           System.Entropy     (getEntropy)
 
 data Connection = Connection { transport     :: Transport
                              , requestMagic  :: B.ByteString

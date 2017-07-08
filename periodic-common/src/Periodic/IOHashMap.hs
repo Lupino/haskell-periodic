@@ -18,12 +18,12 @@ module Periodic.IOHashMap
   , elems
   ) where
 
-import           Prelude               hiding (lookup, null)
+import           Prelude             hiding (lookup, null)
 
-import           Data.ByteString.Char8 (ByteString)
-import           Data.HashMap.Strict   (HashMap)
-import qualified Data.HashMap.Strict   as HM
-import           Data.IORef            (IORef, atomicModifyIORef', newIORef)
+import           Data.ByteString     (ByteString)
+import           Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HM
+import           Data.IORef          (IORef, atomicModifyIORef', newIORef)
 
 newtype IOHashMap a = IOHashMap (IORef (HashMap ByteString a))
 

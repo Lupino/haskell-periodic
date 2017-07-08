@@ -11,12 +11,12 @@ module Periodic.Server.GrabQueue
   , hasAgent
   ) where
 
-import           Data.ByteString.Char8 (ByteString)
-import           Periodic.Agent        (Agent, agentid)
-import           Periodic.IOList       (IOList, append, delete, elem, newIOList,
-                                        toList)
-import           Periodic.Types        (FuncName, JobHandle)
-import           Prelude               hiding (elem)
+import           Data.ByteString (ByteString)
+import           Periodic.Agent  (Agent, agentid)
+import           Periodic.IOList (IOList, append, delete, elem, newIOList,
+                                  toList)
+import           Periodic.Types  (FuncName, JobHandle)
+import           Prelude         hiding (elem)
 
 data GrabItem = GrabItem { gFuncList :: IOList FuncName
                          , gAgent    :: Agent
