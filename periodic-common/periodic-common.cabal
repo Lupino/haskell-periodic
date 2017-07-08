@@ -25,6 +25,7 @@ library
                      , Periodic.Types.Job
                      , Periodic.Socket
                      , Periodic.Transport
+                     , Periodic.Transport.XOR
                      , Periodic.Timer
                      , Periodic.Lock
                      , Periodic.IOHashMap
