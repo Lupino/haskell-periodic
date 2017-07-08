@@ -18,6 +18,7 @@ import           System.Posix.Signals      (Handler (Catch), installHandler,
                                             sigINT, sigTERM)
 
 -- server
+import           Control.Exception         (SomeException, try)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (head, null)
 import           Periodic.Connection       (Connection, close, connid,
@@ -79,14 +80,14 @@ handleConnection sched transport = do
 
         receiveThen :: Connection -> (ByteString -> IO ()) -> IO ()
         receiveThen conn next = do
-          e <- tryIO $ receive conn
+          e <- try $ receive conn
           case e of
-            Left _   -> close conn
-            Right pl -> next pl
+            Left (_ :: SomeException) -> close conn
+            Right pl                  -> next pl
 
         sendThen :: Connection -> IO () -> IO ()
         sendThen conn next = do
-          e <- tryIO $ send conn (connid conn)
+          e <- try $ send conn (connid conn)
           case e of
-            Left _  -> close conn
-            Right _ -> next
+            Left (_ :: SomeException) -> close conn
+            Right _                   -> next
