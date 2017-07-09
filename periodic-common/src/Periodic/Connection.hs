@@ -27,6 +27,7 @@ import           Data.IORef         (IORef, atomicModifyIORef', newIORef)
 import           Periodic.Types     (Error (..))
 import           Periodic.Utils     (makeHeader, maxLength, parseHeader)
 import           System.Entropy     (getEntropy)
+import           System.Timeout     (timeout)
 
 data Connection = Connection { transport     :: Transport
                              , requestMagic  :: B.ByteString
@@ -70,7 +71,10 @@ receive c@(Connection {..}) = do
                         else throwIO MagicNotMatch
       True -> do
         header <- recv' c 4
-        recv' c (parseHeader header)
+        ret <- timeout 100000000 $ recv' c (parseHeader header)
+        case ret of
+          Nothing -> throwIO TransportTimeout
+          Just bs -> return bs
 
 recv' :: Connection -> Int -> IO B.ByteString
 recv' (Connection {..}) nbytes = do
