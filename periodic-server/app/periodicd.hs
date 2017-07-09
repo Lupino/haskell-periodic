@@ -7,7 +7,7 @@ module Main
   ) where
 
 import           Control.Monad          (when)
-import qualified Data.ByteString        as B (readFile)
+import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf)
 import           Periodic.Server
 import           Periodic.Socket        (HostName, ServiceName, connectToFile,
@@ -75,7 +75,7 @@ main = do
 
   where makeTransport [] sock = makeSocketTransport sock
         makeTransport p sock  = do
-          key <- B.readFile p
+          key <- LB.readFile p
           transport <- makeSocketTransport sock
           makeXORTransport key transport
 
