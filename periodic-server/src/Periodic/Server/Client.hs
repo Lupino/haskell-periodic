@@ -9,7 +9,7 @@ module Periodic.Server.Client
   , cClose
   ) where
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread)
+import           Control.Concurrent        (forkIO)
 import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
@@ -17,6 +17,7 @@ import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
                                                  pack)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
+import           Periodic.TM
 
 import           Periodic.Agent            (Agent, newAgent, send, send_)
 import           Periodic.Server.FuncStat  (FuncStat (..))
@@ -33,7 +34,7 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
 data Client = Client { cConn      :: Connection
                      , cSched     :: Scheduler
-                     , cRunner    :: IORef (Maybe ThreadId)
+                     , cRunner    :: ThreadManager
                      , cKeepAlive :: Int64
                      , cTimer     :: Timer
                      , cLastVist  :: IORef Int64
@@ -41,7 +42,7 @@ data Client = Client { cConn      :: Connection
 
 newClient :: Connection -> Scheduler -> Int64 -> IO Client
 newClient cConn cSched cKeepAlive = do
-  cRunner <- newIORef Nothing
+  cRunner <- newThreadManager
   cLastVist <- newIORef =<< getEpochTime
   cTimer <- newTimer
   let c = Client {..}
@@ -49,7 +50,7 @@ newClient cConn cSched cKeepAlive = do
   runner <- forkIO $ forever $ mainLoop c
   initTimer cTimer $ checkAlive c
 
-  atomicModifyIORef' cRunner (\_ -> (Just runner, ()))
+  setThreadId cRunner runner
 
   repeatTimer' cTimer (fromIntegral cKeepAlive)
   return c
@@ -150,7 +151,6 @@ handleLoad sc pl = do
 
 cClose :: Client -> IO ()
 cClose (Client { .. }) = void $ forkIO $ do
-  runner <- atomicModifyIORef' cRunner (\v -> (v, v))
-  when (isJust runner) $ killThread (fromJust runner)
+  killThread cRunner
   clearTimer cTimer
   close cConn

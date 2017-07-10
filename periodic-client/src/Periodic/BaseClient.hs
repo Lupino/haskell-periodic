@@ -22,7 +22,6 @@ import           Periodic.Types      (ClientType, Error (..), Payload (..),
                                       noopError, nullChar)
 
 import           Control.Exception   (bracket, try)
-import           Data.IORef          (IORef, atomicModifyIORef', newIORef)
 import           Periodic.IOHashMap  (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap  as HM (delete, elems, insert, lookup)
 
@@ -32,8 +31,9 @@ import           System.Entropy      (getEntropy)
 
 import           Periodic.Utils      (parsePayload)
 
-import           Control.Concurrent  (ThreadId, forkIO, killThread)
+import           Control.Concurrent  (forkIO)
 import           Control.Monad       (forever, void, when)
+import           Periodic.TM
 
 import           Data.Maybe          (fromJust, isJust)
 
@@ -41,7 +41,7 @@ import           System.Log.Logger   (errorM, infoM)
 
 data BaseClient = BaseClient { agents :: IOHashMap Agent
                              , conn   :: Connection
-                             , runner :: IORef (Maybe ThreadId)
+                             , runner :: ThreadManager
                              }
 
 newBaseClient :: Transport -> ClientType -> IO BaseClient
@@ -51,11 +51,11 @@ newBaseClient transport agentType = do
   void $ receive conn
 
   agents <- newIOHashMap
-  runner <- newIORef Nothing
+  runner <- newThreadManager
   let bc = BaseClient {..}
 
   t <- forkIO $ forever $ mainLoop bc
-  atomicModifyIORef' runner (\_ -> (Just t, ()))
+  setThreadId runner t
   infoM "Periodic.BaseClient" "Connected to periodic task system"
   return bc
 
@@ -89,8 +89,7 @@ withAgent bc = bracket (newAgent bc) (removeAgent bc)
 
 close :: BaseClient -> IO ()
 close (BaseClient {..}) = do
-  tid <- atomicModifyIORef' runner (\v -> (v, v))
-  when (isJust tid) $ killThread (fromJust tid)
+  killThread runner
   Conn.close conn
 
 noopAgent :: BaseClient -> Error -> IO ()

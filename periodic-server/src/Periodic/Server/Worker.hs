@@ -9,7 +9,7 @@ module Periodic.Server.Worker
   , wClose
   ) where
 
-import           Control.Concurrent        (ThreadId, forkIO, killThread)
+import           Control.Concurrent        (forkIO)
 import           Control.Exception         (SomeException, try)
 import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
@@ -18,6 +18,7 @@ import           Data.Int                  (Int64)
 import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 import qualified Periodic.Lock             as L (Lock, new, with)
+import           Periodic.TM
 
 import           Periodic.Agent            (Agent, newAgent, send)
 import           Periodic.IOList           (IOList, delete, elem, insert,
@@ -35,7 +36,7 @@ import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
 
 data Worker = Worker { wConn      :: Connection
                      , wSched     :: Scheduler
-                     , wRunner    :: IORef (Maybe ThreadId)
+                     , wRunner    :: ThreadManager
                      , wTimer     :: Timer
                      , wFuncList  :: IOList FuncName
                      , wJobQueue  :: IOList JobHandle
@@ -49,7 +50,7 @@ newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
 newWorker wConn wSched wKeepAlive = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
-  wRunner <- newIORef Nothing
+  wRunner <- newThreadManager
   wTimer <- newTimer
   wClosed   <- newIORef False
   wLocker   <- L.new
@@ -58,8 +59,9 @@ newWorker wConn wSched wKeepAlive = do
   let w = Worker { .. }
 
   runner <- forkIO $ forever $ mainLoop w
+  setThreadId wRunner runner
+
   initTimer wTimer $ checkAlive w
-  atomicModifyIORef' wRunner (\_ -> (Just runner, ()))
   repeatTimer' wTimer $ fromIntegral wKeepAlive
   return w
 
@@ -149,8 +151,7 @@ handleCantDo sched fl fn = do
 wClose :: Worker -> IO ()
 wClose (Worker { .. }) = void $ forkIO $ L.with wLocker $ do
   closed <- atomicModifyIORef' wClosed (\v -> (True, v))
-  runner <- atomicModifyIORef' wRunner (\v -> (v, v))
-  when (isJust runner) $ killThread (fromJust runner)
+  killThread wRunner
 
   clearTimer wTimer
 

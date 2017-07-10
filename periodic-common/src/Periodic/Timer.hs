@@ -13,58 +13,54 @@ module Periodic.Timer
   ) where
 
 
-import           Control.Concurrent      (ThreadId, forkIO, killThread,
-                                          threadDelay)
+import           Control.Concurrent      (forkIO, threadDelay)
 import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 import           Control.Monad           (forever, when)
-import           Data.IORef              (IORef, atomicModifyIORef', newIORef)
-import           Data.Maybe              (fromJust, isJust, isNothing)
+import           Data.Maybe              (isNothing)
 import qualified Periodic.Lock           as L
+import           Periodic.TM
 
-data Timer = Timer { timer  :: IORef (Maybe ThreadId)
+data Timer = Timer { timer  :: ThreadManager
                    , waiter :: MVar ()
                    , locker :: L.Lock
-                   , runner :: IORef (Maybe ThreadId)
+                   , runner :: ThreadManager
                    }
 
 newTimer :: IO Timer
 newTimer = do
-  timer  <- newIORef Nothing
+  timer  <- newThreadManager
   waiter <- newEmptyMVar
   locker <- L.new
-  runner <- newIORef Nothing
+  runner <- newThreadManager
 
   return Timer {..}
 
 initTimer :: Timer -> IO () -> IO ()
 initTimer (Timer {..}) io = L.with locker $ do
-  t <- atomicModifyIORef' runner (\v -> (v, v))
+  t <- getThreadId runner
   when (isNothing t) $ do
     t' <- forkIO $ forever $ do
       takeMVar waiter
       io
 
-    atomicModifyIORef' runner (\_ -> (Just t', ()))
+    setThreadId runner t'
 
 clearTimer :: Timer -> IO ()
 clearTimer Timer {..} = do
-  t <- atomicModifyIORef' timer (\v -> (v, v))
-  when (isJust t) $ killThread (fromJust t)
-  t' <- atomicModifyIORef' runner (\v -> (v, v))
-  when (isJust t') $ killThread (fromJust t')
+  killThread timer
+  killThread runner
 
 -- | startTimer for a given number of microseconds
 --
 startTimer :: Timer -> Int -> IO ()
 startTimer (Timer {..}) delay = L.with locker $ do
-  t <- atomicModifyIORef' timer (\v -> (v, v))
-  when (isJust t) $ killThread (fromJust t)
+  killThread timer
 
-  t' <- forkIO $ do
+  t <- forkIO $ do
     when (delay > 0) $ threadDelay $ delay
     putMVar waiter ()
 
-  atomicModifyIORef' timer (\_ -> (Just t', ()))
+  setThreadId timer t
 
 -- | startTimer' for a given number of seconds
 --
@@ -75,14 +71,14 @@ startTimer' t delay = startTimer t (delay * 1000000)
 --
 repeatTimer :: Timer -> Int -> IO ()
 repeatTimer (Timer {..}) delay = L.with locker $ do
-  t <- atomicModifyIORef' timer (\v -> (v, v))
-  when (isJust t) $ killThread (fromJust t)
+  killThread timer
 
-  t' <- forkIO $ forever $ do
+  t <- forkIO $ forever $ do
     when (delay > 0) $ threadDelay $ delay
     putMVar waiter ()
 
-  atomicModifyIORef' timer (\_ -> (Just t', ()))
+  setThreadId timer t
+
 
 -- | repeatTimer' for a given number of seconds
 --
