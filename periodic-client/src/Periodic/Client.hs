@@ -14,11 +14,13 @@ module Periodic.Client
   , dropFunc
   , dump
   , load
+  , status
   , close
   ) where
 
 import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B (empty, hGet, hPut, length)
+import qualified Data.ByteString        as B (empty, hGet, hPut, length, null)
+import qualified Data.ByteString.Char8  as B (filter, lines, pack, split)
 import           Periodic.Agent         (Agent, receive, send)
 import           Periodic.BaseClient    (BaseClient, close, newBaseClient,
                                          noopAgent, withAgent)
@@ -113,6 +115,12 @@ load c h = withAgent c $ \agent -> do
         pushData agent len = do
           dat <- B.hGet h len
           send agent Load dat
+
+status :: Client -> IO [[ByteString]]
+status c = withAgent c $ \agent -> do
+  send agent Status B.empty
+  ret <- receive agent
+  return . map (B.split ',') $ B.lines $ payloadData ret
 
 checkHealth :: Client -> IO ()
 checkHealth c = do
