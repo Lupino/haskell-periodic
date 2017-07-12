@@ -1,32 +1,30 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module Main
   (
     main
   ) where
 
-import           Control.Monad             (void, when)
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Char8     as B (pack, unpack)
-import qualified Data.ByteString.Lazy      as LB (readFile)
-import           Data.List                 (isPrefixOf)
-import           Data.Maybe                (fromMaybe)
+import           Control.Monad          (void, when)
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString.Char8  as B (pack, unpack)
+import qualified Data.ByteString.Lazy   as LB (readFile)
+import           Data.List              (isPrefixOf, transpose)
+import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
-import           Periodic.Socket           (Socket, connectTo, connectToFile)
-import           Periodic.Transport        (Transport, makeSocketTransport)
-import           Periodic.Transport.XOR    (makeXORTransport)
-import           System.Environment        (getArgs, lookupEnv)
-import           System.Exit               (exitSuccess)
-import           System.IO                 (IOMode (ReadMode, WriteMode),
-                                            openFile)
-import           Text.Read                 (readMaybe)
+import           Periodic.Socket        (Socket, connectTo, connectToFile)
+import           Periodic.Transport     (Transport, makeSocketTransport)
+import           Periodic.Transport.XOR (makeXORTransport)
+import           System.Environment     (getArgs, lookupEnv)
+import           System.Exit            (exitSuccess)
+import           System.IO              (IOMode (ReadMode, WriteMode), openFile)
+import           Text.Read              (readMaybe)
 
-import           Data.Data
-import qualified GHC.Generics              as G
-import qualified Text.PrettyPrint.Tabulate as T
+import           Data.UnixTime
+import           System.IO.Unsafe       (unsafePerformIO)
+import qualified Text.PrettyPrint.Boxes as T
+
 
 data Command = Status
              | Dump
@@ -174,27 +172,25 @@ doDump c = openFile "dump.db" WriteMode >>= dump c
 
 doLoad c = openFile "dump.db" ReadMode >>= load c
 
-
-data StatusLine = StatusLine { functions  :: String
-                             , workers    :: String
-                             , jobs       :: String
-                             , processing :: String
-                             , schedat    :: String
-                             }
-  deriving (Data, G.Generic)
-
-instance T.Tabulate StatusLine
-
 doStatus c = do
-  st <- unpackBS <$> status c
-  T.ppTable $ map statusLine st
-
-statusLine :: [String] -> StatusLine
-statusLine (f:w:j:p:s:[]) = StatusLine f w j   p   s
-statusLine (f:w:j:p:[])   = StatusLine f w j   p   "0"
-statusLine (f:w:j:[])     = StatusLine f w j   "0" "0"
-statusLine (f:w:[])       = StatusLine f w "0" "0" "0"
-statusLine _              = error "no implemented"
+  st <- map formatTime . unpackBS <$> status c
+  print_table (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]
 unpackBS = map (map B.unpack)
+
+formatTime :: [String] -> [String]
+formatTime []     = []
+formatTime (x:[]) = [formatUnixTimeLocal x]
+formatTime (x:xs) = (x:formatTime xs)
+
+formatUnixTimeLocal :: String -> String
+formatUnixTimeLocal = B.unpack
+                    . unsafePerformIO
+                    . formatUnixTime "%Y-%m-%d %H:%M:%S"
+                    . fromEpochTime
+                    . fromIntegral
+                    . read
+
+print_table :: [[String]] -> IO ()
+print_table rows = T.printBox $ T.hsep 2 T.left (map (T.vcat T.left . map T.text) (transpose rows))
