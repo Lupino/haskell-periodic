@@ -10,8 +10,7 @@ import           Control.Monad          (when)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf)
 import           Periodic.Server
-import           Periodic.Socket        (HostName, ServiceName, connectToFile,
-                                         listenOn, listenOnFile)
+import           Periodic.Socket        (connectToFile, listenOn, listenOnFile)
 import           Periodic.Transport     (makeSocketTransport)
 import           Periodic.Transport.XOR (makeXORTransport)
 import           Periodic.Utils         (tryIO)
