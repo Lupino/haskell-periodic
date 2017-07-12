@@ -63,18 +63,20 @@ parseOptions (x:xs)          opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodic [--host|-H HOST] [--xor FILE] command [options]"
+  putStrLn "periodic - Periodic task system client"
+  putStrLn ""
+  putStrLn "Usage: periodic [--host|-H HOST] [--xor FILE] command [options]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "     status   Show status"
   putStrLn "     submit   Submit job"
   putStrLn "     remove   Remove job"
-  putStrLn "     drop     Drop func"
+  putStrLn "     drop     Drop function"
   putStrLn "     dump     Dump database to file"
   putStrLn "     load     Load file to database"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
-  putStrLn "Common flags:"
+  putStrLn "Available options:"
   putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
   putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
   putStrLn "     --xor  XOR Transport encode file [$XOR_FILE]"
@@ -83,9 +85,11 @@ printHelp = do
 
 printSubmitHelp :: IO ()
 printSubmitHelp = do
-  putStrLn "periodic submit funcname jobname [-w|--workload WORKLOAD] [--later 0]"
+  putStrLn "periodic submit - Submit job"
   putStrLn ""
-  putStrLn "Common flags:"
+  putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD] [--later 0]"
+  putStrLn ""
+  putStrLn "Available options:"
   putStrLn "  -w --workload WORKLOAD"
   putStrLn "     --later    Sched job later"
   putStrLn ""
@@ -93,13 +97,17 @@ printSubmitHelp = do
 
 printRemoveHelp :: IO ()
 printRemoveHelp = do
-  putStrLn "periodic remove funcname jobname"
+  putStrLn "periodic remove - Remove job"
+  putStrLn ""
+  putStrLn "Usage: periodic remove funcname jobname [jobname...]"
   putStrLn ""
   exitSuccess
 
 printDropHelp :: IO ()
 printDropHelp = do
-  putStrLn "periodic drop funcname"
+  putStrLn "periodic drop - Drop function"
+  putStrLn ""
+  putStrLn "Usage: periodic drop funcname [funcname...]"
   putStrLn ""
   exitSuccess
 

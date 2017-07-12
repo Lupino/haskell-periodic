@@ -45,14 +45,17 @@ parseOptions e (_:xs)          = parseOptions e xs
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodicd [--host|-H HOST] [--path|-p PATH] [--xor FILE]"
+  putStrLn "periodicd - Periodic task system server"
   putStrLn ""
-  putStrLn "Common flags:"
+  putStrLn "Usage: periodicd [--host|-H HOST] [--path|-p PATH] [--xor FILE]"
+  putStrLn ""
+  putStrLn "Available options:"
   putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
   putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
   putStrLn "  -p --path State store path (optional: state)"
   putStrLn "     --xor  XOR Transport encode file (optional: \"\")"
   putStrLn "  -h --help Display help message"
+  putStrLn ""
   exitSuccess
 
 main :: IO ()
