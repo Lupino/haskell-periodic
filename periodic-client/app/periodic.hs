@@ -136,8 +136,12 @@ makeTransport p sock  = do
 dropS :: String -> String
 dropS = drop 3 . dropWhile (/= ':')
 
-getHost :: String -> String
-getHost = takeWhile (/=':') . dropS
+toMaybe :: String -> Maybe String
+toMaybe [] = Nothing
+toMaybe xs = Just xs
+
+getHost :: String -> Maybe String
+getHost = toMaybe . takeWhile (/=':') . dropS
 
 getService :: String -> String
 getService = drop 1 . dropWhile (/=':') . dropS

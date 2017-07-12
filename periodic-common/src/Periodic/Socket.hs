@@ -36,14 +36,13 @@ firstSuccessful = go Nothing
   go (Just e) [] = throwIO e
 
 
-connectTo :: HostName -> ServiceName -> IO Socket
-
+connectTo :: Maybe HostName -> ServiceName -> IO Socket
 connectTo host serv = do
     proto <- getProtocolNumber "tcp"
     let hints = defaultHints { addrFlags = [AI_ADDRCONFIG]
                              , addrProtocol = proto
                              , addrSocketType = Stream }
-    addrs <- getAddrInfo (Just hints) (Just host) (Just serv)
+    addrs <- getAddrInfo (Just hints) host (Just serv)
     firstSuccessful $ map tryToConnect addrs
   where
   tryToConnect addr =
