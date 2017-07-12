@@ -19,8 +19,8 @@ module Periodic.Client
   ) where
 
 import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B (empty, hGet, hPut, length, null)
-import qualified Data.ByteString.Char8  as B (filter, lines, pack, split)
+import qualified Data.ByteString        as B (empty, hGet, hPut, length)
+import qualified Data.ByteString.Char8  as B (lines, split)
 import           Periodic.Agent         (Agent, receive, send)
 import           Periodic.BaseClient    (BaseClient, close, newBaseClient,
                                          noopAgent, withAgent)

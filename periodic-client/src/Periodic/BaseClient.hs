@@ -32,10 +32,8 @@ import           System.Entropy      (getEntropy)
 import           Periodic.Utils      (parsePayload)
 
 import           Control.Concurrent  (forkIO)
-import           Control.Monad       (forever, void, when)
+import           Control.Monad       (forever, void)
 import           Periodic.TM
-
-import           Data.Maybe          (fromJust, isJust)
 
 import           System.Log.Logger   (errorM, infoM)
 

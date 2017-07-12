@@ -11,11 +11,10 @@ module Periodic.Server.Client
 
 import           Control.Concurrent        (forkIO)
 import           Control.Exception         (SomeException, try)
-import           Control.Monad             (forever, void, when)
+import           Control.Monad             (forever, void)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
                                                  pack)
-import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 import           Periodic.TM
 

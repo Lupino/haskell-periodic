@@ -15,7 +15,6 @@ import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (empty)
 import           Data.Int                  (Int64)
-import           Data.Maybe                (fromJust, isJust)
 import           Periodic.Connection       (Connection, close, receive)
 import qualified Periodic.Lock             as L (Lock, new, with)
 import           Periodic.TM
