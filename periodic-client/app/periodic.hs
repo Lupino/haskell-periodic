@@ -1,0 +1,200 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
+
+module Main
+  (
+    main
+  ) where
+
+import           Control.Monad             (void, when)
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString.Char8     as B (pack, unpack)
+import qualified Data.ByteString.Lazy      as LB (readFile)
+import           Data.List                 (isPrefixOf)
+import           Data.Maybe                (fromMaybe)
+import           Periodic.Client
+import           Periodic.Socket           (Socket, connectTo, connectToFile)
+import           Periodic.Transport        (Transport, makeSocketTransport)
+import           Periodic.Transport.XOR    (makeXORTransport)
+import           System.Environment        (getArgs, lookupEnv)
+import           System.Exit               (exitSuccess)
+import           System.IO                 (IOMode (ReadMode, WriteMode),
+                                            openFile)
+import           Text.Read                 (readMaybe)
+
+import           Data.Data
+import qualified GHC.Generics              as G
+import qualified Text.PrettyPrint.Tabulate as T
+
+data Command = Status
+             | Dump
+             | Load
+             | Submit
+             | Remove
+             | Drop
+             | Help
+
+  deriving (Eq)
+
+parseCommand :: String -> Command
+parseCommand "status" = Status
+parseCommand "dump"   = Dump
+parseCommand "load"   = Load
+parseCommand "submit" = Submit
+parseCommand "remove" = Remove
+parseCommand "drop"   = Drop
+parseCommand _        = Help
+
+data Options = Options { host    :: String
+                       , xorFile :: FilePath
+                       }
+
+options :: Maybe String -> Maybe String -> Options
+options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
+                      , xorFile = fromMaybe "" f
+                      }
+
+parseOptions :: [String] -> Options -> (Command, Options, [String])
+parseOptions []              opt = (Help, opt, [])
+parseOptions ("-H":x:xs)     opt = parseOptions xs opt { host      = x }
+parseOptions ("--host":x:xs) opt = parseOptions xs opt { host      = x }
+parseOptions ("--xor":x:xs)  opt = parseOptions xs opt { xorFile   = x }
+parseOptions (x:xs)          opt = (parseCommand x, opt, xs)
+
+printHelp :: IO ()
+printHelp = do
+  putStrLn "periodic [--host|-H HOST] [--xor FILE] command [options]"
+  putStrLn ""
+  putStrLn "Commands:"
+  putStrLn "     status   Show status"
+  putStrLn "     submit   Submit job"
+  putStrLn "     remove   Remove job"
+  putStrLn "     drop     Drop func"
+  putStrLn "     dump     Dump database to file"
+  putStrLn "     load     Load file to database"
+  putStrLn "     help     Shows a list of commands or help for one command"
+  putStrLn ""
+  putStrLn "Common flags:"
+  putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
+  putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --xor  XOR Transport encode file [$XOR_FILE]"
+  putStrLn ""
+  exitSuccess
+
+printSubmitHelp :: IO ()
+printSubmitHelp = do
+  putStrLn "periodic submit funcname jobname [-w|--workload WORKLOAD] [--later 0]"
+  putStrLn ""
+  putStrLn "Common flags:"
+  putStrLn "  -w --workload WORKLOAD"
+  putStrLn "     --later    Sched job later"
+  putStrLn ""
+  exitSuccess
+
+printRemoveHelp :: IO ()
+printRemoveHelp = do
+  putStrLn "periodic remove funcname jobname"
+  putStrLn ""
+  exitSuccess
+
+printDropHelp :: IO ()
+printDropHelp = do
+  putStrLn "periodic drop funcname"
+  putStrLn ""
+  exitSuccess
+
+main :: IO ()
+main = do
+  h <- lookupEnv "PERIODIC_PORT"
+  f <- lookupEnv "XOR_FILE"
+
+  (cmd, Options {..}, argv) <- flip parseOptions (options h f) <$> getArgs
+
+  let argc = length argv
+
+  when (cmd == Help) $ printHelp
+
+  when (cmd == Submit && argc < 2) $ printSubmitHelp
+  when (cmd == Remove && argc < 2) $ printRemoveHelp
+  when (cmd == Drop   && argc < 1) $ printDropHelp
+
+  when (not (isPrefixOf "tcp" host) && not (isPrefixOf "unix" host)) $ do
+    putStrLn $ "Invalid host " ++ host
+    printHelp
+
+  client <- newClient =<< makeTransport xorFile =<< connectSock host
+
+  processCommand client cmd argv
+
+makeTransport :: FilePath -> Socket -> IO Transport
+makeTransport [] sock = makeSocketTransport sock
+makeTransport p sock  = do
+  key <- LB.readFile p
+  transport <- makeSocketTransport sock
+  makeXORTransport key transport
+
+dropS :: String -> String
+dropS = drop 3 . dropWhile (/= ':')
+
+getHost :: String -> String
+getHost = takeWhile (/=':') . dropS
+
+getService :: String -> String
+getService = drop 1 . dropWhile (/=':') . dropS
+
+connectSock :: String -> IO Socket
+connectSock h | isPrefixOf "tcp" h = connectTo (getHost h) (getService h)
+              | otherwise          = connectToFile (dropS h)
+
+processCommand :: Client -> Command -> [String] -> IO ()
+processCommand _ Help _    = printHelp
+processCommand c Status _  = doStatus c
+processCommand c Load   _  = doLoad c
+processCommand c Dump   _  = doDump c
+processCommand c Submit xs = doSubmitJob c xs
+processCommand c Remove xs = doRemoveJob c xs
+processCommand c Drop xs   = doDropFunc c xs
+
+doRemoveJob c (x:xs) = mapM_ (void . removeJob c (B.pack x) . B.pack) xs
+doRemoveJob _ []     = printRemoveHelp
+
+doDropFunc c = mapM_ (void . dropFunc c . B.pack)
+
+doSubmitJob _ []       = printSubmitHelp
+doSubmitJob _ (_:[])      = printSubmitHelp
+doSubmitJob c (x:y:xs) = void $ submitJob c (B.pack x) (B.pack y) later
+  where later = case xs of
+                  []              -> 0
+                  ("--later":l:_) -> fromMaybe 0 (readMaybe l)
+                  _               -> 0
+
+doDump c = openFile "dump.db" WriteMode >>= dump c
+
+doLoad c = openFile "dump.db" ReadMode >>= load c
+
+
+data StatusLine = StatusLine { functions  :: String
+                             , workers    :: String
+                             , jobs       :: String
+                             , processing :: String
+                             , schedat    :: String
+                             }
+  deriving (Data, G.Generic)
+
+instance T.Tabulate StatusLine
+
+doStatus c = do
+  st <- unpackBS <$> status c
+  T.ppTable $ map statusLine st
+
+statusLine :: [String] -> StatusLine
+statusLine (f:w:j:p:s:[]) = StatusLine f w j   p   s
+statusLine (f:w:j:p:[])   = StatusLine f w j   p   "0"
+statusLine (f:w:j:[])     = StatusLine f w j   "0" "0"
+statusLine (f:w:[])       = StatusLine f w "0" "0" "0"
+statusLine _              = error "no implemented"
+
+unpackBS :: [[ByteString]] -> [[String]]
+unpackBS = map (map B.unpack)
