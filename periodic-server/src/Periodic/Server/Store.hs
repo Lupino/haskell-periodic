@@ -12,10 +12,13 @@ module Periodic.Server.Store
   , dumpJobHandle
   , dumpJob
   , existsJob
+  , closeStore
   ) where
 
 import           Data.Acid            (AcidState, Query, Update, makeAcidic,
                                        openLocalStateFrom, query, update)
+import           Data.Acid.Local      (createCheckpointAndClose)
+
 
 import           Control.Monad.Reader (ask)
 import           Control.Monad.State  (get, put)
@@ -103,3 +106,6 @@ existsJob st jh = query st (Member jh)
 
 newStore :: FilePath -> IO Store
 newStore fp = openLocalStateFrom fp (KeyValue Map.empty)
+
+closeStore :: Store -> IO ()
+closeStore = createCheckpointAndClose

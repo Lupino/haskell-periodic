@@ -25,7 +25,7 @@ import           Periodic.Connection       (Connection, close, connid,
                                             newServerConn, receive, send)
 import           Periodic.Server.Client    (newClient)
 import           Periodic.Server.Scheduler
-import           Periodic.Server.Store     (newStore)
+import           Periodic.Server.Store     (closeStore, newStore)
 import           Periodic.Server.Worker    (newWorker)
 import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..))
@@ -55,6 +55,7 @@ startServer makeTransport storePath sock = do
   killThread thread
   shutdown sched
   Socket.close sock
+  closeStore store
 
 mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IO ()
 mainLoop makeTransport sock sched = do
