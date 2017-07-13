@@ -96,6 +96,32 @@ Quick start
 
     $ periodicd
 
+### Show file worker
+
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
+module Main
+  (
+    main
+  ) where
+
+import           Periodic.Job       (Job, name, workDone)
+import           Periodic.Socket    (connectToFile)
+import           Periodic.Transport (makeSocketTransport)
+import           Periodic.Worker    (addFunc, newWorker, work)
+
+main :: IO ()
+main = do
+  w <- newWorker =<< makeSocketTransport =<< connectToFile "/tmp/periodic.sock"
+  addFunc w "show_file" showFile
+  work w 10
+
+showFile :: Job -> IO ()
+showFile job = do
+  print $ name job
+  workDone job
+```
+
 ### Submit a job
 
     $ periodic submit show_file abc.md
