@@ -51,6 +51,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sProcessJob   :: ProcessQueue
                            , sMainTimer    :: Timer
                            , sRevertTimer  :: Timer
+                           , sStoreTimer   :: Timer
                            , sStore        :: Store
                            }
 
@@ -63,6 +64,7 @@ newScheduler sStore = do
   sProcessJob    <- newIOHashMap
   sMainTimer     <- newTimer
   sRevertTimer   <- newTimer
+  sStoreTimer    <- newTimer
   let sched = Scheduler {..}
 
   mapM_ (restoreJob sched) =<< Store.dumpJob sStore
@@ -70,9 +72,11 @@ newScheduler sStore = do
 
   initTimer sMainTimer   $ processJob sched
   initTimer sRevertTimer $ revertProcessQueue sched
+  initTimer sStoreTimer  $ Store.archive sStore
 
   startTimer sMainTimer 0
   repeatTimer' sRevertTimer 300
+  repeatTimer' sStoreTimer  300
 
   return sched
 
@@ -290,3 +294,4 @@ shutdown :: Scheduler -> IO ()
 shutdown (Scheduler {..}) = do
   clearTimer sMainTimer
   clearTimer sRevertTimer
+  clearTimer sStoreTimer

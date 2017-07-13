@@ -13,10 +13,12 @@ module Periodic.Server.Store
   , dumpJob
   , existsJob
   , closeStore
+  , archive
   ) where
 
-import           Data.Acid            (AcidState, Query, Update, makeAcidic,
-                                       openLocalStateFrom, query, update)
+import           Data.Acid            (AcidState, Query, Update, createArchive,
+                                       makeAcidic, openLocalStateFrom, query,
+                                       update)
 import           Data.Acid.Local      (createCheckpointAndClose)
 
 
@@ -109,3 +111,6 @@ newStore fp = openLocalStateFrom fp (KeyValue Map.empty)
 
 closeStore :: Store -> IO ()
 closeStore = createCheckpointAndClose
+
+archive :: Store -> IO ()
+archive = createArchive
