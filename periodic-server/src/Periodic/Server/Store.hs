@@ -16,10 +16,10 @@ module Periodic.Server.Store
   , archive
   ) where
 
-import           Data.Acid            (AcidState, Query, Update, createArchive,
+import           Data.Acid            (AcidState, Query, Update, closeAcidState,
+                                       createArchive, createCheckpoint,
                                        makeAcidic, openLocalStateFrom, query,
                                        update)
-import           Data.Acid.Local      (createCheckpointAndClose)
 
 
 import           Control.Monad.Reader (ask)
@@ -110,7 +110,7 @@ newStore :: FilePath -> IO Store
 newStore fp = openLocalStateFrom fp (KeyValue Map.empty)
 
 closeStore :: Store -> IO ()
-closeStore = createCheckpointAndClose
+closeStore st = createCheckpoint st >> closeAcidState st
 
 archive :: Store -> IO ()
 archive = createArchive
