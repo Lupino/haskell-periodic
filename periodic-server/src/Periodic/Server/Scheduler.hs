@@ -21,7 +21,7 @@ module Periodic.Server.Scheduler
   ) where
 
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (when)
+import           Control.Monad                (void, when)
 import qualified Data.ByteString              as B (concat)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (Agent, aAlive, send)
@@ -44,8 +44,13 @@ import           Periodic.Utils               (getEpochTime)
 import           Periodic.Server.Store        (Store)
 import qualified Periodic.Server.Store        as Store
 
+import           Control.Concurrent           (forkIO)
+import           Data.IORef                   (IORef, atomicModifyIORef',
+                                               newIORef)
+
+
 data Scheduler = Scheduler { sFuncStatList :: FuncStatList
-                           , sFuncStatLock :: L.Lock
+                           , sLocker       :: L.Lock
                            , sGrabQueue    :: GrabQueue
                            , sJobQueue     :: JobQueue
                            , sProcessJob   :: ProcessQueue
@@ -53,18 +58,21 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sRevertTimer  :: Timer
                            , sStoreTimer   :: Timer
                            , sStore        :: Store
+                           , sCleanup      :: IO ()
+                           , sAlive        :: IORef Bool
                            }
 
-newScheduler :: Store -> IO Scheduler
-newScheduler sStore = do
+newScheduler :: Store -> IO () -> IO Scheduler
+newScheduler sStore sCleanup = do
   sFuncStatList  <- newIOHashMap
-  sFuncStatLock  <- L.new
+  sLocker  <- L.new
   sGrabQueue     <- newGrabQueue
   sJobQueue      <- newIOHashMap
   sProcessJob    <- newIOHashMap
   sMainTimer     <- newTimer
   sRevertTimer   <- newTimer
   sStoreTimer    <- newTimer
+  sAlive         <- newIORef True
   let sched = Scheduler {..}
 
   mapM_ (restoreJob sched) =<< Store.dumpJob sStore
@@ -100,7 +108,7 @@ pushJob sched@(Scheduler {..}) job = do
         jn = jName job
 
 adjustFuncStat :: Scheduler -> FuncName -> IO ()
-adjustFuncStat (Scheduler {..}) fn = L.with sFuncStatLock $ do
+adjustFuncStat (Scheduler {..}) fn = L.with sLocker $ do
   size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
   sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
   minJob <- JQ.findMinJob sJobQueue fn
@@ -142,7 +150,7 @@ dumpJob :: Scheduler -> IO [Job]
 dumpJob (Scheduler {..}) = Store.dumpJob sStore
 
 addFunc :: Scheduler -> FuncName -> IO ()
-addFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
+addFunc (Scheduler {..}) n = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
   startTimer sMainTimer 0
 
@@ -151,7 +159,7 @@ addFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
+removeFunc (Scheduler {..}) n = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
   startTimer sMainTimer 0
 
@@ -160,7 +168,7 @@ removeFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
         updateStat (Just fs) = Just (fs { sWorker = max (sWorker fs - 1) 0 })
 
 dropFunc :: Scheduler -> FuncName -> IO ()
-dropFunc (Scheduler {..}) n = L.with sFuncStatLock $ do
+dropFunc (Scheduler {..}) n = L.with sLocker $ do
   st <- FL.lookup sFuncStatList n
   case st of
     Nothing -> return ()
@@ -291,7 +299,11 @@ revertProcessQueue sched@(Scheduler {..}) = do
         isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
 
 shutdown :: Scheduler -> IO ()
-shutdown (Scheduler {..}) = do
-  clearTimer sMainTimer
-  clearTimer sRevertTimer
-  clearTimer sStoreTimer
+shutdown (Scheduler {..}) = L.with sLocker $ do
+  alive <- atomicModifyIORef' sAlive $ \v -> (False, v)
+  when alive $ do
+    clearTimer sMainTimer
+    clearTimer sRevertTimer
+    clearTimer sStoreTimer
+    FL.clear sProcessJob
+    void $ forkIO $ sCleanup

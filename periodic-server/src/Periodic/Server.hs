@@ -6,14 +6,14 @@ module Periodic.Server
     startServer
   ) where
 
-import           Control.Monad             (forever, void)
+import           Control.Monad             (forever, void, when)
 import           Network.Socket            (Socket, accept)
 import qualified Network.Socket            as Socket (close)
 
 -- process
 import           Control.Concurrent        (forkIO, killThread)
 import           Control.Concurrent.MVar   (MVar, newEmptyMVar, putMVar,
-                                            takeMVar)
+                                            takeMVar, tryPutMVar)
 import           System.Posix.Signals      (Handler (Catch), installHandler,
                                             sigINT, sigTERM)
 
@@ -31,17 +31,25 @@ import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..))
 import           Periodic.Utils            (tryIO)
 
-handleExit :: MVar Bool -> IO ()
-handleExit mv = putMVar mv True
+handleExit :: MVar () -> IO ()
+handleExit mv = void $ tryPutMVar mv ()
 
 startServer :: (Socket -> IO Transport) -> FilePath -> Socket -> IO ()
 startServer makeTransport storePath sock = do
-  store <- newStore storePath
-  sched <- newScheduler store
+
+  -- Handle wait
+  wait <- newEmptyMVar
+
   -- Handle dying
   bye <- newEmptyMVar
   void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
   void $ installHandler sigINT (Catch $ handleExit bye) Nothing
+
+  store <- newStore storePath
+  sched <- newScheduler store $ do
+    handleExit bye
+    closeStore store
+    putMVar wait ()
 
   thread <- forkIO $ forever $ do
     -- if accept failed exit
@@ -51,11 +59,12 @@ startServer makeTransport storePath sock = do
       Left e'  -> do
         print e'
         handleExit bye
-  void $ takeMVar bye
+
+  takeMVar bye
   killThread thread
   shutdown sched
+  takeMVar wait
   Socket.close sock
-  closeStore store
 
 mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IO ()
 mainLoop makeTransport sock sched = do

@@ -15,6 +15,7 @@ module Periodic.Client
   , dump
   , load
   , status
+  , shutdown
   , close
   ) where
 
@@ -123,6 +124,10 @@ status c = withAgent c $ \agent -> do
   send agent Status B.empty
   ret <- receive agent
   return . map (B.split ',') $ B.lines $ payloadData ret
+
+shutdown :: Client -> IO ()
+shutdown c = withAgent c $ \agent ->
+  send agent Shutdown B.empty
 
 checkHealth :: Client -> IO ()
 checkHealth c = do

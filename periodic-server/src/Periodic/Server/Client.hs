@@ -21,7 +21,8 @@ import           Periodic.TM
 import           Periodic.Agent            (Agent, newAgent, send, send_)
 import           Periodic.Server.FuncStat  (FuncStat (..))
 import           Periodic.Server.Scheduler (Scheduler, dropFunc, dumpJob,
-                                            pushJob, removeJob, status)
+                                            pushJob, removeJob, shutdown,
+                                            status)
 import           Periodic.Types            (Job, decodeJob, encodeJob)
 
 import           Periodic.Timer
@@ -89,6 +90,7 @@ handlePayload c (Payload {..}) = go payloadCMD
         go RemoveJob = handleRemoveJob sched agent payloadData
         go Dump      = handleDump sched agent
         go Load      = handleLoad sched payloadData
+        go Shutdown  = handleShutdown sched
         go _         = send agent Unknown B.empty
 
         agent = newAgent payloadID $ cConn c
@@ -147,6 +149,9 @@ handleLoad sc pl = do
     Nothing -> return ()
     Just job -> do
       pushJob sc job
+
+handleShutdown :: Scheduler -> IO ()
+handleShutdown sc = shutdown sc
 
 cClose :: Client -> IO ()
 cClose (Client { .. }) = void $ forkIO $ do

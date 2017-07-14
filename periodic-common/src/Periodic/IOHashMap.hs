@@ -16,6 +16,7 @@ module Periodic.IOHashMap
   , member
   , keys
   , elems
+  , clear
   ) where
 
 import           Prelude             hiding (lookup, null)
@@ -62,3 +63,6 @@ keys (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.keys m)
 
 elems :: IOHashMap a -> IO [a]
 elems (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.elems m)
+
+clear :: IOHashMap a -> IO ()
+clear (IOHashMap h) = atomicModifyIORef' h $ \_ -> (HM.empty, ())

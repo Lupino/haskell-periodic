@@ -44,12 +44,14 @@ data Command = Noop -- server
              | Dump -- client
              -- Load load data to database
              | Load -- client
+             -- Shutdown server
+             | Shutdown
 
   deriving (Eq, Show)
 
 instance Bounded Command where
   minBound = Noop
-  maxBound = Load
+  maxBound = Shutdown
 
 instance Enum Command where
   succ Noop       = GrabJob
@@ -71,8 +73,10 @@ instance Enum Command where
   succ Success    = RemoveJob
   succ RemoveJob  = Dump
   succ Dump       = Load
-  succ Load       = errorWithoutStackTrace "Types.Command.succ: bad argument"
+  succ Load       = Shutdown
+  succ Shutdown   = errorWithoutStackTrace "Types.Command.succ: bad argument"
 
+  pred Shutdown   = Load
   pred Load       = Dump
   pred Dump       = RemoveJob
   pred RemoveJob  = Success
@@ -114,6 +118,7 @@ instance Enum Command where
            | n == 17 = RemoveJob
            | n == 18 = Dump
            | n == 19 = Load
+           | n == 20 = Shutdown
   toEnum _ = errorWithoutStackTrace "Types.Command.toEnum: bad argument"
 
   fromEnum Noop       = 0
@@ -136,6 +141,7 @@ instance Enum Command where
   fromEnum RemoveJob  = 17
   fromEnum Dump       = 18
   fromEnum Load       = 19
+  fromEnum Shutdown   = 20
 
   -- Use defaults for the rest
   enumFrom     = boundedEnumFrom

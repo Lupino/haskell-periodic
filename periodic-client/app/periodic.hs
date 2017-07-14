@@ -32,18 +32,20 @@ data Command = Status
              | Submit
              | Remove
              | Drop
+             | Shutdown
              | Help
 
   deriving (Eq)
 
 parseCommand :: String -> Command
-parseCommand "status" = Status
-parseCommand "dump"   = Dump
-parseCommand "load"   = Load
-parseCommand "submit" = Submit
-parseCommand "remove" = Remove
-parseCommand "drop"   = Drop
-parseCommand _        = Help
+parseCommand "status"   = Status
+parseCommand "dump"     = Dump
+parseCommand "load"     = Load
+parseCommand "submit"   = Submit
+parseCommand "remove"   = Remove
+parseCommand "drop"     = Drop
+parseCommand "shutdown" = Shutdown
+parseCommand _          = Help
 
 data Options = Options { host    :: String
                        , xorFile :: FilePath
@@ -74,6 +76,7 @@ printHelp = do
   putStrLn "     drop     Drop function"
   putStrLn "     dump     Dump database to file"
   putStrLn "     load     Load file to database"
+  putStrLn "     shutdown Shutdown periodicd"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
   putStrLn "Available options:"
@@ -159,13 +162,14 @@ connectSock h | isPrefixOf "tcp" h = connectTo (getHost h) (getService h)
               | otherwise          = connectToFile (dropS h)
 
 processCommand :: Client -> Command -> [String] -> IO ()
-processCommand _ Help _    = printHelp
-processCommand c Status _  = doStatus c
-processCommand c Load   _  = doLoad c
-processCommand c Dump   _  = doDump c
-processCommand c Submit xs = doSubmitJob c xs
-processCommand c Remove xs = doRemoveJob c xs
-processCommand c Drop xs   = doDropFunc c xs
+processCommand _ Help _     = printHelp
+processCommand c Status _   = doStatus c
+processCommand c Load   _   = doLoad c
+processCommand c Dump   _   = doDump c
+processCommand c Submit xs  = doSubmitJob c xs
+processCommand c Remove xs  = doRemoveJob c xs
+processCommand c Drop xs    = doDropFunc c xs
+processCommand c Shutdown _ = shutdown c
 
 doRemoveJob c (x:xs) = mapM_ (void . removeJob c (B.pack x) . B.pack) xs
 doRemoveJob _ []     = printRemoveHelp
