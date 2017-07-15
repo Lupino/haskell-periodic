@@ -27,7 +27,7 @@ data Options = Options { host      :: String
 defaultOptions :: Options
 defaultOptions = Options { host      = "unix:///tmp/periodic.sock"
                          , xorFile   = ""
-                         , storePath = "state"
+                         , storePath = "data"
                          , showHelp  = False
                          }
 
@@ -52,7 +52,7 @@ printHelp = do
   putStrLn "Available options:"
   putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
   putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "  -p --path State store path (optional: state)"
+  putStrLn "  -p --path State store path (optional: data)"
   putStrLn "     --xor  XOR Transport encode file (optional: \"\")"
   putStrLn "  -h --help Display help message"
   putStrLn ""
