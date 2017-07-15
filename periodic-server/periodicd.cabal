@@ -23,18 +23,16 @@ library
                      , Periodic.Server.FuncStat
                      , Periodic.Server.JobQueue
                      , Periodic.Server.ProcessQueue
-                     , Periodic.Server.Store
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring
                      , network
                      , unordered-containers
                      , psqueues
-                     , acid-state
-                     , safecopy
-                     , mtl
-                     , containers
                      , unix
+                     , store
+                     , directory
+                     , filepath
   default-language:    Haskell2010
 
 executable periodicd

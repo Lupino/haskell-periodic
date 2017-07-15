@@ -6,14 +6,14 @@ module Periodic.Server
     startServer
   ) where
 
-import           Control.Monad             (forever, void, when)
+import           Control.Monad             (forever, void)
 import           Network.Socket            (Socket, accept)
 import qualified Network.Socket            as Socket (close)
 
 -- process
 import           Control.Concurrent        (forkIO, killThread)
-import           Control.Concurrent.MVar   (MVar, newEmptyMVar, putMVar,
-                                            takeMVar, tryPutMVar)
+import           Control.Concurrent.MVar   (MVar, newEmptyMVar, takeMVar,
+                                            tryPutMVar)
 import           System.Posix.Signals      (Handler (Catch), installHandler,
                                             sigINT, sigTERM)
 
@@ -25,7 +25,6 @@ import           Periodic.Connection       (Connection, close, connid,
                                             newServerConn, receive, send)
 import           Periodic.Server.Client    (newClient)
 import           Periodic.Server.Scheduler
-import           Periodic.Server.Store     (closeStore, newStore)
 import           Periodic.Server.Worker    (newWorker)
 import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..))
@@ -36,20 +35,13 @@ handleExit mv = void $ tryPutMVar mv ()
 
 startServer :: (Socket -> IO Transport) -> FilePath -> Socket -> IO ()
 startServer makeTransport storePath sock = do
-
-  -- Handle wait
-  wait <- newEmptyMVar
-
   -- Handle dying
   bye <- newEmptyMVar
   void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
   void $ installHandler sigINT (Catch $ handleExit bye) Nothing
 
-  store <- newStore storePath
-  sched <- newScheduler store $ do
+  sched <- newScheduler storePath $ do
     handleExit bye
-    closeStore store
-    putMVar wait ()
 
   thread <- forkIO $ forever $ do
     -- if accept failed exit
@@ -63,7 +55,6 @@ startServer makeTransport storePath sock = do
   takeMVar bye
   killThread thread
   shutdown sched
-  takeMVar wait
   Socket.close sock
 
 mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IO ()

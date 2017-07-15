@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Periodic.Types.Job
   (
@@ -21,8 +22,10 @@ import qualified Data.ByteString.Char8  as B (breakSubstring, concat, drop,
 import           Data.Int               (Int64)
 
 import           Data.Maybe             (catMaybes)
+import           Data.Store             (Store)
 import           Periodic.Types.Payload (nullChar)
 import           Periodic.Utils         (breakBS, readBS)
+import           TH.Derive              (Deriving, derive)
 
 type FuncName  = ByteString
 type JobName   = ByteString
@@ -36,6 +39,8 @@ data Job = Job { jSchedAt  :: Int64
                , jCount    :: Int
                }
   deriving (Show)
+
+$($(derive [d| instance Deriving (Store Job) |]))
 
 newJob :: FuncName -> JobName -> Job
 newJob jFuncName jName = Job { jWorkload = B.empty

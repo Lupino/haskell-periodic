@@ -21,8 +21,8 @@ module Periodic.Server.Scheduler
   ) where
 
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (void, when)
-import qualified Data.ByteString              as B (concat)
+import           Control.Monad                (unless, void, when)
+import qualified Data.ByteString              as B (concat, readFile, writeFile)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (Agent, aAlive, send)
 import           Periodic.IOHashMap           (newIOHashMap)
@@ -41,8 +41,10 @@ import           Periodic.Types               (Command (JobAssign), nullChar)
 import           Periodic.Types.Job
 import           Periodic.Utils               (getEpochTime)
 
-import           Periodic.Server.Store        (Store)
-import qualified Periodic.Server.Store        as Store
+import qualified Data.Store                   as DS
+import           System.Directory             (createDirectoryIfMissing,
+                                               doesFileExist)
+import           System.FilePath              ((</>))
 
 import           Control.Concurrent           (forkIO)
 import           Data.IORef                   (IORef, atomicModifyIORef',
@@ -57,15 +59,15 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sMainTimer    :: Timer
                            , sRevertTimer  :: Timer
                            , sStoreTimer   :: Timer
-                           , sStore        :: Store
+                           , sStorePath    :: FilePath
                            , sCleanup      :: IO ()
                            , sAlive        :: IORef Bool
                            }
 
-newScheduler :: Store -> IO () -> IO Scheduler
-newScheduler sStore sCleanup = do
+newScheduler :: FilePath -> IO () -> IO Scheduler
+newScheduler path sCleanup = do
   sFuncStatList  <- newIOHashMap
-  sLocker  <- L.new
+  sLocker        <- L.new
   sGrabQueue     <- newGrabQueue
   sJobQueue      <- newIOHashMap
   sProcessJob    <- newIOHashMap
@@ -73,14 +75,17 @@ newScheduler sStore sCleanup = do
   sRevertTimer   <- newTimer
   sStoreTimer    <- newTimer
   sAlive         <- newIORef True
-  let sched = Scheduler {..}
+  let sStorePath = path </> "dump.db"
+      sched = Scheduler {..}
 
-  mapM_ (restoreJob sched) =<< Store.dumpJob sStore
+  createDirectoryIfMissing True path
+  exists <- doesFileExist sStorePath
+  when exists $ mapM_ (restoreJob sched) =<< loadJob sched
   mapM_ (adjustFuncStat sched) =<< (FL.keys sJobQueue)
 
   initTimer sMainTimer   $ processJob sched
   initTimer sRevertTimer $ revertProcessQueue sched
-  initTimer sStoreTimer  $ Store.archive sStore
+  initTimer sStoreTimer  $ saveJob sched
 
   startTimer sMainTimer 0
   repeatTimer' sRevertTimer 300
@@ -90,15 +95,10 @@ newScheduler sStore sCleanup = do
 
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@(Scheduler {..}) job = do
-  exists <- Store.existsJob sStore jh
-  if exists then do
-    has <- JQ.memberJob sJobQueue fn jn
-    when has $ do
-      Store.insertJob sStore job
-      JQ.pushJob sJobQueue job
-  else do
-    Store.insertJob sStore job
-    JQ.pushJob sJobQueue job
+  exists <- JQ.memberJob sJobQueue fn jn
+  isProc <- FL.member sProcessJob jh
+  if exists then JQ.pushJob sJobQueue job
+            else unless isProc $ JQ.pushJob sJobQueue job
 
   adjustFuncStat sched fn
   startTimer sMainTimer 0
@@ -141,13 +141,22 @@ removeJob sched@(Scheduler {..}) job = do
 
   isProc <- FL.member sProcessJob (jHandle job)
   when isProc $ PQ.removeJob sProcessJob (jFuncName job) (jName job)
-  Store.deleteJob sStore (jHandle job)
   adjustFuncStat sched (jFuncName job)
 
   startTimer sMainTimer 0
 
 dumpJob :: Scheduler -> IO [Job]
-dumpJob (Scheduler {..}) = Store.dumpJob sStore
+dumpJob (Scheduler {..}) = do
+  js <- JQ.dumpJob sJobQueue
+  js' <- PQ.dumpJob sProcessJob
+  return $ concat [js, js']
+
+saveJob :: Scheduler -> IO ()
+saveJob sched@(Scheduler {..}) =
+  dumpJob sched >>= B.writeFile sStorePath . DS.encode
+
+loadJob :: Scheduler -> IO [Job]
+loadJob (Scheduler {..}) = DS.decodeIO =<< B.readFile sStorePath
 
 addFunc :: Scheduler -> FuncName -> IO ()
 addFunc (Scheduler {..}) n = L.with sLocker $ do
@@ -176,9 +185,7 @@ dropFunc (Scheduler {..}) n = L.with sLocker $ do
       if sWorker st' > 0 then return ()
                          else do
                            FL.delete sFuncStatList n
-                           jhs <- map jHandle <$> JQ.dumpJobByFuncName sJobQueue n
                            FL.delete sJobQueue n
-                           mapM_ (Store.deleteJob sStore) jhs
 
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
 pushGrab (Scheduler {..}) fl jh ag = do
@@ -250,8 +257,6 @@ failJob sched@(Scheduler {..}) jh = do
       let nextJob = job' { jSchedAt = nextSchedAt }
 
       JQ.pushJob sJobQueue nextJob
-      Store.insertJob sStore nextJob
-
       PQ.removeJob sProcessJob fn jn
       adjustFuncStat sched fn
       startTimer sMainTimer 0
@@ -266,7 +271,6 @@ doneJob sched@(Scheduler {..}) jh = do
     Just _ -> do
       PQ.removeJob sProcessJob fn jn
       adjustFuncStat sched fn
-      Store.deleteJob sStore jh
 
   where (fn, jn) = unHandle jh
 
@@ -280,8 +284,6 @@ schedLaterJob sched@(Scheduler {..}) jh later step = do
       let nextJob = job' { jSchedAt = nextSchedAt, jCount = jCount job' + step }
 
       JQ.pushJob sJobQueue nextJob
-      Store.insertJob sStore nextJob
-
       PQ.removeJob sProcessJob fn jn
       adjustFuncStat sched fn
       startTimer sMainTimer 0
@@ -299,11 +301,11 @@ revertProcessQueue sched@(Scheduler {..}) = do
         isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
 
 shutdown :: Scheduler -> IO ()
-shutdown (Scheduler {..}) = L.with sLocker $ do
+shutdown sched@(Scheduler {..}) = L.with sLocker $ do
   alive <- atomicModifyIORef' sAlive $ \v -> (False, v)
   when alive $ do
     clearTimer sMainTimer
     clearTimer sRevertTimer
     clearTimer sStoreTimer
-    FL.clear sProcessJob
+    saveJob sched
     void $ forkIO $ sCleanup
