@@ -24,6 +24,7 @@ import           Control.Exception            (SomeException, try)
 import           Control.Monad                (unless, void, when)
 import qualified Data.ByteString              as B (concat, readFile, writeFile)
 import           Data.Int                     (Int64)
+import           Data.Maybe                   (fromMaybe)
 import           Periodic.Agent               (Agent, aAlive, send)
 import           Periodic.IOHashMap           (newIOHashMap)
 import qualified Periodic.IOHashMap           as FL
@@ -111,24 +112,19 @@ adjustFuncStat :: Scheduler -> FuncName -> IO ()
 adjustFuncStat (Scheduler {..}) fn = L.with sLocker $ do
   size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
   sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
-  minJob <- JQ.findMinJob sJobQueue fn
-  FL.alter sFuncStatList (update (size + sizePQ) sizePQ minJob) fn
+  schedAt <- do
+    minJob <- JQ.findMinJob sJobQueue fn
+    case minJob of
+      Nothing  -> getEpochTime
+      Just job -> return $ jSchedAt job
+  FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
 
-  where update :: Int64 -> Int64 -> Maybe Job -> Maybe FuncStat -> Maybe FuncStat
-        update size sizePQ Nothing Nothing = Just ((funcStat fn) { sJob = size
-                                                                 , sProcess = sizePQ
-                                                                 })
-        update size sizePQ (Just job) Nothing = Just ((funcStat fn) { sJob = size
-                                                                    , sProcess = sizePQ
-                                                                    , sSchedAt = jSchedAt job
-                                                                    })
-        update size sizePQ Nothing (Just stat) = Just (stat { sJob = size
-                                                            , sProcess = sizePQ
-                                                            })
-        update size sizePQ (Just job) (Just stat) = Just (stat { sJob = size
-                                                               , sProcess = sizePQ
-                                                               , sSchedAt = jSchedAt job
-                                                               })
+  where update :: Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
+        update size sizePQ schedAt st =
+          Just ((fromMaybe (funcStat fn) st) { sJob = size
+                                             , sProcess = sizePQ
+                                             , sSchedAt = schedAt
+                                             })
 
 restoreJob :: Scheduler -> Job -> IO ()
 restoreJob (Scheduler {..}) job = do
