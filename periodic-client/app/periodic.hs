@@ -177,7 +177,7 @@ doRemoveJob _ []     = printRemoveHelp
 doDropFunc c = mapM_ (void . dropFunc c . B.pack)
 
 doSubmitJob _ []       = printSubmitHelp
-doSubmitJob _ (_:[])      = printSubmitHelp
+doSubmitJob _ (_:[])   = printSubmitHelp
 doSubmitJob c (x:y:xs) = void $ submitJob c (B.pack x) (B.pack y) later
   where later = case xs of
                   []              -> 0
