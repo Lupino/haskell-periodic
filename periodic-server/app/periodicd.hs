@@ -9,6 +9,7 @@ module Main
 import           Control.Monad          (when)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf)
+import           Data.Maybe             (fromMaybe)
 import           Periodic.Server
 import           Periodic.Socket        (connectToFile, listenOn, listenOnFile)
 import           Periodic.Transport     (makeSocketTransport)
@@ -24,24 +25,23 @@ data Options = Options { host      :: String
                        , showHelp  :: Bool
                        }
 
-defaultOptions :: Options
-defaultOptions = Options { host      = "unix:///tmp/periodic.sock"
-                         , xorFile   = ""
-                         , storePath = "data"
-                         , showHelp  = False
-                         }
+options :: Maybe String -> Maybe String -> Options
+options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
+                      , xorFile = fromMaybe "" f
+                      , storePath = "data"
+                      , showHelp  = False
+                      }
 
-parseOptions :: Maybe String -> [String] -> Options
-parseOptions Nothing []        = defaultOptions
-parseOptions (Just v) []       = defaultOptions { host = v }
-parseOptions e ("-H":x:xs)     = (parseOptions e xs) { host      = x }
-parseOptions e ("--host":x:xs) = (parseOptions e xs) { host      = x }
-parseOptions e ("--xor":x:xs)  = (parseOptions e xs) { xorFile   = x }
-parseOptions e ("-p":x:xs)     = (parseOptions e xs) { storePath = x }
-parseOptions e ("--path":x:xs) = (parseOptions e xs) { storePath = x }
-parseOptions e ("-h":xs)       = (parseOptions e xs) { showHelp  = True }
-parseOptions e ("--help":xs)   = (parseOptions e xs) { showHelp  = True }
-parseOptions e (_:xs)          = parseOptions e xs
+parseOptions :: [String] -> Options -> Options
+parseOptions []              opt = opt
+parseOptions ("-H":x:xs)     opt = parseOptions xs opt { host      = x }
+parseOptions ("--host":x:xs) opt = parseOptions xs opt { host      = x }
+parseOptions ("--xor":x:xs)  opt = parseOptions xs opt { xorFile   = x }
+parseOptions ("-p":x:xs)     opt = parseOptions xs opt { storePath = x }
+parseOptions ("--path":x:xs) opt = parseOptions xs opt { storePath = x }
+parseOptions ("-h":xs)       opt = parseOptions xs opt { showHelp  = True }
+parseOptions ("--help":xs)   opt = parseOptions xs opt { showHelp  = True }
+parseOptions (_:xs)          opt = parseOptions xs opt
 
 printHelp :: IO ()
 printHelp = do
@@ -53,15 +53,17 @@ printHelp = do
   putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
   putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
   putStrLn "  -p --path State store path (optional: data)"
-  putStrLn "     --xor  XOR Transport encode file (optional: \"\")"
+  putStrLn "     --xor  XOR Transport encode file [$XOR_FILE]"
   putStrLn "  -h --help Display help message"
   putStrLn ""
   exitSuccess
 
 main :: IO ()
 main = do
-  env <- lookupEnv "PERIODIC_PORT"
-  (Options {..}) <- parseOptions env <$> getArgs
+  h <- lookupEnv "PERIODIC_PORT"
+  f <- lookupEnv "XOR_FILE"
+
+  (Options {..}) <- flip parseOptions (options h f) <$> getArgs
 
   when showHelp $ printHelp
 
@@ -75,32 +77,32 @@ main = do
 
   startServer (makeTransport xorFile) storePath sock
 
-  where makeTransport [] sock = makeSocketTransport sock
-        makeTransport p sock  = do
-          key <- LB.readFile p
-          transport <- makeSocketTransport sock
-          makeXORTransport key transport
+makeTransport [] sock = makeSocketTransport sock
+makeTransport p sock  = do
+  key <- LB.readFile p
+  transport <- makeSocketTransport sock
+  makeXORTransport key transport
 
-        dropS :: String -> String
-        dropS = drop 3 . dropWhile (/= ':')
+dropS :: String -> String
+dropS = drop 3 . dropWhile (/= ':')
 
-        toMaybe :: String -> Maybe String
-        toMaybe [] = Nothing
-        toMaybe xs = Just xs
+toMaybe :: String -> Maybe String
+toMaybe [] = Nothing
+toMaybe xs = Just xs
 
-        getHost :: String -> Maybe String
-        getHost = toMaybe . takeWhile (/=':') . dropS
+getHost :: String -> Maybe String
+getHost = toMaybe . takeWhile (/=':') . dropS
 
-        getService :: String -> String
-        getService = drop 1 . dropWhile (/=':') . dropS
+getService :: String -> String
+getService = drop 1 . dropWhile (/=':') . dropS
 
-        listenOnFile' sockFile = do
-          exists <- doesFileExist sockFile
-          when exists $ do
-            e <- tryIO $ connectToFile sockFile
-            case e of
-              Left _ -> removeFile sockFile
-              Right _ -> do
-                putStrLn "periodicd: bind: resource busy (Address already in use)"
-                exitFailure
-          listenOnFile sockFile
+listenOnFile' sockFile = do
+  exists <- doesFileExist sockFile
+  when exists $ do
+    e <- tryIO $ connectToFile sockFile
+    case e of
+      Left _ -> removeFile sockFile
+      Right _ -> do
+        putStrLn "periodicd: bind: resource busy (Address already in use)"
+        exitFailure
+  listenOnFile sockFile
