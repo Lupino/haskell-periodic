@@ -19,6 +19,10 @@ library
                      , Periodic.Client
                      , Periodic.Job
                      , Periodic.Worker
+                     , Periodic.Monad
+                     , Periodic.ClientM
+                     , Periodic.WorkerM
+                     , Periodic.JobM
 
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
