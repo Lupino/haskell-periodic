@@ -1,19 +1,20 @@
 module Periodic.Socket
   (
     Socket
-  , HostName
-  , ServiceName
-  , connectTo
-  , connectToFile
-  , listenOn
-  , listenOnFile
   , close
+  , listen
+  , connect
   ) where
 
 import           Control.Exception (bracketOnError, throwIO)
+import           Control.Monad     (when)
+import           Data.List         (isPrefixOf)
 import           Network.BSD       (getProtocolNumber)
-import           Network.Socket
+import           Network.Socket    hiding (connect, listen)
+import qualified Network.Socket    as S (connect, listen)
 import           Periodic.Utils    (tryIO)
+import           System.Directory  (doesFileExist, removeFile)
+import           System.Exit       (exitFailure)
 
 -- Returns the first action from a list which does not throw an exception.
 -- If all the actions throw exceptions (and the list of actions is not empty),
@@ -50,7 +51,7 @@ connectTo host serv = do
         (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
         (close)  -- only done if there's an error
         (\sock -> do
-          connect sock (addrAddress addr)
+          S.connect sock (addrAddress addr)
           return sock
         )
 
@@ -60,7 +61,7 @@ connectToFile path = do
     (socket AF_UNIX Stream 0)
     (close)
     (\sock -> do
-      connect sock (SockAddrUnix path)
+      S.connect sock (SockAddrUnix path)
       return sock
     )
 
@@ -72,7 +73,7 @@ listenOnFile path =
     (\sock -> do
         setSocketOption sock ReuseAddr 1
         bind sock (SockAddrUnix path)
-        listen sock maxListenQueue
+        S.listen sock maxListenQueue
         return sock
     )
 
@@ -96,6 +97,39 @@ listenOn host serv = do
       (\sock -> do
           setSocketOption sock ReuseAddr 1
           bind sock (addrAddress addr)
-          listen sock maxListenQueue
+          S.listen sock maxListenQueue
           return sock
       )
+
+listen :: String -> IO Socket
+listen port = do
+  if isPrefixOf "tcp" port then
+    listenOn (getHost port) (getService port)
+  else do
+    let sockFile = dropS port
+    exists <- doesFileExist sockFile
+    when exists $ do
+      e <- tryIO $ connectToFile sockFile
+      case e of
+        Left _ -> removeFile sockFile
+        Right _ -> do
+          putStrLn "periodicd: bind: resource busy (Address already in use)"
+          exitFailure
+    listenOnFile sockFile
+
+connect :: String -> IO Socket
+connect h | isPrefixOf "tcp" h = connectTo (getHost h) (getService h)
+          | otherwise          = connectToFile (dropS h)
+
+dropS :: String -> String
+dropS = drop 3 . dropWhile (/= ':')
+
+toMaybe :: String -> Maybe String
+toMaybe [] = Nothing
+toMaybe xs = Just xs
+
+getHost :: String -> Maybe String
+getHost = toMaybe . takeWhile (/=':') . dropS
+
+getService :: String -> String
+getService = drop 1 . dropWhile (/=':') . dropS

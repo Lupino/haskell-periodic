@@ -14,7 +14,7 @@ import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf, transpose)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
-import           Periodic.Socket        (Socket, connectTo, connectToFile)
+import           Periodic.Socket        (Socket, connect)
 import           Periodic.Transport     (Transport, makeSocketTransport)
 import           Periodic.Transport.XOR (makeXORTransport)
 import           System.Environment     (getArgs, lookupEnv)
@@ -134,7 +134,7 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  transport <- makeTransport xorFile =<< connectSock host
+  transport <- makeTransport xorFile =<< connect host
 
   runClient transport $ processCommand cmd argv
 
@@ -144,23 +144,6 @@ makeTransport p sock  = do
   key <- LB.readFile p
   transport <- makeSocketTransport sock
   makeXORTransport key transport
-
-dropS :: String -> String
-dropS = drop 3 . dropWhile (/= ':')
-
-toMaybe :: String -> Maybe String
-toMaybe [] = Nothing
-toMaybe xs = Just xs
-
-getHost :: String -> Maybe String
-getHost = toMaybe . takeWhile (/=':') . dropS
-
-getService :: String -> String
-getService = drop 1 . dropWhile (/=':') . dropS
-
-connectSock :: String -> IO Socket
-connectSock h | isPrefixOf "tcp" h = connectTo (getHost h) (getService h)
-              | otherwise          = connectToFile (dropS h)
 
 processCommand :: Command -> [String] -> Client ()
 processCommand Help _     = liftIO $ printHelp

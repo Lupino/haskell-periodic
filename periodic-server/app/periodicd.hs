@@ -11,13 +11,11 @@ import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Server
-import           Periodic.Socket        (connectToFile, listenOn, listenOnFile)
+import           Periodic.Socket        (listen)
 import           Periodic.Transport     (makeSocketTransport)
 import           Periodic.Transport.XOR (makeXORTransport)
-import           Periodic.Utils         (tryIO)
-import           System.Directory       (doesFileExist, removeFile)
 import           System.Environment     (getArgs, lookupEnv)
-import           System.Exit            (exitFailure, exitSuccess)
+import           System.Exit            (exitSuccess)
 
 data Options = Options { host      :: String
                        , xorFile   :: FilePath
@@ -71,38 +69,10 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  sock <- if isPrefixOf "tcp" host then listenOn (getHost host) (getService host)
-                                   else listenOnFile' (dropS host)
-
-
-  startServer (makeTransport xorFile) storePath sock
+  startServer (makeTransport xorFile) storePath =<< listen host
 
 makeTransport [] sock = makeSocketTransport sock
 makeTransport p sock  = do
   key <- LB.readFile p
   transport <- makeSocketTransport sock
   makeXORTransport key transport
-
-dropS :: String -> String
-dropS = drop 3 . dropWhile (/= ':')
-
-toMaybe :: String -> Maybe String
-toMaybe [] = Nothing
-toMaybe xs = Just xs
-
-getHost :: String -> Maybe String
-getHost = toMaybe . takeWhile (/=':') . dropS
-
-getService :: String -> String
-getService = drop 1 . dropWhile (/=':') . dropS
-
-listenOnFile' sockFile = do
-  exists <- doesFileExist sockFile
-  when exists $ do
-    e <- tryIO $ connectToFile sockFile
-    case e of
-      Left _ -> removeFile sockFile
-      Right _ -> do
-        putStrLn "periodicd: bind: resource busy (Address already in use)"
-        exitFailure
-  listenOnFile sockFile
