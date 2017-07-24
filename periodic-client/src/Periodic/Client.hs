@@ -5,7 +5,11 @@
 module Periodic.Client
   (
     Client
-  , newClient
+  , open
+  , close
+  , runClient_
+  , runClient
+
   , ping
   , submitJob_
   , submitJob
@@ -16,15 +20,13 @@ module Periodic.Client
   , load
   , status
   , shutdown
-  , close
   ) where
 
+import           Control.Monad.IO.Class (liftIO)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B (empty, hGet, hPut, length)
 import qualified Data.ByteString.Char8  as B (lines, split)
 import           Periodic.Agent         (Agent, receive, send)
-import           Periodic.BaseClient    (BaseClient, close, newBaseClient,
-                                         noopAgent, withAgent)
 import           Periodic.Timer
 import           Periodic.Transport     (Transport)
 import           Periodic.Types         (ClientType (TypeClient))
@@ -39,55 +41,68 @@ import           Control.Exception      (catch, throwIO)
 import           Control.Monad          (forever)
 import           GHC.IO.Handle          (Handle, hClose)
 import           Periodic.Utils         (getEpochTime, makeHeader, parseHeader)
+
+import           Periodic.Monad         hiding (catch)
 import           System.Timeout         (timeout)
 
-type Client = BaseClient
+type Client     = GenPeriodic ()
+type Connection = SpecEnv ()
 
-newClient :: Transport -> IO Client
-newClient transport = do
-  c <- newBaseClient transport TypeClient
+open :: Transport -> IO Connection
+open = flip runClient specEnv
+
+close :: Client ()
+close = stopPeriodic
+
+runClient :: Transport -> Client a -> IO a
+runClient transport m = do
   timer <- newTimer
-  initTimer timer $ checkHealth c
-  repeatTimer' timer 100
-  return c
+  env0 <- initEnv transport () TypeClient
+  runPeriodic env0 $ do
+    wapperIO (initTimer timer) checkHealth
+    liftIO $ repeatTimer' timer 100
+    m
 
-ping :: Client -> IO Bool
-ping c = withAgent c $ \agent -> do
+runClient_ :: Connection -> Client a -> IO a
+runClient_ = runPeriodicWithSpecEnv
+
+ping :: Client Bool
+ping = withAgent $ \agent -> do
   send agent Ping B.empty
   ret <- receive agent
   return $ payloadCMD ret == Pong
 
-submitJob_ :: Client -> Job -> IO Bool
-submitJob_ c j = withAgent c $ \agent -> do
+submitJob_ :: Job -> Client Bool
+submitJob_ j = withAgent $ \agent -> do
   send agent SubmitJob (encodeJob j)
   isSuccess agent
 
-submitJob :: Client -> FuncName -> JobName -> Int64 -> IO Bool
-submitJob c jFuncName jName later = do
+submitJob :: FuncName -> JobName -> Int64 -> Client Bool
+submitJob jFuncName jName later = do
 
-  jSchedAt <- (+later) <$> getEpochTime
-  submitJob_ c $ Job { jWorkload = "", jCount = 0, .. }
+  jSchedAt <- (+later) <$> liftIO getEpochTime
+  submitJob_ $ Job { jWorkload = "", jCount = 0, .. }
 
-dropFunc :: Client -> FuncName -> IO Bool
-dropFunc c func = withAgent c $ \agent -> do
+dropFunc :: FuncName -> Client Bool
+dropFunc func = withAgent $ \agent -> do
   send agent DropFunc func
   isSuccess agent
 
-removeJob_ :: Client -> Job -> IO Bool
-removeJob_ c j = withAgent c $ \agent -> do
+removeJob_ :: Job -> Client Bool
+removeJob_ j = withAgent $ \agent -> do
   send agent RemoveJob (encodeJob j)
   isSuccess agent
 
-removeJob :: Client -> FuncName -> JobName -> IO Bool
-removeJob c f n = removeJob_ c $ newJob f n
+removeJob :: FuncName -> JobName -> Client Bool
+removeJob f n = removeJob_ $ newJob f n
 
 isSuccess :: Agent -> IO Bool
 isSuccess agent = do
   ret <- receive agent
   return $ payloadCMD ret == Success
 
-dump :: Client -> Handle -> IO ()
-dump c h = withAgent c $ \agent -> do
+dump :: Handle -> Client ()
+dump h = withAgent $ \agent -> do
   send agent Dump B.empty
   catch (forever $ go agent) $ \(_ :: Error) -> return ()
   hClose h
@@ -103,8 +118,8 @@ dump c h = withAgent c $ \agent -> do
           B.hPut h . makeHeader $ B.length dat
           B.hPut h dat
 
-load :: Client -> Handle -> IO ()
-load c h = withAgent c $ \agent -> do
+load :: Handle -> Client ()
+load h = withAgent $ \agent -> do
   catch (forever $ go agent) $ \(_ :: Error) -> return ()
   hClose h
 
@@ -119,21 +134,21 @@ load c h = withAgent c $ \agent -> do
           dat <- B.hGet h len
           send agent Load dat
 
-status :: Client -> IO [[ByteString]]
-status c = withAgent c $ \agent -> do
+status :: Client [[ByteString]]
+status = withAgent $ \agent -> do
   send agent Status B.empty
   ret <- receive agent
   return . map (B.split ',') $ B.lines $ payloadData ret
 
-shutdown :: Client -> IO ()
-shutdown c = withAgent c $ \agent ->
+shutdown :: Client ()
+shutdown = withAgent $ \agent ->
   send agent Shutdown B.empty
 
-checkHealth :: Client -> IO ()
-checkHealth c = do
-  ret <- timeout 10000000 $ ping c
+checkHealth :: Client ()
+checkHealth = do
+  ret <- wapperIO (timeout 10000000) ping
   case ret of
-    Nothing -> noopAgent c TransportTimeout
+    Nothing -> noopAgent TransportTimeout
     Just r ->
       if r then return ()
-           else noopAgent c TransportClosed
+           else noopAgent TransportClosed

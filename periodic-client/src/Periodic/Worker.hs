@@ -5,21 +5,20 @@
 module Periodic.Worker
   (
     Worker
-  , newWorker
+  , runWorker
   , ping
   , addFunc
   , removeFunc
-  , grabJob
   , work
   , close
   ) where
 
+import           Control.Concurrent      (forkIO)
+import           Control.Monad.IO.Class  (liftIO)
 import qualified Data.ByteString         as B (empty)
 import           Periodic.Agent          (receive, send)
-import           Periodic.BaseClient     (BaseClient, newBaseClient, noopAgent,
-                                          withAgent)
-import qualified Periodic.BaseClient     as BC (close)
-import           Periodic.Job            (Job, func, name, newJob, workFail)
+import           Periodic.Job            (Job, JobEnv (..), func, initJobEnv,
+                                          name, workFail)
 import           Periodic.Timer
 import           Periodic.Transport      (Transport)
 import           Periodic.Types.Command
@@ -31,105 +30,101 @@ import           Periodic.Types          (ClientType (TypeWorker), FuncName)
 import           Periodic.IOHashMap      (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap      as HM (delete, insert, lookup)
 
-import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.QSem
-import           Control.Exception       (SomeException, catch, handle)
+import           Control.Exception       (SomeException)
 import           Control.Exception       (throwIO)
 import           Control.Monad           (forever, void)
-import           System.Timeout          (timeout)
+import           Periodic.Monad
 
 import           System.Log.Logger       (errorM)
+import           System.Timeout          (timeout)
 
-newtype Task = Task (Job -> IO ())
+type TaskList = IOHashMap (Job ())
+type Worker = GenPeriodic TaskList
 
-data Worker = Worker { bc    :: BaseClient
-                     , tasks :: IOHashMap Task
-                     }
+close :: Worker ()
+close = stopPeriodic
 
-
-newWorker :: Transport -> IO Worker
-newWorker transport = do
-  bc <- newBaseClient transport TypeWorker
-  tasks <- newIOHashMap
-  let w = Worker { .. }
-
+runWorker :: Transport -> Worker a -> IO a
+runWorker transport m = do
   timer <- newTimer
-  initTimer timer $ checkHealth w
-  repeatTimer' timer 100
+  taskList <- newIOHashMap
+  env0 <- initEnv transport taskList TypeWorker
+  runPeriodic env0 $ do
+    wapperIO (initTimer timer) checkHealth
+    liftIO $ repeatTimer' timer 100
+    m
 
-  return w
-
-addTask :: Worker -> FuncName -> Task -> IO ()
-addTask w f t = HM.insert (tasks w) f t
-
-removeTask :: Worker -> FuncName -> IO ()
-removeTask w f = HM.delete (tasks w) f
-
-getTask :: Worker -> FuncName -> IO (Maybe Task)
-getTask w f = HM.lookup (tasks w) f
-
-ping :: Worker -> IO Bool
-ping (Worker { bc = c }) = withAgent c $ \agent -> do
+ping :: Worker Bool
+ping = withAgent $ \agent -> do
   send agent Ping B.empty
   ret <- receive agent
   return $ payloadCMD ret == Pong
 
-grabJob :: Worker -> IO (Maybe Job)
-grabJob w@(Worker { bc = c }) = withAgent c $ \agent -> do
-  send agent GrabJob B.empty
-  pl <- receive agent
+grabJob :: Worker (Maybe JobEnv)
+grabJob  = do
+  pl <- withAgent $ \agent -> do
+          send agent GrabJob B.empty
+          receive agent
+
   case payloadCMD pl of
-    JobAssign -> return . newJob c $ payloadData pl
-    Noop      -> throwIO $ payloadError pl
-    _         -> grabJob w
+    JobAssign -> return . initJobEnv $ payloadData pl
+    Noop      -> liftIO . throwIO $ payloadError pl
+    _         -> grabJob
 
-addFunc :: Worker -> FuncName -> (Job -> IO ()) -> IO ()
-addFunc w@(Worker { bc = c }) f t = withAgent c $ \agent -> do
-  send agent CanDo f
-  addTask w f (Task t)
+addFunc :: FuncName -> Job () -> Worker ()
+addFunc f j = do
+  withAgent $ \agent -> send agent CanDo f
+  ref <- userEnv
+  liftIO $ HM.insert ref f j
 
-removeFunc :: Worker -> FuncName -> IO ()
-removeFunc w@(Worker { bc = c }) f = withAgent c $ \agent -> do
-  send agent CantDo f
-  removeTask w f
+removeFunc :: FuncName -> Worker ()
+removeFunc f = do
+  withAgent $ \agent -> send agent CantDo f
+  ref <- userEnv
+  liftIO $ HM.delete ref f
 
-close :: Worker -> IO ()
-close (Worker { bc = c }) = BC.close c
-
-work :: Worker -> Int -> IO ()
-work w size = handle (\(_ :: Error) -> close w) $ do
-  sem <- newQSem size
+work :: Int -> Worker ()
+work size = do
+  env0 <- env
+  taskList <- userEnv
+  sem <- liftIO $ newQSem size
   forever $ do
-    j <- grabJob w
+    j <- grabJob
     case j of
-      Nothing -> errorM "Periodic.Worker" "Nothing Job"
+      Nothing -> liftIO $ errorM "Periodic.Worker" "Nothing Job"
       Just job -> do
-        task <- getTask w (func job)
-        case task of
-          Nothing -> do
-            removeFunc w (func job)
-            workFail job
-          Just task' -> do
-            waitQSem sem
-            void . forkIO $ runTask task' job >> signalQSem sem
+        env1 <- cloneEnv job
+        withEnv env1 $ do
+          f <- func
+          task <- liftIO $ HM.lookup taskList f
+          case task of
+            Nothing -> do
+              withEnv env0 $ removeFunc f
+              workFail
+            Just task' -> do
+              liftIO $ waitQSem sem
+              void . wapperIO forkIO $ do
+                catch task' $ \(e :: SomeException) -> do
+                  n <- name
+                  liftIO $ errorM "Periodic.Worker"
+                         $ concat [ "Failing on running job { name = "
+                                  , show n
+                                  , ", "
+                                  , show f
+                                  , " }"
+                                  , "\nError: "
+                                  , show e
+                                  ]
+                  workFail
 
-runTask :: Task -> Job -> IO ()
-runTask (Task task) job = catch (task job) $ \(e :: SomeException) -> do
-  errorM "Periodic.Worker" $ concat [ "Failing on running job { name = "
-                                    , show $ name job
-                                    , ", "
-                                    , show $ func job
-                                    , " }"
-                                    , "\nError: "
-                                    , show e
-                                    ]
-  workFail job
+                liftIO $ signalQSem sem
 
-checkHealth :: Worker -> IO ()
-checkHealth w = do
-  ret <- timeout 10000000 $ ping w
+checkHealth :: Worker ()
+checkHealth = do
+  ret <- wapperIO (timeout 10000000) ping
   case ret of
-    Nothing -> noopAgent (bc w) TransportTimeout
+    Nothing -> noopAgent TransportTimeout
     Just r ->
       if r then return ()
-           else noopAgent (bc w) TransportClosed
+           else noopAgent TransportClosed

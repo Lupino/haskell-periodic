@@ -7,6 +7,7 @@ module Main
   ) where
 
 import           Control.Monad          (void, when)
+import           Control.Monad.IO.Class (liftIO)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString.Char8  as B (pack, unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
@@ -133,9 +134,9 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  client <- newClient =<< makeTransport xorFile =<< connectSock host
+  transport <- makeTransport xorFile =<< connectSock host
 
-  processCommand client cmd argv
+  runClient transport $ processCommand cmd argv
 
 makeTransport :: FilePath -> Socket -> IO Transport
 makeTransport [] sock = makeSocketTransport sock
@@ -161,36 +162,36 @@ connectSock :: String -> IO Socket
 connectSock h | isPrefixOf "tcp" h = connectTo (getHost h) (getService h)
               | otherwise          = connectToFile (dropS h)
 
-processCommand :: Client -> Command -> [String] -> IO ()
-processCommand _ Help _     = printHelp
-processCommand c Status _   = doStatus c
-processCommand c Load   _   = doLoad c
-processCommand c Dump   _   = doDump c
-processCommand c Submit xs  = doSubmitJob c xs
-processCommand c Remove xs  = doRemoveJob c xs
-processCommand c Drop xs    = doDropFunc c xs
-processCommand c Shutdown _ = shutdown c
+processCommand :: Command -> [String] -> Client ()
+processCommand Help _     = liftIO $ printHelp
+processCommand Status _   = doStatus
+processCommand Load   _   = doLoad
+processCommand Dump   _   = doDump
+processCommand Submit xs  = doSubmitJob xs
+processCommand Remove xs  = doRemoveJob xs
+processCommand Drop xs    = doDropFunc xs
+processCommand Shutdown _ = shutdown
 
-doRemoveJob c (x:xs) = mapM_ (void . removeJob c (B.pack x) . B.pack) xs
-doRemoveJob _ []     = printRemoveHelp
+doRemoveJob (x:xs) = mapM_ (void . removeJob (B.pack x) . B.pack) xs
+doRemoveJob []     = liftIO $ printRemoveHelp
 
-doDropFunc c = mapM_ (void . dropFunc c . B.pack)
+doDropFunc = mapM_ (void . dropFunc . B.pack)
 
-doSubmitJob _ []       = printSubmitHelp
-doSubmitJob _ (_:[])   = printSubmitHelp
-doSubmitJob c (x:y:xs) = void $ submitJob c (B.pack x) (B.pack y) later
+doSubmitJob []       = liftIO $ printSubmitHelp
+doSubmitJob (_:[])   = liftIO $ printSubmitHelp
+doSubmitJob (x:y:xs) = void $ submitJob (B.pack x) (B.pack y) later
   where later = case xs of
                   []              -> 0
                   ("--later":l:_) -> fromMaybe 0 (readMaybe l)
                   _               -> 0
 
-doDump c = openFile "dump.db" WriteMode >>= dump c
+doDump = liftIO (openFile "dump.db" WriteMode) >>= dump
 
-doLoad c = openFile "dump.db" ReadMode >>= load c
+doLoad = liftIO (openFile "dump.db" ReadMode) >>= load
 
-doStatus c = do
-  st <- map formatTime . unpackBS <$> status c
-  print_table (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
+doStatus = do
+  st <- map formatTime . unpackBS <$> status
+  liftIO $ print_table (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]
 unpackBS = map (map B.unpack)

@@ -1,10 +1,13 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 module Periodic.Job
   (
-    Job (..)
-  , newJob
+    Job
+  , JobEnv
+  , initJobEnv
+  , name
+  , func
+  , workload
+  , counter
+
   , workDone
   , workFail
   , schedLater
@@ -13,57 +16,65 @@ module Periodic.Job
 
 import           Data.ByteString       (ByteString)
 import qualified Data.ByteString.Char8 as B (concat, pack)
+import           Data.Int              (Int64)
 import           Periodic.Agent        (send)
-import           Periodic.BaseClient   (BaseClient, withAgent)
+import           Periodic.Monad        (Env, GenPeriodic, cloneEnv, userEnv,
+                                        withAgent)
 import           Periodic.Types        (Command (..), nullChar)
+import           Periodic.Types.Job    (FuncName, JobHandle, JobName, Workload)
 import qualified Periodic.Types.Job    as J
 import           Periodic.Utils        (breakBS)
 
-import           Data.Int              (Int64)
+data JobEnv = JobEnv { job :: J.Job, handle :: JobHandle }
 
-data Job = Job { name     :: J.JobName
-               , func     :: J.FuncName
-               , workload :: J.Workload
-               , counter  :: Int
-               , bc       :: BaseClient
-               , handle   :: J.JobHandle
-               }
+type Job = GenPeriodic JobEnv
 
-newJob :: BaseClient -> ByteString -> Maybe Job
-newJob c = go . breakBS 2
-  where go :: [ByteString] -> Maybe Job
+name :: Job JobName
+name = J.jName . job <$> userEnv
+
+func :: Job FuncName
+func = J.jFuncName . job <$> userEnv
+
+workload :: Job Workload
+workload = J.jWorkload . job <$> userEnv
+
+counter :: Job Int
+counter = J.jCount . job <$> userEnv
+
+initJobEnv :: ByteString -> Maybe JobEnv
+initJobEnv = go . breakBS 2
+  where go :: [ByteString] -> Maybe JobEnv
         go []        = Nothing
         go (_:[])    = Nothing
         go (h:dat:_) = parse h (J.decodeJob dat)
 
-        parse :: ByteString -> Maybe J.Job -> Maybe Job
-        parse _ Nothing = Nothing
-        parse h (Just r) = Just Job { name = J.jName r
-                                    , func = J.jFuncName r
-                                    , workload = J.jWorkload r
-                                    , counter = J.jCount r
-                                    , handle = h
-                                    , bc = c
-                                    }
+        parse :: ByteString -> Maybe J.Job -> Maybe JobEnv
+        parse _ Nothing  = Nothing
+        parse h (Just r) = Just $ JobEnv r h
 
+workDone :: Job ()
+workDone = do
+  h <- handle <$> userEnv
+  withAgent $ \agent -> send agent WorkDone h
 
-workDone :: Job -> IO ()
-workDone (Job { handle = h, bc = c }) = withAgent c $ \agent ->
-  send agent WorkDone h
+workFail :: Job ()
+workFail = do
+  h <- handle <$> userEnv
+  withAgent $ \agent -> send agent WorkFail h
 
-workFail :: Job -> IO ()
-workFail (Job { handle = h, bc = c }) = withAgent c $ \agent ->
-  send agent WorkFail h
+schedLater :: Int64 -> Job ()
+schedLater later = do
+  h <- handle <$> userEnv
+  withAgent $ \agent ->
+    send agent SchedLater $ B.concat [ h, nullChar, B.pack $ show later ]
 
-schedLater :: Job -> Int64 -> IO ()
-schedLater (Job { handle = h, bc =c }) later = withAgent c $ \agent ->
-  send agent SchedLater $ B.concat [ h, nullChar, B.pack $ show later ]
-
-schedLater' :: Job -> Int64 -> Int64 -> IO ()
-schedLater' (Job { handle = h, bc = c }) later step = withAgent c $ \agent ->
-  send agent SchedLater $ B.concat [ h
-                                   , nullChar
-                                   , B.pack $ show later
-                                   , nullChar
-                                   , B.pack $ show step
-                                   ]
+schedLater' :: Int64 -> Int64 -> Job ()
+schedLater' later step = do
+  h <- handle <$> userEnv
+  withAgent $ \agent ->
+    send agent SchedLater $ B.concat [ h
+                                     , nullChar
+                                     , B.pack $ show later
+                                     , nullChar
+                                     , B.pack $ show step
+                                     ]

@@ -15,14 +15,10 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Periodic.BaseClient
-                     , Periodic.Client
+  exposed-modules:     Periodic.Client
                      , Periodic.Job
                      , Periodic.Worker
                      , Periodic.Monad
-                     , Periodic.ClientM
-                     , Periodic.WorkerM
-                     , Periodic.JobM
 
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
