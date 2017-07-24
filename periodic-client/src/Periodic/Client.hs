@@ -5,6 +5,7 @@
 module Periodic.Client
   (
     Client
+  , Connection
   , open
   , close
   , runClient_
