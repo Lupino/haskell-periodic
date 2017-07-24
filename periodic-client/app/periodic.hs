@@ -14,8 +14,7 @@ import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf, transpose)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
-import           Periodic.Socket        (Socket, connect)
-import           Periodic.Transport     (Transport, makeSocketTransport)
+import           Periodic.Transport     (Transport)
 import           Periodic.Transport.XOR (makeXORTransport)
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
@@ -134,15 +133,12 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  transport <- makeTransport xorFile =<< connect host
+  runClient (makeTransport xorFile) host $ processCommand cmd argv
 
-  runClient transport $ processCommand cmd argv
-
-makeTransport :: FilePath -> Socket -> IO Transport
-makeTransport [] sock = makeSocketTransport sock
-makeTransport p sock  = do
+makeTransport :: FilePath -> Transport -> IO Transport
+makeTransport [] transport = return transport
+makeTransport p transport  = do
   key <- LB.readFile p
-  transport <- makeSocketTransport sock
   makeXORTransport key transport
 
 processCommand :: Command -> [String] -> Client ()

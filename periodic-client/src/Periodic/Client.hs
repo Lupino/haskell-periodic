@@ -28,8 +28,9 @@ import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B (empty, hGet, hPut, length)
 import qualified Data.ByteString.Char8  as B (lines, split)
 import           Periodic.Agent         (Agent, receive, send)
+import           Periodic.Socket        (connect)
 import           Periodic.Timer
-import           Periodic.Transport     (Transport)
+import           Periodic.Transport     (Transport, makeSocketTransport)
 import           Periodic.Types         (ClientType (TypeClient))
 import           Periodic.Types.Command
 import           Periodic.Types.Error
@@ -49,15 +50,16 @@ import           System.Timeout         (timeout)
 type Client     = GenPeriodic ()
 type Connection = SpecEnv ()
 
-open :: Transport -> IO Connection
-open = flip runClient specEnv
+open :: (Transport -> IO Transport) -> String -> IO Connection
+open f h = runClient f h specEnv
 
 close :: Client ()
 close = stopPeriodic
 
-runClient :: Transport -> Client a -> IO a
-runClient transport m = do
+runClient :: (Transport -> IO Transport) -> String -> Client a -> IO a
+runClient f h m = do
   timer <- newTimer
+  transport <- f =<< makeSocketTransport =<< connect h
   env0 <- initEnv transport () TypeClient
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth

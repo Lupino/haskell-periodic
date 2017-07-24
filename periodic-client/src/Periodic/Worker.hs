@@ -19,8 +19,9 @@ import qualified Data.ByteString         as B (empty)
 import           Periodic.Agent          (receive, send)
 import           Periodic.Job            (Job, JobEnv (..), func, initJobEnv,
                                           name, workFail)
+import           Periodic.Socket         (connect)
 import           Periodic.Timer
-import           Periodic.Transport      (Transport)
+import           Periodic.Transport      (Transport, makeSocketTransport)
 import           Periodic.Types.Command
 import           Periodic.Types.Error
 import           Periodic.Types.Payload
@@ -45,9 +46,10 @@ type Worker = GenPeriodic TaskList
 close :: Worker ()
 close = stopPeriodic
 
-runWorker :: Transport -> Worker a -> IO a
-runWorker transport m = do
+runWorker :: (Transport -> IO Transport) -> String -> Worker a -> IO a
+runWorker f h m = do
   timer <- newTimer
+  transport <- f =<< makeSocketTransport =<< connect h
   taskList <- newIOHashMap
   env0 <- initEnv transport taskList TypeWorker
   runPeriodic env0 $ do
