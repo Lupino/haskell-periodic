@@ -68,7 +68,7 @@ instance Monad (GenPeriodic u) where
       Done a  -> unPeriodic (k a) env ref
       Throw e -> return (Throw e)
 
-  fail msg = GenPeriodic $ \_ _ -> return $ Throw $ toException $ MonadFail $ msg
+  fail msg = GenPeriodic $ \_ _ -> return $ Throw $ toException $ MonadFail msg
 
   (>>) = (*>)
 
@@ -111,7 +111,7 @@ runPeriodicWithSpecEnv (SpecEnv env ref) (GenPeriodic m) = do
 initEnv :: Transport -> u -> ClientType -> IO (Env u)
 initEnv transport u t = do
   c <- newClientConn transport
-  send c $ (toEnum $ fromEnum t) `B.cons` B.empty
+  send c $ toEnum (fromEnum t) `B.cons` B.empty
   void $ receive c
   r <- newThreadManager
   return Env { uEnv = u, conn = c, runner = r }
@@ -167,7 +167,7 @@ removeAgent ref a = HM.delete ref (msgid a)
 
 noopAgent :: Error -> GenPeriodic u ()
 noopAgent e = GenPeriodic $ \_ ref ->
-  Done <$> (HM.elems ref >>= mapM_ (flip feed (noopError e)))
+  Done <$> (HM.elems ref >>= mapM_ (`feed` noopError e))
 
 mainLoop :: GenPeriodic u ()
 mainLoop = GenPeriodic $ \env ref -> do
@@ -179,7 +179,7 @@ mainLoop = GenPeriodic $ \env ref -> do
     Right pl             -> Done <$> writePayload ref (parsePayload pl)
 
 writePayload :: IOHashMap Agent -> Payload -> IO ()
-writePayload ref pl@(Payload { payloadID = pid }) = do
+writePayload ref pl@Payload{payloadID = pid} = do
   v <- HM.lookup ref pid
   case v of
     Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ show pid ++ "] not found."

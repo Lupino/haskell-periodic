@@ -24,7 +24,7 @@ import           Control.Exception            (SomeException, try)
 import           Control.Monad                (unless, void, when)
 import qualified Data.ByteString              as B (concat, readFile, writeFile)
 import           Data.Int                     (Int64)
-import           Data.Maybe                   (fromMaybe)
+import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Periodic.Agent               (Agent, aAlive, send)
 import           Periodic.IOHashMap           (newIOHashMap)
 import qualified Periodic.IOHashMap           as FL
@@ -82,7 +82,7 @@ newScheduler path sCleanup = do
   createDirectoryIfMissing True path
   exists <- doesFileExist sStorePath
   when exists $ mapM_ (restoreJob sched) =<< loadJob sched
-  mapM_ (adjustFuncStat sched) =<< (FL.keys sJobQueue)
+  mapM_ (adjustFuncStat sched) =<< FL.keys sJobQueue
 
   initTimer sMainTimer   $ processJob sched
   initTimer sRevertTimer $ revertProcessQueue sched
@@ -95,7 +95,7 @@ newScheduler path sCleanup = do
   return sched
 
 pushJob :: Scheduler -> Job -> IO ()
-pushJob sched@(Scheduler {..}) job = do
+pushJob sched@Scheduler{..} job = do
   exists <- JQ.memberJob sJobQueue fn jn
   isProc <- FL.member sProcessJob jh
   if exists then JQ.pushJob sJobQueue job
@@ -109,7 +109,7 @@ pushJob sched@(Scheduler {..}) job = do
         jn = jName job
 
 adjustFuncStat :: Scheduler -> FuncName -> IO ()
-adjustFuncStat (Scheduler {..}) fn = L.with sLocker $ do
+adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
   size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
   sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
   schedAt <- do
@@ -127,11 +127,10 @@ adjustFuncStat (Scheduler {..}) fn = L.with sLocker $ do
                                              })
 
 restoreJob :: Scheduler -> Job -> IO ()
-restoreJob (Scheduler {..}) job = do
-  JQ.pushJob sJobQueue job
+restoreJob Scheduler{..} = JQ.pushJob sJobQueue
 
 removeJob :: Scheduler -> Job -> IO ()
-removeJob sched@(Scheduler {..}) job = do
+removeJob sched@Scheduler{..} job = do
   has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
   when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
 
@@ -142,20 +141,20 @@ removeJob sched@(Scheduler {..}) job = do
   startTimer sMainTimer 0
 
 dumpJob :: Scheduler -> IO [Job]
-dumpJob (Scheduler {..}) = do
+dumpJob Scheduler{..} = do
   js <- JQ.dumpJob sJobQueue
   js' <- PQ.dumpJob sProcessJob
-  return $ concat [js, js']
+  return $ js ++ js'
 
 saveJob :: Scheduler -> IO ()
-saveJob sched@(Scheduler {..}) =
+saveJob sched@Scheduler{..} =
   dumpJob sched >>= B.writeFile sStorePath . DS.encode
 
 loadJob :: Scheduler -> IO [Job]
-loadJob (Scheduler {..}) = DS.decodeIO =<< B.readFile sStorePath
+loadJob Scheduler{..} = DS.decodeIO =<< B.readFile sStorePath
 
 addFunc :: Scheduler -> FuncName -> IO ()
-addFunc (Scheduler {..}) n = L.with sLocker $ do
+addFunc Scheduler{..} n = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
   startTimer sMainTimer 0
 
@@ -164,7 +163,7 @@ addFunc (Scheduler {..}) n = L.with sLocker $ do
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc (Scheduler {..}) n = L.with sLocker $ do
+removeFunc Scheduler{..} n = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
   startTimer sMainTimer 0
 
@@ -173,30 +172,27 @@ removeFunc (Scheduler {..}) n = L.with sLocker $ do
         updateStat (Just fs) = Just (fs { sWorker = max (sWorker fs - 1) 0 })
 
 dropFunc :: Scheduler -> FuncName -> IO ()
-dropFunc (Scheduler {..}) n = L.with sLocker $ do
+dropFunc Scheduler{..} n = L.with sLocker $ do
   st <- FL.lookup sFuncStatList n
-  case st of
-    Nothing -> return ()
-    Just st' -> do
-      if sWorker st' > 0 then return ()
-                         else do
-                           FL.delete sFuncStatList n
-                           FL.delete sJobQueue n
+  when (isJust st) $
+    when (sWorker (fromJust st) == 0) $ do
+      FL.delete sFuncStatList n
+      FL.delete sJobQueue n
 
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
-pushGrab (Scheduler {..}) fl jh ag = do
+pushGrab Scheduler{..} fl jh ag = do
   pushAgent sGrabQueue fl jh ag
   startTimer sMainTimer 0
 
 processJob :: Scheduler -> IO ()
-processJob sched@(Scheduler {..}) = do
+processJob sched@Scheduler{..} = do
   st <- getFirstSched sFuncStatList sGrabQueue
   case st of
     Nothing -> startTimer' sMainTimer 100
     Just st' -> do
       now <- getEpochTime
-      if now < (sSchedAt st') then startTimer' sMainTimer (fromIntegral $ sSchedAt st' - now)
-                              else submitJob now st'
+      if now < sSchedAt st' then startTimer' sMainTimer (fromIntegral $ sSchedAt st' - now)
+                            else submitJob now st'
 
   where revertJob :: Job -> IO ()
         revertJob job = do
@@ -244,64 +240,60 @@ assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
                                                       ]
 
 failJob :: Scheduler -> JobHandle -> IO ()
-failJob sched@(Scheduler {..}) jh = do
+failJob sched@Scheduler{..} jh = do
   job <- PQ.lookupJob sProcessJob fn jn
-  case job of
-    Nothing -> return ()
-    Just job' -> do
-      nextSchedAt <- getEpochTime
-      let nextJob = job' { jSchedAt = nextSchedAt }
-
-      JQ.pushJob sJobQueue nextJob
-      PQ.removeJob sProcessJob fn jn
-      adjustFuncStat sched fn
-      startTimer sMainTimer 0
+  when (isJust job) $ do
+    nextSchedAt <- getEpochTime
+    retryJob sched ((fromJust job) {jSchedAt = nextSchedAt})
 
   where (fn, jn) = unHandle jh
 
+retryJob :: Scheduler -> Job -> IO ()
+retryJob sched@Scheduler{..} job = do
+  JQ.pushJob sJobQueue job
+  PQ.removeJob sProcessJob fn jn
+  adjustFuncStat sched fn
+  startTimer sMainTimer 0
+
+  where  fn = jFuncName job
+         jn = jName job
+
+
 doneJob :: Scheduler -> JobHandle -> IO ()
-doneJob sched@(Scheduler {..}) jh = do
+doneJob sched@Scheduler{..} jh = do
   job <- PQ.lookupJob sProcessJob fn jn
-  case job of
-    Nothing -> return ()
-    Just _ -> do
-      PQ.removeJob sProcessJob fn jn
-      adjustFuncStat sched fn
+  when (isJust job) $ do
+    PQ.removeJob sProcessJob fn jn
+    adjustFuncStat sched fn
 
   where (fn, jn) = unHandle jh
 
 schedLaterJob :: Scheduler -> JobHandle -> Int64 -> Int -> IO ()
-schedLaterJob sched@(Scheduler {..}) jh later step = do
+schedLaterJob sched@Scheduler{..} jh later step = do
   job <- PQ.lookupJob sProcessJob fn jn
-  case job of
-    Nothing -> return ()
-    Just job' -> do
-      nextSchedAt <- (+) later <$> getEpochTime
-      let nextJob = job' { jSchedAt = nextSchedAt, jCount = jCount job' + step }
-
-      JQ.pushJob sJobQueue nextJob
-      PQ.removeJob sProcessJob fn jn
-      adjustFuncStat sched fn
-      startTimer sMainTimer 0
+  when (isJust job) $ do
+    let job' = fromJust job
+    nextSchedAt <- (+) later <$> getEpochTime
+    retryJob sched job' {jSchedAt = nextSchedAt , jCount = jCount job' + step}
 
   where (fn, jn) = unHandle jh
 
 status :: Scheduler -> IO [FuncStat]
-status (Scheduler {..}) = FL.elems sFuncStatList
+status Scheduler{..} = FL.elems sFuncStatList
 
 revertProcessQueue :: Scheduler -> IO ()
-revertProcessQueue sched@(Scheduler {..}) = do
+revertProcessQueue sched@Scheduler{..} = do
   now <- getEpochTime
   mapM_ (failJob sched . jHandle) =<< filter (isTimeout now) <$> PQ.dumpJob sProcessJob
   where isTimeout :: Int64 -> Job -> Bool
-        isTimeout t1 (Job { jSchedAt = t }) = (t + 600) < t1
+        isTimeout t1 Job{jSchedAt = t} = (t + 600) < t1
 
 shutdown :: Scheduler -> IO ()
-shutdown sched@(Scheduler {..}) = L.with sLocker $ do
+shutdown sched@Scheduler{..} = L.with sLocker $ do
   alive <- atomicModifyIORef' sAlive $ \v -> (False, v)
   when alive $ do
     clearTimer sMainTimer
     clearTimer sRevertTimer
     clearTimer sStoreTimer
     saveJob sched
-    void $ forkIO $ sCleanup
+    void $ forkIO sCleanup

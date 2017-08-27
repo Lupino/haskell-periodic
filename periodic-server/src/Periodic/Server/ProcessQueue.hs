@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE RecordWildCards #-}
 module Periodic.Server.ProcessQueue
   (
     SubProcessQueue
@@ -25,7 +24,7 @@ type SubProcessQueue = HashMap FuncName Job
 type ProcessQueue = IOHashMap SubProcessQueue
 
 insertJob :: ProcessQueue -> Job -> IO ()
-insertJob q j@(Job {..}) = alter q update jFuncName
+insertJob q j@Job{..} = alter q update jFuncName
   where update :: Maybe SubProcessQueue -> Maybe SubProcessQueue
         update Nothing   = Just (HM.fromList [(jName, j)])
         update (Just q') = Just (insert jName j q')
@@ -34,7 +33,7 @@ lookupJob :: ProcessQueue -> FuncName -> ByteString -> IO (Maybe Job)
 lookupJob q n jn = maybe Nothing (HM.lookup jn) <$> lookup q n
 
 removeJob :: ProcessQueue -> FuncName -> ByteString -> IO ()
-removeJob q n jn = adjust q (\v -> delete jn v) n
+removeJob q n jn = adjust q (delete jn) n
 
 memberJob :: ProcessQueue -> FuncName -> ByteString -> IO Bool
 memberJob q n jn = go <$> lookup q n
@@ -43,10 +42,10 @@ memberJob q n jn = go <$> lookup q n
         go (Just q') = member jn q'
 
 dumpJob :: ProcessQueue -> IO [Job]
-dumpJob jq = concat . map go <$> elems jq
+dumpJob jq = concatMap go <$> elems jq
 
   where go :: SubProcessQueue -> [Job]
-        go sq = HM.elems sq
+        go = HM.elems
 
 dumpJobByFuncName :: ProcessQueue -> FuncName -> IO [Job]
 dumpJobByFuncName jq n = do

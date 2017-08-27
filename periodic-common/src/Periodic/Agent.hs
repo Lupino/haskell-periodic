@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Periodic.Agent
   (
@@ -41,16 +40,16 @@ newAgent' aMsgid aConn = do
   return Agent { aReader = Just reader, .. }
 
 agentid :: Agent -> ByteString
-agentid (Agent {..}) = B.concat [ aMsgid, nullChar, connid aConn ]
+agentid Agent {..} = B.concat [ aMsgid, nullChar, connid aConn ]
 
 msgid :: Agent -> ByteString
 msgid = aMsgid
 
 aAlive :: Agent -> IO Bool
-aAlive (Agent {..}) = connected aConn
+aAlive Agent {..} = connected aConn
 
 send_ :: Agent -> ByteString -> IO ()
-send_ (Agent { .. }) pl =
+send_ Agent{..} pl =
   Conn.send aConn $ B.concat [ aMsgid, nullChar, pl ]
 
 send :: Agent -> Command -> ByteString -> IO ()
@@ -58,13 +57,13 @@ send ag cmd pl =
   if B.null pl then send_ ag $ toB cmd
                else send_ ag $ B.concat [ toB cmd, nullChar, pl ]
 
-  where toB x = (toEnum $ fromEnum x) `B.cons` B.empty
+  where toB x = toEnum (fromEnum x) `B.cons` B.empty
 
 feed :: Agent -> Payload -> IO ()
-feed (Agent {..}) pl = flip putMVar pl (fromJust aReader)
+feed Agent{..} = putMVar (fromJust aReader)
 
 receive :: Agent -> IO Payload
-receive (Agent {..}) = do
+receive Agent{..} = do
   pl <- takeMVar $ fromJust aReader
   if payloadError pl == EmptyError then return pl
                                    else throwIO $ payloadError pl

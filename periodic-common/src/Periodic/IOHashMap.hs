@@ -1,6 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 module Periodic.IOHashMap
   (
     IOHashMap
@@ -65,4 +62,4 @@ elems :: IOHashMap a -> IO [a]
 elems (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.elems m)
 
 clear :: IOHashMap a -> IO ()
-clear (IOHashMap h) = atomicModifyIORef' h $ \_ -> (HM.empty, ())
+clear (IOHashMap h) = atomicModifyIORef' h $ const (HM.empty, ())

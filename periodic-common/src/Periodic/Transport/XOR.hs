@@ -4,6 +4,7 @@ module Periodic.Transport.XOR
   , makeXORTransport
   ) where
 
+import           Control.Arrow        ((&&&))
 import           Data.Bits            (xor)
 import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as LB
@@ -12,8 +13,8 @@ import qualified Periodic.Lock        as L
 import           Periodic.Transport   (Transport (..))
 
 xorBS :: IORef LB.ByteString -> B.ByteString -> IO B.ByteString
-xorBS ref bs = do
-  xor' <$> atomicModifyIORef' ref (\v -> (LB.drop len v, LB.take len v))
+xorBS ref bs =
+  xor' <$> atomicModifyIORef' ref (LB.drop len &&& LB.take len)
 
  where  bs' = LB.fromStrict bs
         len = LB.length bs'

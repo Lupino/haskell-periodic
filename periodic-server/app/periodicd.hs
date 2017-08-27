@@ -61,11 +61,11 @@ main = do
   h <- lookupEnv "PERIODIC_PORT"
   f <- lookupEnv "XOR_FILE"
 
-  (Options {..}) <- flip parseOptions (options h f) <$> getArgs
+  Options {..} <- flip parseOptions (options h f) <$> getArgs
 
-  when showHelp $ printHelp
+  when showHelp printHelp
 
-  when (not (isPrefixOf "tcp" host) && not (isPrefixOf "unix" host)) $ do
+  when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
     printHelp
 

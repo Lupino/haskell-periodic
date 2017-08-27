@@ -49,17 +49,17 @@ connectTo host serv = do
   tryToConnect addr =
     bracketOnError
         (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
-        (close)  -- only done if there's an error
+        close  -- only done if there's an error
         (\sock -> do
           S.connect sock (addrAddress addr)
           return sock
         )
 
 connectToFile :: FilePath -> IO Socket
-connectToFile path = do
+connectToFile path =
   bracketOnError
     (socket AF_UNIX Stream 0)
-    (close)
+    close
     (\sock -> do
       S.connect sock (SockAddrUnix path)
       return sock
@@ -69,7 +69,7 @@ listenOnFile :: FilePath -> IO Socket
 listenOnFile path =
   bracketOnError
     (socket AF_UNIX Stream 0)
-    (close)
+    close
     (\sock -> do
         setSocketOption sock ReuseAddr 1
         bind sock (SockAddrUnix path)
@@ -93,7 +93,7 @@ listenOn host serv = do
       addr = if null addrs' then head addrs else head addrs'
   bracketOnError
       (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
-      (close)
+      close
       (\sock -> do
           setSocketOption sock ReuseAddr 1
           bind sock (addrAddress addr)
@@ -102,8 +102,8 @@ listenOn host serv = do
       )
 
 listen :: String -> IO Socket
-listen port = do
-  if isPrefixOf "tcp" port then
+listen port =
+  if "tcp" `isPrefixOf` port then
     listenOn (getHost port) (getService port)
   else do
     let sockFile = dropS port
@@ -118,8 +118,8 @@ listen port = do
     listenOnFile sockFile
 
 connect :: String -> IO Socket
-connect h | isPrefixOf "tcp" h = connectTo (getHost h) (getService h)
-          | otherwise          = connectToFile (dropS h)
+connect h | "tcp" `isPrefixOf` h = connectTo (getHost h) (getService h)
+          | otherwise            = connectToFile (dropS h)
 
 dropS :: String -> String
 dropS = drop 3 . dropWhile (/= ':')

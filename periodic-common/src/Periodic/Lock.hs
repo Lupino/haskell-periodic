@@ -15,4 +15,4 @@ new :: IO Lock
 new = Lock <$> newMVar ()
 
 with :: Lock -> IO a -> IO a
-with (Lock {..}) = bracket_ (takeMVar un) (putMVar un ())
+with Lock{..} = bracket_ (takeMVar un) (putMVar un ())

@@ -18,7 +18,7 @@ import           Prelude    hiding (elem)
 newtype IOList a = IOList (IORef [a])
 
 modify :: IOList a -> ([a] -> ([a], b)) -> IO b
-modify (IOList h) f = atomicModifyIORef' h f
+modify (IOList h) = atomicModifyIORef' h
 
 newIOList :: IO (IOList a)
 newIOList = IOList <$> newIORef []
@@ -30,10 +30,10 @@ insert :: IOList a -> a -> IO ()
 insert h a = modify h $ \v -> (a:v, ())
 
 append :: IOList a -> a -> IO ()
-append h a = modify h $ \v -> (concat [v, [a]], ())
+append h a = modify h $ \v -> (v ++ [a], ())
 
 elem :: (Eq a) => IOList a -> a -> IO Bool
-elem h a = modify h $ \v -> (v, L.elem a v)
+elem h a = modify h $ \v -> (v, a `L.elem` v)
 
 delete :: (Eq a) => IOList a -> a -> IO ()
 delete h a = modify h $ \v -> (L.delete a v, ())

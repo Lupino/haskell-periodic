@@ -11,10 +11,11 @@ module Periodic.Server.Client
 
 import           Control.Concurrent        (forkIO)
 import           Control.Exception         (SomeException, try)
-import           Control.Monad             (forever, void)
+import           Control.Monad             (forever, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
                                                  pack)
+import           Data.Foldable             (forM_)
 import           Periodic.Connection       (Connection, close, receive)
 import           Periodic.TM
 
@@ -23,7 +24,7 @@ import           Periodic.Server.FuncStat  (FuncStat (..))
 import           Periodic.Server.Scheduler (Scheduler, dropFunc, dumpJob,
                                             pushJob, removeJob, shutdown,
                                             status)
-import           Periodic.Types            (Job, decodeJob, encodeJob)
+import           Periodic.Types.Job        (Job, decodeJob, encodeJob)
 
 import           Periodic.Timer
 import           Periodic.Types            (Command (..), Payload (..))
@@ -56,7 +57,7 @@ newClient cConn cSched cKeepAlive = do
   return c
 
 mainLoop :: Client -> IO ()
-mainLoop c@(Client {..}) = do
+mainLoop c@Client{..} = do
   e <- try $ receive cConn
   setLastVistTime c =<< getEpochTime
   case e of
@@ -68,20 +69,19 @@ mainLoop c@(Client {..}) = do
         Right _                 -> return ()
 
 setLastVistTime :: Client -> Int64 -> IO ()
-setLastVistTime (Client {..}) v = atomicModifyIORef' cLastVist (\_ -> (v, ()))
+setLastVistTime Client{..} v = atomicModifyIORef' cLastVist (const (v, ()))
 
 getLastVistTime :: Client -> IO Int64
-getLastVistTime (Client {..}) = atomicModifyIORef' cLastVist (\v -> (v, v))
+getLastVistTime Client{..} = atomicModifyIORef' cLastVist (\v -> (v, v))
 
 checkAlive :: Client -> IO ()
-checkAlive c@(Client {..}) = do
+checkAlive c@Client{..} = do
   expiredAt <- (cKeepAlive +) <$> getLastVistTime c
   now <- getEpochTime
-  if now > expiredAt then cClose c
-                     else return ()
+  when (now > expiredAt) $ cClose c
 
 handlePayload :: Client -> Payload -> IO ()
-handlePayload c (Payload {..}) = go payloadCMD
+handlePayload c Payload{..} = go payloadCMD
   where go :: Command -> IO ()
         go SubmitJob = handleSubmitJob sched agent payloadData
         go Status    = handleStatus sched agent
@@ -97,7 +97,7 @@ handlePayload c (Payload {..}) = go payloadCMD
         sched = cSched c
 
 handleSubmitJob :: Scheduler -> Agent -> ByteString -> IO ()
-handleSubmitJob sc ag pl = do
+handleSubmitJob sc ag pl =
   case decodeJob pl of
     Nothing -> send ag Noop B.empty
     Just job -> do
@@ -110,7 +110,7 @@ handleStatus sc ag = do
   send_ ag $ B.intercalate "\n" stats
 
   where go :: FuncStat -> ByteString
-        go (FuncStat {..}) = B.concat [ sFuncName
+        go FuncStat{..} = B.concat [ sFuncName
                                       , ","
                                       , B.pack $ show sWorker
                                       , ","
@@ -127,7 +127,7 @@ handleDropFunc sc ag pl = do
   send ag Success B.empty
 
 handleRemoveJob :: Scheduler -> Agent -> ByteString -> IO ()
-handleRemoveJob sc ag pl = do
+handleRemoveJob sc ag pl =
   case decodeJob pl of
     Nothing -> send ag Noop B.empty
     Just job -> do
@@ -144,17 +144,13 @@ handleDump sc ag = do
         doSend = send_ ag . encodeJob
 
 handleLoad :: Scheduler -> ByteString -> IO ()
-handleLoad sc pl = do
-  case decodeJob pl of
-    Nothing -> return ()
-    Just job -> do
-      pushJob sc job
+handleLoad sc pl = forM_ (decodeJob pl) (pushJob sc)
 
 handleShutdown :: Scheduler -> IO ()
-handleShutdown sc = shutdown sc
+handleShutdown = shutdown
 
 cClose :: Client -> IO ()
-cClose (Client { .. }) = void $ forkIO $ do
+cClose Client{ .. } = void $ forkIO $ do
   killThread cRunner
   clearTimer cTimer
   close cConn

@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Server
@@ -40,8 +39,7 @@ startServer makeTransport storePath sock = do
   void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
   void $ installHandler sigINT (Catch $ handleExit bye) Nothing
 
-  sched <- newScheduler storePath $ do
-    handleExit bye
+  sched <- newScheduler storePath $ handleExit bye
 
   thread <- forkIO $ forever $ do
     -- if accept failed exit
@@ -66,7 +64,7 @@ handleConnection :: Scheduler -> Transport -> IO ()
 handleConnection sched transport = do
   conn <- newServerConn transport
   receiveThen conn $ \pl ->
-    sendThen conn $ do
+    sendThen conn $
       case tp pl of
         Nothing         -> close conn
         Just TypeClient -> void $ newClient conn sched 300

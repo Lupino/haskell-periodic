@@ -59,8 +59,8 @@ encodeJob Job {..} = concatBS [ Just jFuncName
 
  where join :: [ByteString] -> [ByteString]
        join []     = []
-       join (x:[]) = [x]
-       join (x:xs) = (x:nullChar:join xs)
+       join [x]    = [x]
+       join (x:xs) = x:nullChar:join xs
 
        concatBS = B.concat . join . catMaybes
 
@@ -82,10 +82,10 @@ decodeJob :: ByteString -> Maybe Job
 decodeJob = go . breakBS 5
   where go :: [ByteString] -> Maybe Job
         go []            = Nothing
-        go (_:[])        = Nothing
-        go (x:y:[])      = Just $ newJob x y
-        go (x:y:z:[])    = Just $ (newJob x y) { jSchedAt = readBS z }
-        go (x:y:z:a:[])  = Just $ (newJob x y) { jSchedAt = readBS z
+        go [_]           = Nothing
+        go [x, y]        = Just $ newJob x y
+        go [x, y, z]     = Just $ (newJob x y) { jSchedAt = readBS z }
+        go [x, y, z, a]  = Just $ (newJob x y) { jSchedAt = readBS z
                                                , jCount   = readBS a
                                                }
         go (x:y:z:a:b:_) = Just $ (newJob x y) { jWorkload = b
@@ -100,7 +100,7 @@ sepLength :: Int
 sepLength = B.length sep
 
 jHandle :: Job -> JobHandle
-jHandle (Job {..}) = B.concat [ jFuncName, sep, jName ]
+jHandle Job{..} = B.concat [ jFuncName, sep, jName ]
 
 unHandle :: JobHandle -> (FuncName, JobName)
 unHandle = go . B.breakSubstring sep

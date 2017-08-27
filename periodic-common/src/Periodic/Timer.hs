@@ -36,7 +36,7 @@ newTimer = do
   return Timer {..}
 
 initTimer :: Timer -> IO () -> IO ()
-initTimer (Timer {..}) io = L.with locker $ do
+initTimer Timer{..} io = L.with locker $ do
   t <- getThreadId runner
   when (isNothing t) $ do
     t' <- forkIO $ forever $ do
@@ -53,11 +53,11 @@ clearTimer Timer {..} = do
 -- | startTimer for a given number of microseconds
 --
 startTimer :: Timer -> Int -> IO ()
-startTimer (Timer {..}) delay = L.with locker $ do
+startTimer Timer{..} delay = L.with locker $ do
   killThread timer
 
   t <- forkIO $ do
-    when (delay > 0) $ threadDelay $ delay
+    when (delay > 0) $ threadDelay delay
     putMVar waiter ()
 
   setThreadId timer t
@@ -70,11 +70,11 @@ startTimer' t delay = startTimer t (delay * 1000000)
 -- | repeatTimer for a given number of microseconds
 --
 repeatTimer :: Timer -> Int -> IO ()
-repeatTimer (Timer {..}) delay = L.with locker $ do
+repeatTimer Timer{..} delay = L.with locker $ do
   killThread timer
 
   t <- forkIO $ forever $ do
-    when (delay > 0) $ threadDelay $ delay
+    when (delay > 0) $ threadDelay delay
     putMVar waiter ()
 
   setThreadId timer t

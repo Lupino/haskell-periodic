@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Periodic.Server.GrabQueue
   (
@@ -27,7 +26,7 @@ instance Eq GrabItem where
     (==) = eqGrabItem
 
 key :: GrabItem -> ByteString
-key (GrabItem { gAgent = a }) = agentid a
+key GrabItem{gAgent = a} = agentid a
 
 eqGrabItem :: GrabItem -> GrabItem -> Bool
 eqGrabItem a b = key a == key b

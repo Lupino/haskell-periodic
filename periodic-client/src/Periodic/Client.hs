@@ -84,7 +84,7 @@ submitJob :: FuncName -> JobName -> Int64 -> Client Bool
 submitJob jFuncName jName later = do
 
   jSchedAt <- (+later) <$> liftIO getEpochTime
-  submitJob_ $ Job { jWorkload = "", jCount = 0, .. }
+  submitJob_ Job{jWorkload = "", jCount = 0, ..}
 
 dropFunc :: FuncName -> Client Bool
 dropFunc func = withAgent $ \agent -> do

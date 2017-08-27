@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE RecordWildCards #-}
 module Periodic.Server.JobQueue
   (
     SubJobQueue
@@ -27,7 +26,7 @@ type SubJobQueue = HashPSQ FuncName Int64 Job
 type JobQueue = IOHashMap SubJobQueue
 
 pushJob :: JobQueue -> Job -> IO ()
-pushJob q j@(Job {..}) = alter q update jFuncName
+pushJob q j@Job{..} = alter q update jFuncName
   where update :: Maybe SubJobQueue -> Maybe SubJobQueue
         update Nothing   = Just (fromList [(jName, jSchedAt, j)])
         update (Just q') = Just (insert jName jSchedAt j q')
@@ -46,11 +45,11 @@ popJob q n = do
   case j of
     Nothing -> return Nothing
     Just j' -> do
-      adjust q (\v -> delete (jName j') v) n
+      adjust q (delete (jName j')) n
       return j
 
 removeJob :: JobQueue -> FuncName -> ByteString -> IO ()
-removeJob q n jn = adjust q (\v -> delete jn v) n
+removeJob q n jn = adjust q (delete jn) n
 
 memberJob :: JobQueue -> FuncName -> ByteString -> IO Bool
 memberJob q n jn = go <$> lookup q n
@@ -59,7 +58,7 @@ memberJob q n jn = go <$> lookup q n
         go (Just q') = member jn q'
 
 dumpJob :: JobQueue -> IO [Job]
-dumpJob jq = concat . map go <$> elems jq
+dumpJob jq = concatMap go <$> elems jq
 
   where go :: SubJobQueue -> [Job]
         go sq = map (\(_, _, v) -> v) $ toList sq

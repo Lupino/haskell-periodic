@@ -123,13 +123,13 @@ main = do
 
   let argc = length argv
 
-  when (cmd == Help) $ printHelp
+  when (cmd == Help) printHelp
 
-  when (cmd == Submit && argc < 2) $ printSubmitHelp
-  when (cmd == Remove && argc < 2) $ printRemoveHelp
-  when (cmd == Drop   && argc < 1) $ printDropHelp
+  when (cmd == Submit && argc < 2) printSubmitHelp
+  when (cmd == Remove && argc < 2) printRemoveHelp
+  when (cmd == Drop   && argc < 1) printDropHelp
 
-  when (not (isPrefixOf "tcp" host) && not (isPrefixOf "unix" host)) $ do
+  when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
@@ -142,7 +142,7 @@ makeTransport p transport  = do
   makeXORTransport key transport
 
 processCommand :: Command -> [String] -> Client ()
-processCommand Help _     = liftIO $ printHelp
+processCommand Help _     = liftIO printHelp
 processCommand Status _   = doStatus
 processCommand Load   _   = doLoad
 processCommand Dump   _   = doDump
@@ -151,13 +151,13 @@ processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
 processCommand Shutdown _ = shutdown
 
-doRemoveJob (x:xs) = mapM_ (void . removeJob (B.pack x) . B.pack) xs
-doRemoveJob []     = liftIO $ printRemoveHelp
+doRemoveJob (x:xs) = mapM_ (removeJob (B.pack x) . B.pack) xs
+doRemoveJob []     = liftIO printRemoveHelp
 
-doDropFunc = mapM_ (void . dropFunc . B.pack)
+doDropFunc = mapM_ (dropFunc . B.pack)
 
-doSubmitJob []       = liftIO $ printSubmitHelp
-doSubmitJob (_:[])   = liftIO $ printSubmitHelp
+doSubmitJob []       = liftIO printSubmitHelp
+doSubmitJob [_]      = liftIO printSubmitHelp
 doSubmitJob (x:y:xs) = void $ submitJob (B.pack x) (B.pack y) later
   where later = case xs of
                   []              -> 0
@@ -170,15 +170,15 @@ doLoad = liftIO (openFile "dump.db" ReadMode) >>= load
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status
-  liftIO $ print_table (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
+  liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]
 unpackBS = map (map B.unpack)
 
 formatTime :: [String] -> [String]
 formatTime []     = []
-formatTime (x:[]) = [formatUnixTimeLocal x]
-formatTime (x:xs) = (x:formatTime xs)
+formatTime [x]    = [formatUnixTimeLocal x]
+formatTime (x:xs) = x:formatTime xs
 
 formatUnixTimeLocal :: String -> String
 formatUnixTimeLocal = B.unpack
@@ -188,5 +188,5 @@ formatUnixTimeLocal = B.unpack
                     . fromIntegral
                     . read
 
-print_table :: [[String]] -> IO ()
-print_table rows = T.printBox $ T.hsep 2 T.left (map (T.vcat T.left . map T.text) (transpose rows))
+printTable :: [[String]] -> IO ()
+printTable rows = T.printBox $ T.hsep 2 T.left (map (T.vcat T.left . map T.text) (transpose rows))

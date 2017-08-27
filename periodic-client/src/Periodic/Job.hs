@@ -44,7 +44,7 @@ initJobEnv :: ByteString -> Maybe JobEnv
 initJobEnv = go . breakBS 2
   where go :: [ByteString] -> Maybe JobEnv
         go []        = Nothing
-        go (_:[])    = Nothing
+        go [_]       = Nothing
         go (h:dat:_) = parse h (J.decodeJob dat)
 
         parse :: ByteString -> Maybe J.Job -> Maybe JobEnv

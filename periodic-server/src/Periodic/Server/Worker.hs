@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -11,7 +10,7 @@ module Periodic.Server.Worker
 
 import           Control.Concurrent        (forkIO)
 import           Control.Exception         (SomeException, try)
-import           Control.Monad             (forever, void, when)
+import           Control.Monad             (forever, unless, void, when)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (empty)
 import           Data.Int                  (Int64)
@@ -65,7 +64,7 @@ newWorker wConn wSched wKeepAlive = do
   return w
 
 mainLoop :: Worker -> IO ()
-mainLoop w@(Worker {..}) = do
+mainLoop w@Worker{..} = do
   e <- try $ receive wConn
   setLastVistTime w =<< getEpochTime
   case e of
@@ -77,20 +76,19 @@ mainLoop w@(Worker {..}) = do
         Right _                 -> return ()
 
 setLastVistTime :: Worker -> Int64 -> IO ()
-setLastVistTime (Worker {..}) v = atomicModifyIORef' wLastVist (\_ -> (v, ()))
+setLastVistTime Worker{..} v = atomicModifyIORef' wLastVist (const (v, ()))
 
 getLastVistTime :: Worker -> IO Int64
-getLastVistTime (Worker {..}) = atomicModifyIORef' wLastVist (\v -> (v, v))
+getLastVistTime Worker{..} = atomicModifyIORef' wLastVist (\v -> (v, v))
 
 checkAlive :: Worker -> IO ()
-checkAlive w@(Worker {..}) = do
+checkAlive w@Worker{..} = do
   expiredAt <- (wKeepAlive +) <$> getLastVistTime w
   now <- getEpochTime
-  if now > expiredAt then wClose w
-                     else return ()
+  when (now > expiredAt) $ wClose w
 
 handlePayload :: Worker -> Payload -> IO ()
-handlePayload w (Payload {..}) = go payloadCMD
+handlePayload w Payload{..} = go payloadCMD
   where go :: Command -> IO ()
         go GrabJob    = handleGrabJob sched funcList jobQueue agent
         go WorkDone   = handleWorkDone sched jobQueue payloadData
@@ -129,14 +127,14 @@ handleSchedLater sched jq pl = do
 
   where parse :: [ByteString] -> (ByteString, Int64, Int)
         parse (a:b:c:_) = (a, readBS b, readBS c)
-        parse (a:b:[])  = (a, readBS b, 0)
-        parse (a:[])    = (a, 0, 0)
+        parse [a, b]    = (a, readBS b, 0)
+        parse [a]       = (a, 0, 0)
         parse []        = (B.empty, 0, 0)
 
 handleCanDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
 handleCanDo sched fl fn = do
   has <- elem fl fn
-  when (not has) $ do
+  unless has $ do
     addFunc sched fn
     insert fl fn
 
@@ -148,13 +146,13 @@ handleCantDo sched fl fn = do
     delete fl fn
 
 wClose :: Worker -> IO ()
-wClose (Worker { .. }) = void $ forkIO $ L.with wLocker $ do
+wClose Worker{..} = void $ forkIO $ L.with wLocker $ do
   closed <- atomicModifyIORef' wClosed (\v -> (True, v))
   killThread wRunner
 
   clearTimer wTimer
 
-  when (not closed) $ do
+  unless closed $ do
     mapM_ (failJob wSched) =<< toList wJobQueue
     mapM_ (removeFunc wSched) =<< toList wFuncList
     close wConn

@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Periodic.Worker
@@ -32,8 +31,7 @@ import           Periodic.IOHashMap      (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap      as HM (delete, insert, lookup)
 
 import           Control.Concurrent.QSem
-import           Control.Exception       (SomeException)
-import           Control.Exception       (throwIO)
+import           Control.Exception       (SomeException, throwIO)
 import           Control.Monad           (forever, void)
 import           Periodic.Monad
 

@@ -20,6 +20,7 @@ import           Control.Exception      (IOException, catch)
 import           Control.Monad          (liftM)
 
 import           Data.Int               (Int64)
+import           Data.Maybe             (fromMaybe)
 import           Data.UnixTime          (getUnixTime, toEpochTime)
 import           Text.Read              (readMaybe)
 
@@ -42,10 +43,10 @@ parsePayload = go . breakBS 3
   where go :: [B.ByteString] -> Payload
         go (a:b:c:_) | B.length b == 1 = (payload a (cmd b)) { payloadData = c }
                      | otherwise       = (payload a Noop) { payloadData = B.concat [ b, nullChar, c ] }
-        go (a:b:[]) | B.length b == 1 = payload a (cmd b)
-                    | otherwise       = (payload a Noop) { payloadData = b }
-        go (a:[]) = payload a Unknown
-        go []     = payload B.empty Unknown
+        go [a, b] | B.length b == 1 = payload a (cmd b)
+                  | otherwise       = (payload a Noop) { payloadData = b }
+        go [a] = payload a Unknown
+        go []  = payload B.empty Unknown
 
         cmd :: B.ByteString -> Command
         cmd bs | B.null bs = Unknown
@@ -54,7 +55,7 @@ parsePayload = go . breakBS 3
           where v = fromEnum $ B.head bs
 
 tryIO :: IO a -> IO (Either IOException a)
-tryIO m = catch (liftM Right m) (return . Left)
+tryIO m = catch (fmap Right m) (return . Left)
 
 getEpochTime :: IO Int64
 getEpochTime = read . show . toEpochTime <$> getUnixTime
@@ -66,11 +67,11 @@ breakBS step bs | B.null bs = []
                 | otherwise = go step $ B.breakSubstring nullChar bs
   where go :: Int -> (B.ByteString, B.ByteString) -> [B.ByteString]
         go s (x, xs) | B.null xs = [x]
-                     | otherwise = (x:breakBS (s-1) (trim xs))
+                     | otherwise = x : breakBS (s-1) (trim xs)
 
         trim :: B.ByteString -> B.ByteString
         trim xs | B.null xs = B.empty
                 | otherwise = B.drop nullCharLength xs
 
 readBS :: (Num a, Read a) => B.ByteString -> a
-readBS = maybe 0 id . readMaybe . B.unpack
+readBS = fromMaybe 0 . readMaybe . B.unpack
