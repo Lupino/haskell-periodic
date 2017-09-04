@@ -1,0 +1,17 @@
+{
+    "CN": "YunTan Ltd CA",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "ST": "Fu Jian",
+            "L": "Xia Men",
+            "O": "YunTan Ltd",
+            "OU": "YunTan Team"
+        }
+    ]
+}
+
