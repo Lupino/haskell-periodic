@@ -59,7 +59,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodicd - Periodic task system server"
   putStrLn ""
-  putStrLn "Usage: periodicd [--host|-H HOST] [--path|-p PATH] [--xor FILE]"
+  putStrLn "Usage: periodicd [--host|-H HOST] [--path|-p PATH] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"

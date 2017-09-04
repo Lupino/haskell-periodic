@@ -84,7 +84,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic - Periodic task system client"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--xor FILE] command [options]"
+  putStrLn "Usage: periodic [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] command [options]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "     status   Show status"
