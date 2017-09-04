@@ -23,7 +23,6 @@ data Options = Options { host      :: String
                        , xorFile   :: FilePath
                        , storePath :: FilePath
                        , useTls    :: Bool
-                       , hostName  :: String
                        , certKey   :: FilePath
                        , cert      :: FilePath
                        , caStore   :: FilePath
@@ -35,7 +34,6 @@ options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , xorFile = fromMaybe "" f
                       , storePath = "data"
                       , useTls = False
-                      , hostName = "localhost"
                       , certKey = "server-key.pem"
                       , cert = "server.pem"
                       , caStore = "ca.pem"
@@ -52,7 +50,6 @@ parseOptions ("--path":x:xs)     opt = parseOptions xs opt { storePath = x }
 parseOptions ("-h":xs)           opt = parseOptions xs opt { showHelp  = True }
 parseOptions ("--help":xs)       opt = parseOptions xs opt { showHelp  = True }
 parseOptions ("--tls":xs)        opt = parseOptions xs opt { useTls = True }
-parseOptions ("--hostname":x:xs) opt = parseOptions xs opt { hostName = x }
 parseOptions ("--cert-key":x:xs) opt = parseOptions xs opt { certKey = x }
 parseOptions ("--cert":x:xs)     opt = parseOptions xs opt { cert = x }
 parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
@@ -70,7 +67,6 @@ printHelp = do
   putStrLn "  -p --path     State store path (optional: data)"
   putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
   putStrLn "     --tls      Use tls transport"
-  putStrLn "     --hostname Host name"
   putStrLn "     --cert-key Private key associated"
   putStrLn "     --cert     Public certificate (X.509 format)"
   putStrLn "     --ca       Server will use these certificates to validate clients"
@@ -95,7 +91,7 @@ main = do
 
 makeTransport Options{..} sock =
   if useTls then do
-    prms <- makeServerParams' cert [] certKey caStore (hostName, B.pack $ getService host)
+    prms <- makeServerParams' cert [] certKey caStore
     makeTLSTransport prms =<< makeSocketTransport sock
   else makeTransport' xorFile sock
 

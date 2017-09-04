@@ -3,7 +3,6 @@
 --
 -- Note, functions in this module will throw error if can't load certificates or CA store.
 --
-{-# LANGUAGE OverloadedStrings #-}
 module Periodic.Transport.TLSSetting
   (
     -- * Make TLS settings
@@ -17,10 +16,12 @@ import qualified Data.ByteString            as B (empty, readFile)
 import           Data.Default.Class         (def)
 import qualified Data.PEM                   as X509 (pemContent, pemParseBS)
 import qualified Data.X509                  as X509 (CertificateChain (..),
+                                                     HashALG (..),
                                                      decodeSignedCertificate)
 import qualified Data.X509.CertificateStore as X509 (CertificateStore,
                                                      makeCertificateStore)
-import qualified Data.X509.Validation       as X509 (ServiceID, validateDefault)
+import qualified Data.X509.Validation       as X509 (ServiceID, checkFQHN,
+                                                     validate)
 import qualified Network.TLS                as TLS
 import qualified Network.TLS.Extra          as TLS (ciphersuite_strong)
 
@@ -117,9 +118,8 @@ makeServerParams' :: FilePath       -- ^ public certificate (X.509 format).
                   -> [FilePath]     -- ^ chain certificates (X.509 format).
                   -> FilePath       -- ^ private key associated.
                   -> FilePath       -- ^ server will use these certificates to validate clients.
-                  -> X509.ServiceID
                   -> IO TLS.ServerParams
-makeServerParams' pub certs priv tca servid = do
+makeServerParams' pub certs priv tca = do
   caStore <- makeCAStore tca
   p <- makeServerParams pub certs priv
   return p
@@ -129,7 +129,7 @@ makeServerParams' pub certs priv tca servid = do
       }
     , TLS.serverHooks = def
       { TLS.onClientCertificate = \chain -> do
-        errs <- X509.validateDefault caStore def servid chain
+        errs <- X509.validate X509.HashSHA256 def (def { X509.checkFQHN = False }) caStore def ("", B.empty) chain
         case errs of
           [] -> return TLS.CertificateUsageAccept
           xs -> return . TLS.CertificateUsageReject . TLS.CertificateRejectOther $ show xs
