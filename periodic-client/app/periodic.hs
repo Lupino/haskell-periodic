@@ -14,7 +14,9 @@ import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf, transpose)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
+import           Periodic.Socket        (getService)
 import           Periodic.Transport     (Transport)
+import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR (makeXORTransport)
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
@@ -47,21 +49,36 @@ parseCommand "drop"     = Drop
 parseCommand "shutdown" = Shutdown
 parseCommand _          = Help
 
-data Options = Options { host    :: String
-                       , xorFile :: FilePath
+data Options = Options { host     :: String
+                       , xorFile  :: FilePath
+                       , useTls   :: Bool
+                       , hostName :: String
+                       , certKey  :: FilePath
+                       , cert     :: FilePath
+                       , caStore  :: FilePath
                        }
 
 options :: Maybe String -> Maybe String -> Options
 options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , xorFile = fromMaybe "" f
+                      , useTls = False
+                      , hostName = "localhost"
+                      , certKey = "client-key.pem"
+                      , cert = "client.pem"
+                      , caStore = "ca.pem"
                       }
 
 parseOptions :: [String] -> Options -> (Command, Options, [String])
-parseOptions []              opt = (Help, opt, [])
-parseOptions ("-H":x:xs)     opt = parseOptions xs opt { host      = x }
-parseOptions ("--host":x:xs) opt = parseOptions xs opt { host      = x }
-parseOptions ("--xor":x:xs)  opt = parseOptions xs opt { xorFile   = x }
-parseOptions (x:xs)          opt = (parseCommand x, opt, xs)
+parseOptions []                  opt = (Help, opt, [])
+parseOptions ("-H":x:xs)         opt = parseOptions xs opt { host      = x }
+parseOptions ("--host":x:xs)     opt = parseOptions xs opt { host      = x }
+parseOptions ("--xor":x:xs)      opt = parseOptions xs opt { xorFile   = x }
+parseOptions ("--tls":xs)        opt = parseOptions xs opt { useTls = True }
+parseOptions ("--hostname":x:xs) opt = parseOptions xs opt { hostName = x }
+parseOptions ("--cert-key":x:xs) opt = parseOptions xs opt { certKey = x }
+parseOptions ("--cert":x:xs)     opt = parseOptions xs opt { cert = x }
+parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
+parseOptions (x:xs)              opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
 printHelp = do
@@ -80,9 +97,14 @@ printHelp = do
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -H --host Socket path [$PERIODIC_PORT]"
-  putStrLn "            eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --xor  XOR Transport encode file [$XOR_FILE]"
+  putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"
+  putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
+  putStrLn "     --tls      Use tls transport"
+  putStrLn "     --hostname Host name"
+  putStrLn "     --cert-key Private key associated"
+  putStrLn "     --cert     Public certificate (X.509 format)"
+  putStrLn "     --ca       trusted certificates"
   putStrLn ""
   exitSuccess
 
@@ -119,7 +141,7 @@ main = do
   h <- lookupEnv "PERIODIC_PORT"
   f <- lookupEnv "XOR_FILE"
 
-  (cmd, Options {..}, argv) <- flip parseOptions (options h f) <$> getArgs
+  (cmd, opts@Options {..}, argv) <- flip parseOptions (options h f) <$> getArgs
 
   let argc = length argv
 
@@ -133,11 +155,18 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  runClient (makeTransport xorFile) host $ processCommand cmd argv
+  runClient (makeTransport opts) host $ processCommand cmd argv
 
-makeTransport :: FilePath -> Transport -> IO Transport
-makeTransport [] transport = return transport
-makeTransport p transport  = do
+makeTransport :: Options -> Transport -> IO Transport
+makeTransport Options{..} transport =
+  if useTls then do
+    prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
+    makeTLSTransport prms transport
+  else makeTransport' xorFile transport
+
+makeTransport' :: FilePath -> Transport -> IO Transport
+makeTransport' [] transport = return transport
+makeTransport' p transport  = do
   key <- LB.readFile p
   makeXORTransport key transport
 

@@ -4,6 +4,8 @@ module Periodic.Socket
   , close
   , listen
   , connect
+  , getHost
+  , getService
   ) where
 
 import           Control.Exception (bracketOnError, throwIO)
