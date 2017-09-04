@@ -13,7 +13,7 @@ module Periodic.Transport.TLS
 
 import           Control.Exception             (SomeException, bracketOnError,
                                                 catch)
-import qualified Data.ByteString.Char8         as B (append, length, pack)
+import qualified Data.ByteString.Char8         as B (append, length, null, pack)
 import qualified Data.ByteString.Lazy          as BL (fromStrict)
 import           Network.TLS                   (Context, TLSParams)
 import qualified Network.TLS                   as TLS
@@ -37,10 +37,14 @@ transportBackend transport = TLS.Backend
 
   where recvData' nbytes = do
          s <- recvData transport nbytes
-         if B.length s < nbytes then do
+         if loadMore nbytes s then do
                               s' <- recvData' (nbytes - B.length s)
                               return $ s `B.append` s'
                               else return s
+
+        loadMore nbytes bs | B.null bs = False
+                           | B.length bs < nbytes = True
+                           | otherwise = False
 
 
 -- | Close a TLS 'Context' and its underlying socket.
