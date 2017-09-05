@@ -1,1 +1,5 @@
 .stack-work
+*.pem
+*.csr
+bin
+data
