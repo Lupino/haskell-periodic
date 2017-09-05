@@ -9,10 +9,8 @@ module Periodic.TM
 
 import           Control.Concurrent (ThreadId)
 import qualified Control.Concurrent as C (killThread)
-import           Control.Monad      (when)
 import           Data.Foldable      (forM_)
 import           Data.IORef         (IORef, atomicModifyIORef', newIORef)
-import           Data.Maybe         (fromJust, isJust)
 
 type ThreadManager = IORef (Maybe ThreadId)
 

@@ -7,12 +7,11 @@ module Main
   ) where
 
 import           Control.Monad          (when)
-import qualified Data.ByteString.Char8  as B (pack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Server
-import           Periodic.Socket        (getService, listen)
+import           Periodic.Socket        (listen)
 import           Periodic.Transport     (makeSocketTransport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR (makeXORTransport)

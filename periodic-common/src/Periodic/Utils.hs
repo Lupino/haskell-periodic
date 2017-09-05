@@ -17,7 +17,6 @@ import           Periodic.Types.Command
 import           Periodic.Types.Payload
 
 import           Control.Exception      (IOException, catch)
-import           Control.Monad          (liftM)
 
 import           Data.Int               (Int64)
 import           Data.Maybe             (fromMaybe)
