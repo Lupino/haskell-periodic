@@ -52,7 +52,6 @@ options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       }
 
 parseOptions :: [String] -> Options -> (Options, String, String, [String])
-parseOptions []                  opt = (opt, "", "", [])
 parseOptions ("-H":x:xs)         opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)     opt = parseOptions xs opt { host      = x }
 parseOptions ("--xor":x:xs)      opt = parseOptions xs opt { xorFile   = x }
@@ -64,6 +63,7 @@ parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
 parseOptions ("--thread":x:xs)   opt = parseOptions xs opt { thread = read x }
 parseOptions ("--help":xs)       opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)           opt = parseOptions xs opt { showHelp = True }
+parseOptions []                  opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                 opt = (opt { showHelp = True }, "", "", [])
 parseOptions (x:y:xs)            opt = (opt, x, y, xs)
 
@@ -94,12 +94,15 @@ main = do
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options h f) <$> getArgs
 
+  when showHelp printHelp
+
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
   runWorker (makeTransport opts) host $ do
     addFunc (B.pack func) $ processWorker cmd argv
+    liftIO $ putStrLn "Worker started."
     work thread
 
 makeTransport :: Options -> Transport -> IO Transport
