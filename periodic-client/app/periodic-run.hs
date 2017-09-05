@@ -6,11 +6,12 @@ module Main
     main
   ) where
 
-import           Control.Monad                  (when)
+import           Control.Monad                  (unless, when)
 import           Control.Monad.IO.Class         (liftIO)
 import qualified Data.ByteString.Char8          as B (ByteString, pack)
-import qualified Data.ByteString.Lazy           as LB (ByteString, fromStrict,
+import qualified Data.ByteString.Lazy           as LB (fromStrict, null,
                                                        readFile, toStrict)
+import qualified Data.ByteString.Lazy.Char8     as LB (hPut, lines, putStr)
 import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
 import qualified Data.Text                      as T (unpack)
@@ -24,6 +25,7 @@ import           Periodic.Transport.XOR         (makeXORTransport)
 import           Periodic.Worker                (addFunc, runWorker, work)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (ExitCode (..), exitSuccess)
+import           System.IO                      (stderr)
 import           System.Process.ByteString.Lazy (readProcessWithExitCode)
 import           Text.Read                      (readMaybe)
 
@@ -121,22 +123,20 @@ makeTransport' p transport  = do
 processWorker :: String -> [String] -> Job ()
 processWorker cmd argv = do
   n <- unpackBS <$> name
-  p <- LB.fromStrict <$> workload
-  r <- liftIO $ runProc cmd (argv ++ [n]) p
-  case r of
-    Left _ -> workFail
-    Right v ->
-      case (readMaybe . unpackBS . LB.toStrict) v of
-        Nothing    -> workDone
-        Just later -> schedLater later
-
-runProc :: String -> [String] -> LB.ByteString -> IO (Either LB.ByteString LB.ByteString)
-runProc cmd argv rb = do
-  (code, out, err) <- readProcessWithExitCode cmd argv rb
+  rb <- LB.fromStrict <$> workload
+  (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
+  unless (LB.null out) $ liftIO $ LB.putStr out
+  unless (LB.null err) $ liftIO $ LB.hPut stderr err
   case code of
-    ExitSuccess   -> return (Right out)
-    ExitFailure _ -> return (Left err)
+    ExitFailure _ -> workFail
+    ExitSuccess   ->
+      if LB.null out then workDone
+                     else do
+        let lastLine = last $ LB.lines out
 
+        case (readMaybe . unpackBS . LB.toStrict) lastLine of
+           Nothing    -> workDone
+           Just later -> schedLater later
 
 unpackBS :: B.ByteString -> String
 unpackBS = T.unpack . decodeUtf8
