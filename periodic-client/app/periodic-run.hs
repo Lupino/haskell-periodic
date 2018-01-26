@@ -22,7 +22,8 @@ import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR         (makeXORTransport)
-import           Periodic.Worker                (addFunc, runWorker, work)
+import           Periodic.Worker                (addFunc, broadcast, runWorker,
+                                                 work)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (ExitCode (..), exitSuccess)
 import           System.IO                      (stderr)
@@ -38,6 +39,7 @@ data Options = Options { host     :: String
                        , cert     :: FilePath
                        , caStore  :: FilePath
                        , thread   :: Int
+                       , notify   :: Bool
                        , showHelp :: Bool
                        }
 
@@ -50,6 +52,7 @@ options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , cert = "client.pem"
                       , caStore = "ca.pem"
                       , thread = 1
+                      , notify = False
                       , showHelp = False
                       }
 
@@ -64,6 +67,7 @@ parseOptions ("--cert":x:xs)     opt = parseOptions xs opt { cert = x }
 parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
 parseOptions ("--thread":x:xs)   opt = parseOptions xs opt { thread = read x }
 parseOptions ("--help":xs)       opt = parseOptions xs opt { showHelp = True }
+parseOptions ("--broadcast":xs)  opt = parseOptions xs opt { notify = True }
 parseOptions ("-h":xs)           opt = parseOptions xs opt { showHelp = True }
 parseOptions []                  opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                 opt = (opt { showHelp = True }, "", "", [])
@@ -73,19 +77,20 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--broadcast]] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"
-  putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
-  putStrLn "     --tls      Use tls transport"
-  putStrLn "     --hostname Host name"
-  putStrLn "     --cert-key Private key associated"
-  putStrLn "     --cert     Public certificate (X.509 format)"
-  putStrLn "     --ca       trusted certificates"
-  putStrLn "     --thread   worker thread"
-  putStrLn "  -h --help     Display help message"
+  putStrLn "  -H --host      Socket path [$PERIODIC_PORT]"
+  putStrLn "                 eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --xor       XOR Transport encode file [$XOR_FILE]"
+  putStrLn "     --tls       Use tls transport"
+  putStrLn "     --hostname  Host name"
+  putStrLn "     --cert-key  Private key associated"
+  putStrLn "     --cert      Public certificate (X.509 format)"
+  putStrLn "     --ca        trusted certificates"
+  putStrLn "     --thread    worker thread"
+  putStrLn "     --broadcast is broadcast worker"
+  putStrLn "  -h --help      Display help message"
   putStrLn ""
   exitSuccess
 
@@ -103,7 +108,8 @@ main = do
     printHelp
 
   runWorker (makeTransport opts) host $ do
-    addFunc (B.pack func) $ processWorker cmd argv
+    let proc = if notify then broadcast else addFunc
+    proc (B.pack func) $ processWorker cmd argv
     liftIO $ putStrLn "Worker started."
     work thread
 
