@@ -229,20 +229,22 @@ processJob sched@Scheduler{..} = do
           when (null agents) $ revertJob job
           mapM_ (flip done job . snd) agents
 
-        doneSubmitJob :: Agent -> Job -> IO ()
-        doneSubmitJob agent job = do
+        doneSubmitJob :: Bool -> Agent -> Job -> IO ()
+        doneSubmitJob cast agent job = do
           e <- try $ assignJob agent job
           case e of
-            Left (_::SomeException) -> revertJob job
+            Left (_::SomeException) -> unless cast $ revertJob job
             Right _ -> do
-              nextSchedAt <- getEpochTime
-              PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
+              unless cast $ do
+                nextSchedAt <- getEpochTime
+                PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
+
               adjustFuncStat sched (jFuncName job)
               startTimer sMainTimer 0
 
-        prepareAgent :: FuncStat -> (Agent -> Job -> IO ()) -> Job -> IO ()
-        prepareAgent st@FuncStat{sBroadcast=True}  = popAgentListThen st
-        prepareAgent st@FuncStat{sBroadcast=False} = popMaybeAgentThen st
+        prepareAgent :: FuncStat -> (Bool -> Agent -> Job -> IO ()) -> Job -> IO ()
+        prepareAgent st@FuncStat{sBroadcast=True} done  = popAgentListThen st (done True)
+        prepareAgent st@FuncStat{sBroadcast=False} done = popMaybeAgentThen st (done False)
 
         submitJob :: Int64 -> FuncStat -> IO ()
         submitJob now st = popJobThen now st $ prepareAgent st doneSubmitJob
