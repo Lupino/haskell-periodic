@@ -7,9 +7,11 @@ module Periodic.Server.GrabQueue
   , GrabItem (..)
   , pushAgent
   , popMaybeAgent
+  , popAgentList
   , hasAgent
   ) where
 
+import           Control.Arrow   ((&&&))
 import           Data.ByteString (ByteString)
 import           Periodic.Agent  (Agent, agentid)
 import           Periodic.IOList (IOList, append, delete, elem, newIOList,
@@ -55,6 +57,20 @@ popMaybeAgent q n = do
          has <- elem (gFuncList x) n
          if has then return (Just x)
                 else go xs
+
+popAgentList :: GrabQueue -> FuncName -> IO [(IOList JobHandle, Agent)]
+popAgentList q n = do
+  items <- go =<< toList q
+  mapM_ (delete q) items
+  pure $ map (gJobQueue &&& gAgent) items
+
+ where go :: [GrabItem] -> IO [GrabItem]
+       go [] = return []
+       go (x:xs) = do
+         has <- elem (gFuncList x) n
+         xs' <- go xs
+         if has then pure (x:xs')
+                else pure xs'
 
 hasAgent :: GrabQueue -> FuncName -> IO Bool
 hasAgent q n = go =<< toList q

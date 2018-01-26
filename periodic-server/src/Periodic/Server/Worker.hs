@@ -98,6 +98,7 @@ handlePayload w Payload{..} = go payloadCMD
         go Ping       = send agent Pong B.empty
         go CanDo      = handleCanDo sched funcList payloadData
         go CantDo     = handleCantDo sched funcList payloadData
+        go Broadcast  = handleBroadcast sched funcList payloadData
         go _          = send agent Unknown B.empty
 
         agent = newAgent payloadID $ wConn w
@@ -144,6 +145,13 @@ handleCantDo sched fl fn = do
   when has $ do
     removeFunc sched fn
     delete fl fn
+
+handleBroadcast :: Scheduler -> IOList FuncName -> ByteString -> IO ()
+handleBroadcast sched fl fn = do
+  has <- elem fl fn
+  unless has $ do
+    broadcastFunc sched fn True
+    insert fl fn
 
 wClose :: Worker -> IO ()
 wClose Worker{..} = void $ forkIO $ L.with wLocker $ do

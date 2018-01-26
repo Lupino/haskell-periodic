@@ -19,7 +19,7 @@ import           Data.HashPSQ       (HashPSQ, delete, findMin, fromList, insert,
 import           Data.Int           (Int64)
 import           Periodic.IOHashMap (IOHashMap, adjust, alter, elems, lookup)
 import           Periodic.Types     (FuncName, Job (..))
-import           Prelude            hiding (lookup, null)
+import           Prelude            hiding (lookup)
 
 type SubJobQueue = HashPSQ FuncName Int64 Job
 

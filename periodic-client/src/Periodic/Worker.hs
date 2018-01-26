@@ -7,6 +7,7 @@ module Periodic.Worker
   , runWorker
   , ping
   , addFunc
+  , broadcast
   , removeFunc
   , work
   , close
@@ -75,6 +76,12 @@ grabJob  = do
 addFunc :: FuncName -> Job () -> Worker ()
 addFunc f j = do
   withAgent $ \agent -> send agent CanDo f
+  ref <- userEnv
+  liftIO $ HM.insert ref f j
+
+broadcast :: FuncName -> Job () -> Worker ()
+broadcast f j = do
+  withAgent $ \agent -> send agent Broadcast f
   ref <- userEnv
   liftIO $ HM.insert ref f j
 

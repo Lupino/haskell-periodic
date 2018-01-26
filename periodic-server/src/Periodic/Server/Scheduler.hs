@@ -13,6 +13,7 @@ module Periodic.Server.Scheduler
   , schedLaterJob
   , addFunc
   , removeFunc
+  , broadcastFunc
   , dropFunc
   , removeJob
   , dumpJob
@@ -154,13 +155,16 @@ loadJob :: Scheduler -> IO [Job]
 loadJob Scheduler{..} = DS.decodeIO =<< B.readFile sStorePath
 
 addFunc :: Scheduler -> FuncName -> IO ()
-addFunc Scheduler{..} n = L.with sLocker $ do
+addFunc sched n = broadcastFunc sched n False
+
+broadcastFunc :: Scheduler -> FuncName -> Bool -> IO ()
+broadcastFunc Scheduler{..} n cast = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
   startTimer sMainTimer 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
-        updateStat Nothing   = Just ((funcStat n) { sWorker = 1 })
-        updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1 })
+        updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
+        updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
 removeFunc Scheduler{..} n = L.with sLocker $ do
@@ -219,6 +223,12 @@ processJob sched@Scheduler{..} = do
               if alive then IL.insert jq (jHandle job) >> done agent' job
                        else revertJob job
 
+        popAgentListThen :: FuncStat -> (Agent -> Job -> IO ()) -> Job -> IO ()
+        popAgentListThen st done job = do
+          agents <- popAgentList sGrabQueue (sFuncName st)
+          when (null agents) $ revertJob job
+          mapM_ (flip done job . snd) agents
+
         doneSubmitJob :: Agent -> Job -> IO ()
         doneSubmitJob agent job = do
           e <- try $ assignJob agent job
@@ -230,8 +240,12 @@ processJob sched@Scheduler{..} = do
               adjustFuncStat sched (jFuncName job)
               startTimer sMainTimer 0
 
+        prepareAgent :: FuncStat -> (Agent -> Job -> IO ()) -> Job -> IO ()
+        prepareAgent st@FuncStat{sBroadcast=True}  = popAgentListThen st
+        prepareAgent st@FuncStat{sBroadcast=False} = popMaybeAgentThen st
+
         submitJob :: Int64 -> FuncStat -> IO ()
-        submitJob now st = popJobThen now st $ popMaybeAgentThen st doneSubmitJob
+        submitJob now st = popJobThen now st $ prepareAgent st doneSubmitJob
 
 assignJob :: Agent -> Job -> IO ()
 assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
