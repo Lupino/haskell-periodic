@@ -83,4 +83,4 @@ repeatTimer Timer{..} delay = L.with locker $ do
 -- | repeatTimer' for a given number of seconds
 --
 repeatTimer' :: Timer -> Int -> IO ()
-repeatTimer' t delay = startTimer t (delay * 1000000)
+repeatTimer' t delay = repeatTimer t (delay * 1000000)
