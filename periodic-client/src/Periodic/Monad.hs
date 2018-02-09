@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Periodic.Monad
   (
@@ -33,7 +34,7 @@ import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B (cons, empty, isInfixOf)
 import           Data.Typeable          (Typeable)
 import           Periodic.Agent         (Agent, feed, msgid)
-import qualified Periodic.Agent         as Agent (newEmptyAgent)
+import qualified Periodic.Agent         as Agent (newAgent, newEmptyAgent)
 import           Periodic.Connection    (Connection, close, newClientConn,
                                          receive, send)
 import           Periodic.IOHashMap     (IOHashMap, newIOHashMap)
@@ -50,7 +51,7 @@ newtype MonadFail = MonadFail String
 
 instance Exception MonadFail
 
-data Env u = Env { uEnv :: u, conn :: Connection, runner :: ThreadManager }
+data Env u = Env { uEnv :: u, conn :: Connection, runner :: ThreadManager, agentHandler :: Agent -> IO () }
 
 data SpecEnv u = SpecEnv { sEnv :: Env u, sRef :: IOHashMap Agent }
 
@@ -107,13 +108,10 @@ runPeriodicWithSpecEnv (SpecEnv env ref) (GenPeriodic m) = do
     Done a  -> return a
     Throw e -> throw e
 
-initEnv :: Transport -> u -> ClientType -> IO (Env u)
-initEnv transport u t = do
-  c <- newClientConn transport
-  send c $ toEnum (fromEnum t) `B.cons` B.empty
-  void $ receive c
-  r <- newThreadManager
-  return Env { uEnv = u, conn = c, runner = r }
+initEnv :: (Agent -> IO ()) -> Connection -> u -> IO (Env u)
+initEnv agentHandler conn uEnv = do
+  runner <- newThreadManager
+  return Env {..}
 
 cloneEnv :: u1 -> GenPeriodic u (Env u1)
 cloneEnv u = GenPeriodic $ \env _ -> return . Done $ env { uEnv = u }
@@ -175,15 +173,17 @@ mainLoop = GenPeriodic $ \env ref -> do
     Left TransportClosed -> unPeriodic doFeedError env ref
     Left MagicNotMatch   -> unPeriodic doFeedError env ref
     Left _               -> return $ Done ()
-    Right pl             -> Done <$> doFeed ref pl
+    Right pl             -> unPeriodic (doFeed pl) env ref
 
-doFeed :: IOHashMap Agent -> ByteString -> IO ()
-doFeed ref pl = do
+doFeed :: ByteString -> GenPeriodic u ()
+doFeed pl = GenPeriodic $ \env ref -> do
   let [pid, pl'] = breakBS 2 pl
   v <- HM.lookup ref pid
   case v of
-    Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ show pid ++ "] not found."
-    Just agent -> feed agent pl'
+    Just agent -> Done <$> feed agent pl'
+    Nothing    -> do
+      agent <- Agent.newAgent pl (conn env)
+      Done <$> agentHandler env agent
 
 stopPeriodic :: GenPeriodic u ()
 stopPeriodic = do

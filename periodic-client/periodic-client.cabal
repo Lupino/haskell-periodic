@@ -25,6 +25,7 @@ library
                      , bytestring
                      , entropy
                      , hslogger
+                     , byteable
   default-language:    Haskell2010
 
 executable periodic

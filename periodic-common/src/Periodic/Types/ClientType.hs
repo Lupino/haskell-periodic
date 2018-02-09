@@ -1,12 +1,19 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Periodic.Types.ClientType
   (
     ClientType (..)
   ) where
 
-import           GHC.Enum (boundedEnumFrom, boundedEnumFromThen)
+import           Data.Byteable (Byteable (..))
+import           GHC.Enum      (boundedEnumFrom, boundedEnumFromThen)
 
 data ClientType = TypeClient | TypeWorker
   deriving (Eq, Show)
+
+instance Byteable ClientType where
+  toBytes TypeClient = "\01"
+  toBytes TypeWorker = "\02"
 
 instance Bounded ClientType where
   minBound = TypeClient

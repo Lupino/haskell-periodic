@@ -14,7 +14,9 @@ module Periodic.Worker
   ) where
 
 import           Control.Concurrent           (forkIO)
+import           Control.Monad                (void)
 import           Control.Monad.IO.Class       (liftIO)
+import           Data.Byteable                (toBytes)
 import qualified Data.ByteString              as B (empty)
 import           Periodic.Agent               (receive, send)
 import           Periodic.Job                 (Job, JobEnv (..), func,
@@ -29,6 +31,8 @@ import           Periodic.Types.WorkerCommand
 import           Periodic.Types               (ClientType (TypeWorker),
                                                FuncName)
 
+import           Periodic.Connection          (newClientConn)
+import qualified Periodic.Connection          as Conn (receive, send)
 import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
 
@@ -51,7 +55,10 @@ runWorker f h m = do
   timer <- newTimer
   transport <- f =<< makeSocketTransport =<< connect h
   taskList <- newIOHashMap
-  env0 <- initEnv transport taskList TypeWorker
+  c <- newClientConn transport
+  Conn.send c $ toBytes TypeWorker
+  void $ Conn.receive c
+  env0 <- initEnv (const $ pure ()) c taskList
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth
     liftIO $ repeatTimer' timer 100

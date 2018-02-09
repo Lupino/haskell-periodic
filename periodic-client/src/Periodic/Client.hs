@@ -23,11 +23,15 @@ module Periodic.Client
   , shutdown
   ) where
 
+import           Control.Monad                (void)
 import           Control.Monad.IO.Class       (liftIO)
+import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as B (empty, hGet, hPut, length)
 import qualified Data.ByteString.Char8        as B (lines, split)
 import           Periodic.Agent               (Agent, receive, receive_, send)
+import           Periodic.Connection          (newClientConn)
+import qualified Periodic.Connection          as Conn (receive, send)
 import           Periodic.Socket              (connect)
 import           Periodic.Timer
 import           Periodic.Transport           (Transport, makeSocketTransport)
@@ -61,7 +65,10 @@ runClient :: (Transport -> IO Transport) -> String -> Client a -> IO a
 runClient f h m = do
   timer <- newTimer
   transport <- f =<< makeSocketTransport =<< connect h
-  env0 <- initEnv transport () TypeClient
+  c <- newClientConn transport
+  Conn.send c $ toBytes TypeClient
+  void $ Conn.receive c
+  env0 <- initEnv (const $ pure ()) c ()
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth
     liftIO $ repeatTimer' timer 100
