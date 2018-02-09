@@ -5,10 +5,10 @@ module Periodic.Types.ClientCommand
   ) where
 
 import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (ByteString, append, head)
+import           Data.ByteString         (ByteString, append, take)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
-import           Prelude                 hiding (head)
+import           Prelude                 hiding (head, take)
 
 data ClientCommand =
     SubmitJob Job
@@ -33,16 +33,17 @@ instance Byteable ClientCommand where
   toBytes Shutdown        = "\20"
 
 instance Parser ClientCommand where
-  runParser bs = case head bs of
-                   13 -> do
+  runParser bs = case take 1 bs of
+                   "\13" -> do
                      job <- runParser $ dropCmd bs
                      return (SubmitJob job)
-                   14 -> Right Status
-                   09 -> Right Ping
-                   15 -> Right (DropFunc $ dropCmd bs)
-                   17 -> do
+                   "\14" -> Right Status
+                   "\09" -> Right Ping
+                   "\15" -> Right (DropFunc $ dropCmd bs)
+                   "\17" -> do
                      job <- runParser $ dropCmd bs
                      return (RemoveJob job)
-                   18 -> Right Dump
-                   19 -> Right (Load $ dropCmd bs)
-                   20 -> Right Shutdown
+                   "\18" -> Right Dump
+                   "\19" -> Right (Load $ dropCmd bs)
+                   "\20" -> Right Shutdown
+                   _ -> Left "Error ClientCommand"

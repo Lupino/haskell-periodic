@@ -27,7 +27,7 @@ import           Control.Exception       (throwIO)
 import           Control.Monad           (void)
 import           Data.Byteable           (Byteable (..))
 import           Periodic.Types.Internal
-import           Periodic.Utils          (breakBS)
+import           Periodic.Utils          (breakBS2)
 
 data Agent = Agent { aMsgid  :: ByteString
                    , aConn   :: Connection
@@ -36,7 +36,7 @@ data Agent = Agent { aMsgid  :: ByteString
 
 newAgent :: ByteString -> Connection -> IO Agent
 newAgent bs aConn = do
-  let [aMsgid, pl] = breakBS 2 bs
+  let (aMsgid, pl) = breakBS2 bs
   aReader <- newMVar pl
   return Agent {..}
 

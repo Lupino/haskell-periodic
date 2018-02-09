@@ -6,6 +6,7 @@ module Periodic.Utils
   , tryIO
   , getEpochTime
   , breakBS
+  , breakBS2
   , readBS
   ) where
 
@@ -53,6 +54,11 @@ breakBS step bs | B.null bs = []
         trim :: B.ByteString -> B.ByteString
         trim xs | B.null xs = B.empty
                 | otherwise = B.drop nullCharLength xs
+
+breakBS2 :: B.ByteString -> (B.ByteString, B.ByteString)
+breakBS2 = go . B.breakSubstring nullChar
+  where go :: (B.ByteString, B.ByteString) -> (B.ByteString, B.ByteString)
+        go (x, xs) = (x, B.drop nullCharLength xs)
 
 readBS :: (Num a, Read a) => B.ByteString -> a
 readBS = fromMaybe 0 . readMaybe . B.unpack

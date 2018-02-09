@@ -42,7 +42,7 @@ import qualified Periodic.IOHashMap     as HM (delete, elems, insert, lookup)
 import           Periodic.TM
 import           Periodic.Transport     (Transport)
 import           Periodic.Types
-import           Periodic.Utils         (breakBS)
+import           Periodic.Utils         (breakBS2)
 import           System.Entropy         (getEntropy)
 import           System.Log.Logger      (errorM)
 
@@ -177,7 +177,7 @@ mainLoop = GenPeriodic $ \env ref -> do
 
 doFeed :: ByteString -> GenPeriodic u ()
 doFeed pl = GenPeriodic $ \env ref -> do
-  let [pid, pl'] = breakBS 2 pl
+  let (pid, pl') = breakBS2 pl
   v <- HM.lookup ref pid
   case v of
     Just agent -> Done <$> feed agent pl'

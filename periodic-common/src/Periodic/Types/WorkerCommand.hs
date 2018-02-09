@@ -6,13 +6,13 @@ module Periodic.Types.WorkerCommand
 
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString, append, concat, empty,
-                                          head)
+                                          take)
 import           Data.ByteString.Char8   (pack)
 import           Data.Int                (Int64)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
 import           Periodic.Utils          (breakBS, readBS)
-import           Prelude                 hiding (concat, head)
+import           Prelude                 hiding (concat, take)
 
 data WorkerCommand =
     GrabJob
@@ -41,18 +41,19 @@ instance Byteable WorkerCommand where
   toBytes (Broadcast bs) = concat ["\21", nullChar, bs]
 
 instance Parser WorkerCommand where
-  runParser bs = case head bs of
-                   01 -> Right GrabJob
-                   02 -> do
-                     let (bs, later, step) = parseSchedLater $ breakBS 3 (dropCmd bs)
-                     return (SchedLater bs later step)
-                   03 -> Right (WorkDone $ dropCmd bs)
-                   04 -> Right (WorkFail $ dropCmd bs)
-                   11 -> Right Sleep
-                   09 -> Right Ping
-                   07 -> Right (CanDo $ dropCmd bs)
-                   08 -> Right (CantDo $ dropCmd bs)
-                   21 -> Right (Broadcast $ dropCmd bs)
+  runParser bs = case take 1 bs of
+                   "\01" -> Right GrabJob
+                   "\02" -> do
+                        let (bs, later, step) = parseSchedLater $ breakBS 3 (dropCmd bs)
+                        return (SchedLater bs later step)
+                   "\03" -> Right (WorkDone $ dropCmd bs)
+                   "\04" -> Right (WorkFail $ dropCmd bs)
+                   "\11" -> Right Sleep
+                   "\09" -> Right Ping
+                   "\07" -> Right (CanDo $ dropCmd bs)
+                   "\08" -> Right (CantDo $ dropCmd bs)
+                   "\21" -> Right (Broadcast $ dropCmd bs)
+                   _ -> Left "Error WorkerCommand"
 
 parseSchedLater :: [ByteString] -> (ByteString, Int64, Int)
 parseSchedLater (a:b:c:_) = (a, readBS b, readBS c)
