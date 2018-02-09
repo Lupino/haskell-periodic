@@ -9,29 +9,32 @@ module Periodic.Server.Client
   , cClose
   ) where
 
-import           Control.Concurrent        (forkIO)
-import           Control.Exception         (SomeException, try)
-import           Control.Monad             (forever, void, when)
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Char8     as B (concat, empty, intercalate,
-                                                 pack)
-import           Data.Foldable             (forM_)
-import           Periodic.Connection       (Connection, close, receive)
+import           Control.Concurrent           (forkIO)
+import           Control.Exception            (SomeException, try)
+import           Control.Monad                (forever, void, when)
+import           Data.ByteString              (ByteString)
+import qualified Data.ByteString.Char8        as B (concat, intercalate, pack)
+import           Data.Foldable                (forM_)
+import           Periodic.Connection          (Connection, close)
+import qualified Periodic.Connection          as Conn (receive)
 import           Periodic.TM
 
-import           Periodic.Agent            (Agent, newAgent, send, send_)
-import           Periodic.Server.FuncStat  (FuncStat (..))
-import           Periodic.Server.Scheduler (Scheduler, dropFunc, dumpJob,
-                                            pushJob, removeJob, shutdown,
-                                            status)
-import           Periodic.Types.Job        (Job, decodeJob, encodeJob)
+import           Periodic.Agent               (Agent, newAgent, receive, send,
+                                               send_)
+import           Periodic.Server.FuncStat     (FuncStat (..))
+import           Periodic.Server.Scheduler    (Scheduler, dropFunc, dumpJob,
+                                               pushJob, removeJob, shutdown,
+                                               status)
+import           Periodic.Types.ClientCommand
+import           Periodic.Types.Job           (Job, decodeJob, encodeJob)
+import           Periodic.Types.ServerCommand
 
 import           Periodic.Timer
-import           Periodic.Types            (Command (..), Payload (..))
-import           Periodic.Utils            (getEpochTime, parsePayload)
+import           Periodic.Utils               (getEpochTime)
 
-import           Data.Int                  (Int64)
-import           Data.IORef                (IORef, atomicModifyIORef', newIORef)
+import           Data.Int                     (Int64)
+import           Data.IORef                   (IORef, atomicModifyIORef',
+                                               newIORef)
 
 data Client = Client { cConn      :: Connection
                      , cSched     :: Scheduler
@@ -58,12 +61,12 @@ newClient cConn cSched cKeepAlive = do
 
 mainLoop :: Client -> IO ()
 mainLoop c@Client{..} = do
-  e <- try $ receive cConn
+  e <- try $ Conn.receive cConn
   setLastVistTime c =<< getEpochTime
   case e of
     Left (_::SomeException) -> cClose c
     Right pl                -> do
-      e' <- try $ handlePayload c (parsePayload pl)
+      e' <- try $ handlePayload c pl
       case e' of
         Left (_::SomeException) -> cClose c
         Right _                 -> return ()
@@ -80,30 +83,31 @@ checkAlive c@Client{..} = do
   now <- getEpochTime
   when (now > expiredAt) $ cClose c
 
-handlePayload :: Client -> Payload -> IO ()
-handlePayload c Payload{..} = do
-  agent <- newAgent payloadID $ cConn c
-  go agent payloadCMD
-  where go :: Agent -> Command -> IO ()
-        go agent SubmitJob = handleSubmitJob sched agent payloadData
-        go agent Status    = handleStatus sched agent
-        go agent Ping      = send agent Pong B.empty
-        go agent DropFunc  = handleDropFunc sched agent payloadData
-        go agent RemoveJob = handleRemoveJob sched agent payloadData
-        go agent Dump      = handleDump sched agent
-        go _ Load          = handleLoad sched payloadData
-        go _ Shutdown      = handleShutdown sched
-        go agent _         = send agent Unknown B.empty
+handlePayload :: Client -> ByteString -> IO ()
+handlePayload c pl = do
+  agent <- newAgent pl $ cConn c
+  cmd <- receive agent :: IO (Either String ClientCommand)
+  case cmd of
+    Left e     -> cClose c
+    Right cmd' -> go agent cmd'
+  where go :: Agent -> ClientCommand -> IO ()
+        go agent (SubmitJob job) = handleSubmitJob sched agent job
+        go agent Status          = handleStatus sched agent
+        go agent Ping            = send agent Pong
+        go agent (DropFunc fn)   = handleDropFunc sched agent fn
+        go agent (RemoveJob job) = handleRemoveJob sched agent job
+        go agent Dump            = handleDump sched agent
+        go _ (Load dat)          = handleLoad sched dat
+        go _ Shutdown            = handleShutdown sched
+        go agent _               = send agent Unknown
 
         sched = cSched c
 
-handleSubmitJob :: Scheduler -> Agent -> ByteString -> IO ()
-handleSubmitJob sc ag pl =
-  case decodeJob pl of
-    Nothing -> send ag Noop B.empty
-    Just job -> do
-      pushJob sc job
-      send ag Success B.empty
+handleSubmitJob :: Scheduler -> Agent -> Job -> IO ()
+handleSubmitJob sc ag j = do
+  pushJob sc j
+  send ag Success
+
 
 handleStatus :: Scheduler -> Agent -> IO ()
 handleStatus sc ag = do
@@ -112,28 +116,25 @@ handleStatus sc ag = do
 
   where go :: FuncStat -> ByteString
         go FuncStat{..} = B.concat [ sFuncName
-                                      , ","
-                                      , B.pack $ show sWorker
-                                      , ","
-                                      , B.pack $ show sJob
-                                      , ","
-                                      , B.pack $ show sProcess
-                                      , ","
-                                      , B.pack $ show sSchedAt
-                                      ]
+                                   , ","
+                                   , B.pack $ show sWorker
+                                   , ","
+                                   , B.pack $ show sJob
+                                   , ","
+                                   , B.pack $ show sProcess
+                                   , ","
+                                   , B.pack $ show sSchedAt
+                                   ]
 
 handleDropFunc :: Scheduler -> Agent -> ByteString -> IO ()
 handleDropFunc sc ag pl = do
   dropFunc sc pl
-  send ag Success B.empty
+  send ag Success
 
-handleRemoveJob :: Scheduler -> Agent -> ByteString -> IO ()
-handleRemoveJob sc ag pl =
-  case decodeJob pl of
-    Nothing -> send ag Noop B.empty
-    Just job -> do
-      removeJob sc job
-      send ag Success B.empty
+handleRemoveJob :: Scheduler -> Agent -> Job -> IO ()
+handleRemoveJob sc ag job = do
+  removeJob sc job
+  send ag Success
 
 handleDump :: Scheduler -> Agent -> IO ()
 handleDump sc ag = do

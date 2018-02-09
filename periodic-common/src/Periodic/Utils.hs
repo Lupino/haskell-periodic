@@ -2,7 +2,6 @@ module Periodic.Utils
   (
     makeHeader
   , parseHeader
-  , parsePayload
   , maxLength
   , tryIO
   , getEpochTime
@@ -10,18 +9,17 @@ module Periodic.Utils
   , readBS
   ) where
 
-import           Data.Bits              (shiftL, shiftR, (.&.), (.|.))
-import qualified Data.ByteString.Char8  as B
+import           Data.Bits               (shiftL, shiftR, (.&.), (.|.))
+import qualified Data.ByteString.Char8   as B
 
-import           Periodic.Types.Command
-import           Periodic.Types.Payload
+import           Control.Exception       (IOException, catch)
 
-import           Control.Exception      (IOException, catch)
+import           Periodic.Types.Internal (nullChar, nullCharLength)
 
-import           Data.Int               (Int64)
-import           Data.Maybe             (fromMaybe)
-import           Data.UnixTime          (getUnixTime, toEpochTime)
-import           Text.Read              (readMaybe)
+import           Data.Int                (Int64)
+import           Data.Maybe              (fromMaybe)
+import           Data.UnixTime           (getUnixTime, toEpochTime)
+import           Text.Read               (readMaybe)
 
 makeHeader :: Int -> B.ByteString
 makeHeader x = c 24 `B.cons` c 16 `B.cons` c 8 `B.cons` c 0 `B.cons` B.empty
@@ -36,22 +34,6 @@ parseHeader = go [24, 16, 8, 0]
   where go :: [Int] -> B.ByteString -> Int
         go [] _     = 0
         go (x:xs) h = fromEnum (B.head h) `shiftL` x .|. go xs (B.tail h)
-
-parsePayload :: B.ByteString -> Payload
-parsePayload = go . breakBS 3
-  where go :: [B.ByteString] -> Payload
-        go (a:b:c:_) | B.length b == 1 = (payload a (cmd b)) { payloadData = c }
-                     | otherwise       = (payload a Noop) { payloadData = B.concat [ b, nullChar, c ] }
-        go [a, b] | B.length b == 1 = payload a (cmd b)
-                  | otherwise       = (payload a Noop) { payloadData = b }
-        go [a] = payload a Unknown
-        go []  = payload B.empty Unknown
-
-        cmd :: B.ByteString -> Command
-        cmd bs | B.null bs = Unknown
-               | otherwise = if v > maxBound || v < minBound then Unknown
-                                                             else toEnum v
-          where v = fromEnum $ B.head bs
 
 tryIO :: IO a -> IO (Either IOException a)
 tryIO m = catch (fmap Right m) (return . Left)

@@ -13,31 +13,32 @@ module Periodic.Worker
   , close
   ) where
 
-import           Control.Concurrent      (forkIO)
-import           Control.Monad.IO.Class  (liftIO)
-import qualified Data.ByteString         as B (empty)
-import           Periodic.Agent          (receive, send)
-import           Periodic.Job            (Job, JobEnv (..), func, initJobEnv,
-                                          name, workFail)
-import           Periodic.Socket         (connect)
+import           Control.Concurrent           (forkIO)
+import           Control.Monad.IO.Class       (liftIO)
+import qualified Data.ByteString              as B (empty)
+import           Periodic.Agent               (receive, send)
+import           Periodic.Job                 (Job, JobEnv (..), func,
+                                               initJobEnv, name, workFail)
+import           Periodic.Socket              (connect)
 import           Periodic.Timer
-import           Periodic.Transport      (Transport, makeSocketTransport)
-import           Periodic.Types.Command
+import           Periodic.Transport           (Transport, makeSocketTransport)
 import           Periodic.Types.Error
-import           Periodic.Types.Payload
+import           Periodic.Types.ServerCommand
+import           Periodic.Types.WorkerCommand
 
-import           Periodic.Types          (ClientType (TypeWorker), FuncName)
+import           Periodic.Types               (ClientType (TypeWorker),
+                                               FuncName)
 
-import           Periodic.IOHashMap      (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap      as HM (delete, insert, lookup)
+import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
 
 import           Control.Concurrent.QSem
-import           Control.Exception       (SomeException, throwIO)
-import           Control.Monad           (forever, void)
+import           Control.Exception            (SomeException, throwIO)
+import           Control.Monad                (forever, void)
 import           Periodic.Monad
 
-import           System.Log.Logger       (errorM)
-import           System.Timeout          (timeout)
+import           System.Log.Logger            (errorM)
+import           System.Timeout               (timeout)
 
 type TaskList = IOHashMap (Job ())
 type Worker = GenPeriodic TaskList
@@ -58,36 +59,39 @@ runWorker f h m = do
 
 ping :: Worker Bool
 ping = withAgent $ \agent -> do
-  send agent Ping B.empty
+  send agent Ping
   ret <- receive agent
-  return $ payloadCMD ret == Pong
+  case ret of
+    Left _     -> return False
+    Right Pong -> return True
+    Right _    -> return False
 
 grabJob :: Worker (Maybe JobEnv)
 grabJob  = do
   pl <- withAgent $ \agent -> do
-          send agent GrabJob B.empty
+          send agent GrabJob
           receive agent
 
-  case payloadCMD pl of
-    JobAssign -> return . initJobEnv $ payloadData pl
-    Noop      -> liftIO . throwIO $ payloadError pl
-    _         -> grabJob
+  case pl of
+    Left _                   -> pure Nothing
+    Right (JobAssign jh job) -> return $ Just (initJobEnv job jh)
+    _                        -> grabJob
 
 addFunc :: FuncName -> Job () -> Worker ()
 addFunc f j = do
-  withAgent $ \agent -> send agent CanDo f
+  withAgent $ \agent -> send agent (CanDo f)
   ref <- userEnv
   liftIO $ HM.insert ref f j
 
 broadcast :: FuncName -> Job () -> Worker ()
 broadcast f j = do
-  withAgent $ \agent -> send agent Broadcast f
+  withAgent $ \agent -> send agent (Broadcast f)
   ref <- userEnv
   liftIO $ HM.insert ref f j
 
 removeFunc :: FuncName -> Worker ()
 removeFunc f = do
-  withAgent $ \agent -> send agent CantDo f
+  withAgent $ \agent -> send agent (CantDo f)
   ref <- userEnv
   liftIO $ HM.delete ref f
 
@@ -131,7 +135,7 @@ checkHealth :: Worker ()
 checkHealth = do
   ret <- wapperIO (timeout 10000000) ping
   case ret of
-    Nothing -> noopAgent TransportTimeout
+    Nothing -> close
     Just r ->
       if r then return ()
-           else noopAgent TransportClosed
+           else close

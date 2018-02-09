@@ -39,8 +39,9 @@ import qualified Periodic.Server.JobQueue     as JQ
 import           Periodic.Server.ProcessQueue (ProcessQueue)
 import qualified Periodic.Server.ProcessQueue as PQ
 import           Periodic.Timer
-import           Periodic.Types               (Command (JobAssign), nullChar)
+import           Periodic.Types.Internal      (nullChar)
 import           Periodic.Types.Job
+import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           Periodic.Utils               (getEpochTime)
 
 import qualified Data.Store                   as DS
@@ -250,10 +251,7 @@ processJob sched@Scheduler{..} = do
         submitJob now st = popJobThen now st $ prepareAgent st doneSubmitJob
 
 assignJob :: Agent -> Job -> IO ()
-assignJob agent job = send agent JobAssign $ B.concat [ jHandle job
-                                                      , nullChar
-                                                      , encodeJob job
-                                                      ]
+assignJob agent job = send agent (JobAssign (jHandle job) job)
 
 failJob :: Scheduler -> JobHandle -> IO ()
 failJob sched@Scheduler{..} jh = do

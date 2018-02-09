@@ -18,14 +18,12 @@ library
   exposed-modules:     Periodic.Utils
                      , Periodic.Connection
                      , Periodic.Types
-                     , Periodic.Types.Command
                      , Periodic.Types.ServerCommand
                      , Periodic.Types.ClientCommand
                      , Periodic.Types.WorkerCommand
                      , Periodic.Types.Internal
                      , Periodic.Types.ClientType
                      , Periodic.Types.Error
-                     , Periodic.Types.Payload
                      , Periodic.Types.Job
                      , Periodic.Socket
                      , Periodic.Transport

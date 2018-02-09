@@ -23,29 +23,30 @@ module Periodic.Client
   , shutdown
   ) where
 
-import           Control.Monad.IO.Class (liftIO)
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B (empty, hGet, hPut, length)
-import qualified Data.ByteString.Char8  as B (lines, split)
-import           Periodic.Agent         (Agent, receive, send)
-import           Periodic.Socket        (connect)
+import           Control.Monad.IO.Class       (liftIO)
+import           Data.ByteString              (ByteString)
+import qualified Data.ByteString              as B (empty, hGet, hPut, length)
+import qualified Data.ByteString.Char8        as B (lines, split)
+import           Periodic.Agent               (Agent, receive, receive_, send)
+import           Periodic.Socket              (connect)
 import           Periodic.Timer
-import           Periodic.Transport     (Transport, makeSocketTransport)
-import           Periodic.Types         (ClientType (TypeClient))
-import           Periodic.Types.Command
+import           Periodic.Transport           (Transport, makeSocketTransport)
+import           Periodic.Types               (ClientType (TypeClient))
+import           Periodic.Types.ClientCommand
 import           Periodic.Types.Error
 import           Periodic.Types.Job
-import           Periodic.Types.Payload
+import           Periodic.Types.ServerCommand
 
-import           Data.Int               (Int64)
+import           Data.Int                     (Int64)
 
-import           Control.Exception      (catch, throwIO)
-import           Control.Monad          (forever)
-import           GHC.IO.Handle          (Handle, hClose)
-import           Periodic.Utils         (getEpochTime, makeHeader, parseHeader)
+import           Control.Exception            (catch, throwIO)
+import           Control.Monad                (forever)
+import           GHC.IO.Handle                (Handle, hClose)
+import           Periodic.Utils               (getEpochTime, makeHeader,
+                                               parseHeader)
 
-import           Periodic.Monad         hiding (catch)
-import           System.Timeout         (timeout)
+import           Periodic.Monad               hiding (catch)
+import           System.Timeout               (timeout)
 
 type Client     = GenPeriodic ()
 type Connection = SpecEnv ()
@@ -71,13 +72,16 @@ runClient_ = runPeriodicWithSpecEnv
 
 ping :: Client Bool
 ping = withAgent $ \agent -> do
-  send agent Ping B.empty
+  send agent Ping
   ret <- receive agent
-  return $ payloadCMD ret == Pong
+  case ret of
+    Left _     -> return False
+    Right Pong -> return True
+    Right _    -> return False
 
 submitJob_ :: Job -> Client Bool
 submitJob_ j = withAgent $ \agent -> do
-  send agent SubmitJob (encodeJob j)
+  send agent (SubmitJob j)
   isSuccess agent
 
 submitJob :: FuncName -> JobName -> Int64 -> Client Bool
@@ -88,12 +92,12 @@ submitJob jFuncName jName later = do
 
 dropFunc :: FuncName -> Client Bool
 dropFunc func = withAgent $ \agent -> do
-  send agent DropFunc func
+  send agent (DropFunc func)
   isSuccess agent
 
 removeJob_ :: Job -> Client Bool
 removeJob_ j = withAgent $ \agent -> do
-  send agent RemoveJob (encodeJob j)
+  send agent (RemoveJob j)
   isSuccess agent
 
 removeJob :: FuncName -> JobName -> Client Bool
@@ -102,17 +106,20 @@ removeJob f n = removeJob_ $ newJob f n
 isSuccess :: Agent -> IO Bool
 isSuccess agent = do
   ret <- receive agent
-  return $ payloadCMD ret == Success
+  case ret of
+    Left _        -> return False
+    Right Success -> return True
+    Right _       -> return False
 
 dump :: Handle -> Client ()
 dump h = withAgent $ \agent -> do
-  send agent Dump B.empty
+  send agent Dump
   catch (forever $ go agent) $ \(_ :: Error) -> return ()
   hClose h
 
   where go :: Agent -> IO ()
         go agent = do
-          ret <- payloadData <$> receive agent
+          ret <- receive_ agent
           if ret == "EOF" then throwIO EmptyError
                           else putData ret
 
@@ -135,23 +142,23 @@ load h = withAgent $ \agent -> do
         pushData :: Agent -> Int -> IO ()
         pushData agent len = do
           dat <- B.hGet h len
-          send agent Load dat
+          send agent (Load dat)
 
 status :: Client [[ByteString]]
 status = withAgent $ \agent -> do
-  send agent Status B.empty
-  ret <- receive agent
-  return . map (B.split ',') $ B.lines $ payloadData ret
+  send agent Status
+  ret <- receive_ agent
+  return . map (B.split ',') $ B.lines $ ret
 
 shutdown :: Client ()
 shutdown = withAgent $ \agent ->
-  send agent Shutdown B.empty
+  send agent Shutdown
 
 checkHealth :: Client ()
 checkHealth = do
   ret <- wapperIO (timeout 10000000) ping
   case ret of
-    Nothing -> noopAgent TransportTimeout
+    Nothing -> close
     Just r ->
       if r then return ()
-           else noopAgent TransportClosed
+           else close

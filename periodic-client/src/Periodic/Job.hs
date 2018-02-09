@@ -14,15 +14,16 @@ module Periodic.Job
   , schedLater'
   ) where
 
-import           Data.ByteString       (ByteString)
-import qualified Data.ByteString.Char8 as B (concat, pack)
-import           Data.Int              (Int64)
-import           Periodic.Agent        (send)
-import           Periodic.Monad        (GenPeriodic, userEnv, withAgent)
-import           Periodic.Types        (Command (..), nullChar)
-import           Periodic.Types.Job    (FuncName, JobHandle, JobName, Workload)
-import qualified Periodic.Types.Job    as J
-import           Periodic.Utils        (breakBS)
+import           Data.ByteString              (ByteString)
+import qualified Data.ByteString.Char8        as B (concat, pack)
+import           Data.Int                     (Int64)
+import           Periodic.Agent               (send)
+import           Periodic.Monad               (GenPeriodic, userEnv, withAgent)
+import           Periodic.Types.Job           (FuncName, JobHandle, JobName,
+                                               Workload)
+import qualified Periodic.Types.Job           as J
+import           Periodic.Types.WorkerCommand
+import           Periodic.Utils               (breakBS)
 
 data JobEnv = JobEnv { job :: J.Job, handle :: JobHandle }
 
@@ -40,40 +41,27 @@ workload = J.jWorkload . job <$> userEnv
 counter :: Job Int
 counter = J.jCount . job <$> userEnv
 
-initJobEnv :: ByteString -> Maybe JobEnv
-initJobEnv = go . breakBS 2
-  where go :: [ByteString] -> Maybe JobEnv
-        go []        = Nothing
-        go [_]       = Nothing
-        go (h:dat:_) = parse h (J.decodeJob dat)
-
-        parse :: ByteString -> Maybe J.Job -> Maybe JobEnv
-        parse _ Nothing  = Nothing
-        parse h (Just r) = Just $ JobEnv r h
+initJobEnv :: J.Job -> JobHandle -> JobEnv
+initJobEnv = JobEnv
 
 workDone :: Job ()
 workDone = do
   h <- handle <$> userEnv
-  withAgent $ \agent -> send agent WorkDone h
+  withAgent $ \agent -> send agent (WorkDone h)
 
 workFail :: Job ()
 workFail = do
   h <- handle <$> userEnv
-  withAgent $ \agent -> send agent WorkFail h
+  withAgent $ \agent -> send agent (WorkFail h)
 
 schedLater :: Int64 -> Job ()
 schedLater later = do
   h <- handle <$> userEnv
   withAgent $ \agent ->
-    send agent SchedLater $ B.concat [ h, nullChar, B.pack $ show later ]
+    send agent (SchedLater h later 0)
 
-schedLater' :: Int64 -> Int64 -> Job ()
+schedLater' :: Int64 -> Int -> Job ()
 schedLater' later step = do
   h <- handle <$> userEnv
   withAgent $ \agent ->
-    send agent SchedLater $ B.concat [ h
-                                     , nullChar
-                                     , B.pack $ show later
-                                     , nullChar
-                                     , B.pack $ show step
-                                     ]
+    send agent (SchedLater h later step)

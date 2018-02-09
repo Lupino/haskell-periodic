@@ -5,14 +5,14 @@ module Periodic.Types.WorkerCommand
   ) where
 
 import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (ByteString, append, concat, drop,
-                                          empty, head)
+import           Data.ByteString         (ByteString, append, concat, empty,
+                                          head)
 import           Data.ByteString.Char8   (pack)
 import           Data.Int                (Int64)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
 import           Periodic.Utils          (breakBS, readBS)
-import           Prelude                 hiding (concat, drop, head)
+import           Prelude                 hiding (concat, head)
 
 data WorkerCommand =
     GrabJob
@@ -44,15 +44,15 @@ instance Parser WorkerCommand where
   runParser bs = case head bs of
                    01 -> Right GrabJob
                    02 -> do
-                     let (bs, later, step) = parseSchedLater $ breakBS 3 (drop 3 bs)
+                     let (bs, later, step) = parseSchedLater $ breakBS 3 (dropCmd bs)
                      return (SchedLater bs later step)
-                   03 -> Right (WorkDone $ drop 3 bs)
-                   04 -> Right (WorkFail $ drop 3 bs)
+                   03 -> Right (WorkDone $ dropCmd bs)
+                   04 -> Right (WorkFail $ dropCmd bs)
                    11 -> Right Sleep
                    09 -> Right Ping
-                   07 -> Right (CanDo $ drop 3 bs)
-                   08 -> Right (CantDo $ drop 3 bs)
-                   21 -> Right (Broadcast $ drop 3 bs)
+                   07 -> Right (CanDo $ dropCmd bs)
+                   08 -> Right (CantDo $ dropCmd bs)
+                   21 -> Right (Broadcast $ dropCmd bs)
 
 parseSchedLater :: [ByteString] -> (ByteString, Int64, Int)
 parseSchedLater (a:b:c:_) = (a, readBS b, readBS c)

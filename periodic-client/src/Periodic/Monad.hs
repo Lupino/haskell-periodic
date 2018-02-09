@@ -13,7 +13,6 @@ module Periodic.Monad
   , userEnv
   , unsafeLiftIO
   , withAgent
-  , noopAgent
 
   , SpecEnv
   , specEnv
@@ -34,7 +33,7 @@ import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B (cons, empty, isInfixOf)
 import           Data.Typeable          (Typeable)
 import           Periodic.Agent         (Agent, feed, msgid)
-import qualified Periodic.Agent         as Agent (newAgent)
+import qualified Periodic.Agent         as Agent (newEmptyAgent)
 import           Periodic.Connection    (Connection, close, newClientConn,
                                          receive, send)
 import           Periodic.IOHashMap     (IOHashMap, newIOHashMap)
@@ -42,7 +41,7 @@ import qualified Periodic.IOHashMap     as HM (delete, elems, insert, lookup)
 import           Periodic.TM
 import           Periodic.Transport     (Transport)
 import           Periodic.Types
-import           Periodic.Utils         (parsePayload)
+import           Periodic.Utils         (breakBS)
 import           System.Entropy         (getEntropy)
 import           System.Log.Logger      (errorM)
 
@@ -147,12 +146,12 @@ instance MonadIO (GenPeriodic u) where
 
 withAgent :: (Agent -> IO a) -> GenPeriodic u a
 withAgent f = GenPeriodic $ \env ref ->
-  Done <$> bracket (newAgent env ref) (removeAgent ref) f
+  Done <$> bracket (newEmptyAgent env ref) (removeAgent ref) f
 
-newAgent :: Env u -> IOHashMap Agent -> IO Agent
-newAgent env ref = do
+newEmptyAgent :: Env u -> IOHashMap Agent -> IO Agent
+newEmptyAgent env ref = do
   aid <- genMsgid
-  agent <- Agent.newAgent aid (conn env)
+  agent <- Agent.newEmptyAgent aid (conn env)
   HM.insert ref aid agent
   return agent
 
@@ -165,31 +164,34 @@ newAgent env ref = do
 removeAgent :: IOHashMap Agent -> Agent -> IO ()
 removeAgent ref a = HM.delete ref (msgid a)
 
-noopAgent :: Error -> GenPeriodic u ()
-noopAgent e = GenPeriodic $ \_ ref ->
-  Done <$> (HM.elems ref >>= mapM_ (`feed` noopError e))
+doFeedError :: GenPeriodic u ()
+doFeedError = GenPeriodic $ \_ ref ->
+  Done <$> (HM.elems ref >>= mapM_ (`feed` B.empty))
 
 mainLoop :: GenPeriodic u ()
 mainLoop = GenPeriodic $ \env ref -> do
   e <- try $ receive (conn env)
   case e of
-    Left TransportClosed -> unPeriodic (noopAgent TransportClosed) env ref
-    Left MagicNotMatch   -> unPeriodic (noopAgent MagicNotMatch) env ref
+    Left TransportClosed -> unPeriodic doFeedError env ref
+    Left MagicNotMatch   -> unPeriodic doFeedError env ref
     Left _               -> return $ Done ()
-    Right pl             -> Done <$> writePayload ref (parsePayload pl)
+    Right pl             -> Done <$> doFeed ref pl
 
-writePayload :: IOHashMap Agent -> Payload -> IO ()
-writePayload ref pl@Payload{payloadID = pid} = do
+doFeed :: IOHashMap Agent -> ByteString -> IO ()
+doFeed ref pl = do
+  let [pid, pl'] = breakBS 2 pl
   v <- HM.lookup ref pid
   case v of
     Nothing    -> errorM "Periodic.BaseClient" $ "Agent [" ++ show pid ++ "] not found."
-    Just agent -> feed agent pl
+    Just agent -> feed agent pl'
 
 stopPeriodic :: GenPeriodic u ()
-stopPeriodic = GenPeriodic $ \env _ -> do
-  killThread (runner env)
-  close (conn env)
-  return $ Done ()
+stopPeriodic = do
+  doFeedError
+  GenPeriodic $ \env _ -> do
+    killThread (runner env)
+    close (conn env)
+    return $ Done ()
 
 -- | Catch an exception in the Haxl monad
 catch :: Exception e => GenPeriodic u a -> (e -> GenPeriodic u a) -> GenPeriodic u a
