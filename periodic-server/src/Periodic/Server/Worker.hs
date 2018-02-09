@@ -88,20 +88,21 @@ checkAlive w@Worker{..} = do
   when (now > expiredAt) $ wClose w
 
 handlePayload :: Worker -> Payload -> IO ()
-handlePayload w Payload{..} = go payloadCMD
-  where go :: Command -> IO ()
-        go GrabJob    = handleGrabJob sched funcList jobQueue agent
-        go WorkDone   = handleWorkDone sched jobQueue payloadData
-        go WorkFail   = handleWorkFail sched jobQueue payloadData
-        go SchedLater = handleSchedLater sched jobQueue payloadData
-        go Sleep      = send agent Noop B.empty
-        go Ping       = send agent Pong B.empty
-        go CanDo      = handleCanDo sched funcList payloadData
-        go CantDo     = handleCantDo sched funcList payloadData
-        go Broadcast  = handleBroadcast sched funcList payloadData
-        go _          = send agent Unknown B.empty
+handlePayload w Payload{..} = do
+  agent <- newAgent payloadID $ wConn w
+  go agent payloadCMD
+  where go :: Agent -> Command -> IO ()
+        go agent GrabJob = handleGrabJob sched funcList jobQueue agent
+        go _ WorkDone    = handleWorkDone sched jobQueue payloadData
+        go _ WorkFail    = handleWorkFail sched jobQueue payloadData
+        go _ SchedLater  = handleSchedLater sched jobQueue payloadData
+        go agent Sleep   = send agent Noop B.empty
+        go agent Ping    = send agent Pong B.empty
+        go _ CanDo       = handleCanDo sched funcList payloadData
+        go _ CantDo      = handleCantDo sched funcList payloadData
+        go _ Broadcast   = handleBroadcast sched funcList payloadData
+        go agent _       = send agent Unknown B.empty
 
-        agent = newAgent payloadID $ wConn w
         sched = wSched w
         funcList = wFuncList w
         jobQueue = wJobQueue w

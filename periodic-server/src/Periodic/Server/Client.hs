@@ -81,19 +81,20 @@ checkAlive c@Client{..} = do
   when (now > expiredAt) $ cClose c
 
 handlePayload :: Client -> Payload -> IO ()
-handlePayload c Payload{..} = go payloadCMD
-  where go :: Command -> IO ()
-        go SubmitJob = handleSubmitJob sched agent payloadData
-        go Status    = handleStatus sched agent
-        go Ping      = send agent Pong B.empty
-        go DropFunc  = handleDropFunc sched agent payloadData
-        go RemoveJob = handleRemoveJob sched agent payloadData
-        go Dump      = handleDump sched agent
-        go Load      = handleLoad sched payloadData
-        go Shutdown  = handleShutdown sched
-        go _         = send agent Unknown B.empty
+handlePayload c Payload{..} = do
+  agent <- newAgent payloadID $ cConn c
+  go agent payloadCMD
+  where go :: Agent -> Command -> IO ()
+        go agent SubmitJob = handleSubmitJob sched agent payloadData
+        go agent Status    = handleStatus sched agent
+        go agent Ping      = send agent Pong B.empty
+        go agent DropFunc  = handleDropFunc sched agent payloadData
+        go agent RemoveJob = handleRemoveJob sched agent payloadData
+        go agent Dump      = handleDump sched agent
+        go _ Load          = handleLoad sched payloadData
+        go _ Shutdown      = handleShutdown sched
+        go agent _         = send agent Unknown B.empty
 
-        agent = newAgent payloadID $ cConn c
         sched = cSched c
 
 handleSubmitJob :: Scheduler -> Agent -> ByteString -> IO ()

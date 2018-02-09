@@ -34,7 +34,7 @@ import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B (cons, empty, isInfixOf)
 import           Data.Typeable          (Typeable)
 import           Periodic.Agent         (Agent, feed, msgid)
-import qualified Periodic.Agent         as Agent (newAgent')
+import qualified Periodic.Agent         as Agent (newAgent)
 import           Periodic.Connection    (Connection, close, newClientConn,
                                          receive, send)
 import           Periodic.IOHashMap     (IOHashMap, newIOHashMap)
@@ -152,7 +152,7 @@ withAgent f = GenPeriodic $ \env ref ->
 newAgent :: Env u -> IOHashMap Agent -> IO Agent
 newAgent env ref = do
   aid <- genMsgid
-  agent <- Agent.newAgent' aid (conn env)
+  agent <- Agent.newAgent aid (conn env)
   HM.insert ref aid agent
   return agent
 

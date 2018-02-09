@@ -4,7 +4,6 @@ module Periodic.Agent
   (
     Agent
   , newAgent
-  , newAgent'
   , send
   , send_
   , agentid
@@ -20,24 +19,22 @@ import qualified Data.ByteString         as B (concat, cons, empty, null)
 import           Periodic.Connection     (Connection, connected, connid)
 import qualified Periodic.Connection     as Conn (send)
 
-import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
+import           Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar,
+                                          tryPutMVar)
 import           Control.Exception       (throwIO)
-import           Data.Maybe              (fromJust)
+import           Control.Monad           (void)
 import           Periodic.Types          (Command, Error (EmptyError),
                                           Payload (payloadError), nullChar)
 
 data Agent = Agent { aMsgid  :: ByteString
                    , aConn   :: Connection
-                   , aReader :: Maybe (MVar Payload)
+                   , aReader :: MVar Payload
                    }
 
-newAgent :: ByteString -> Connection -> Agent
-newAgent aMsgid aConn = Agent { aReader = Nothing, .. }
-
-newAgent' :: ByteString -> Connection -> IO Agent
-newAgent' aMsgid aConn = do
-  reader <- newEmptyMVar
-  return Agent { aReader = Just reader, .. }
+newAgent :: ByteString -> Connection -> IO Agent
+newAgent aMsgid aConn = do
+  aReader <- newEmptyMVar
+  return Agent {..}
 
 agentid :: Agent -> ByteString
 agentid Agent {..} = B.concat [ aMsgid, nullChar, connid aConn ]
@@ -60,10 +57,10 @@ send ag cmd pl =
   where toB x = toEnum (fromEnum x) `B.cons` B.empty
 
 feed :: Agent -> Payload -> IO ()
-feed Agent{..} = putMVar (fromJust aReader)
+feed Agent{..} = void . tryPutMVar aReader
 
 receive :: Agent -> IO Payload
 receive Agent{..} = do
-  pl <- takeMVar $ fromJust aReader
+  pl <- takeMVar aReader
   if payloadError pl == EmptyError then return pl
                                    else throwIO $ payloadError pl
