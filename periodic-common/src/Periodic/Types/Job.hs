@@ -16,16 +16,17 @@ module Periodic.Types.Job
   , unHandle
   ) where
 
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString.Char8  as B (breakSubstring, concat, drop,
-                                              empty, length, null, pack)
-import           Data.Int               (Int64)
+import           Data.Byteable           (Byteable (..))
+import           Data.ByteString         (ByteString)
+import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
+                                               empty, length, null, pack)
+import           Data.Int                (Int64)
 
-import           Data.Maybe             (catMaybes)
-import           Data.Store             (Store)
-import           Periodic.Types.Payload (nullChar)
-import           Periodic.Utils         (breakBS, readBS)
-import           TH.Derive              (Deriving, derive)
+import           Data.Maybe              (catMaybes)
+import           Data.Store              (Store)
+import           Periodic.Types.Internal
+import           Periodic.Utils          (breakBS, readBS)
+import           TH.Derive               (Deriving, derive)
 
 type FuncName  = ByteString
 type JobName   = ByteString
@@ -41,6 +42,14 @@ data Job = Job { jSchedAt  :: Int64
   deriving (Show)
 
 $($(derive [d| instance Deriving (Store Job) |]))
+
+instance Byteable Job where
+  toBytes = encodeJob
+
+instance Parser Job where
+  runParser bs = case decodeJob bs of
+                   Nothing  -> Left "InvalidJob"
+                   Just job -> Right job
 
 newJob :: FuncName -> JobName -> Job
 newJob jFuncName jName = Job { jWorkload = B.empty
