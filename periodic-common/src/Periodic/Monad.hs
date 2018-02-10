@@ -8,6 +8,7 @@ module Periodic.Monad
   , runPeriodic
   , Env
   , initEnv
+  , initEnv_
   , cloneEnv
   , withEnv
   , env
@@ -108,8 +109,13 @@ runPeriodicWithSpecEnv (SpecEnv env ref) (GenPeriodic m) = do
     Done a  -> return a
     Throw e -> throw e
 
-initEnv :: (Agent -> IO ()) -> Connection -> u -> IO (Env u)
-initEnv agentHandler conn uEnv = do
+initEnv :: Connection -> u -> IO (Env u)
+initEnv conn uEnv = do
+  runner <- newThreadManager
+  return Env { agentHandler = \_ -> pure (), ..}
+
+initEnv_ :: (Agent -> IO ()) -> Connection -> u -> IO (Env u)
+initEnv_ agentHandler conn uEnv = do
   runner <- newThreadManager
   return Env {..}
 

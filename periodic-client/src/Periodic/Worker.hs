@@ -58,7 +58,7 @@ runWorker f h m = do
   c <- newClientConn transport
   Conn.send c $ toBytes TypeWorker
   void $ Conn.receive c
-  env0 <- initEnv (const $ pure ()) c taskList
+  env0 <- initEnv c taskList
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth
     liftIO $ repeatTimer' timer 100

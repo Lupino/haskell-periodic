@@ -68,7 +68,7 @@ runClient f h m = do
   c <- newClientConn transport
   Conn.send c $ toBytes TypeClient
   void $ Conn.receive c
-  env0 <- initEnv (const $ pure ()) c ()
+  env0 <- initEnv c ()
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth
     liftIO $ repeatTimer' timer 100
