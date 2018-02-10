@@ -110,9 +110,7 @@ runPeriodicWithSpecEnv (SpecEnv env ref) (GenPeriodic m) = do
     Throw e -> throw e
 
 initEnv :: Connection -> u -> IO (Env u)
-initEnv conn uEnv = do
-  runner <- newThreadManager
-  return Env { agentHandler = \_ -> pure (), ..}
+initEnv = initEnv_ (const $ pure ())
 
 initEnv_ :: (Agent -> IO ()) -> Connection -> u -> IO (Env u)
 initEnv_ agentHandler conn uEnv = do
