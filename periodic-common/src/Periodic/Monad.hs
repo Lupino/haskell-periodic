@@ -203,7 +203,7 @@ doFeed env state ref bs = do
   case v of
     Just agent -> feed agent pl
     Nothing    -> do
-      agent <- Agent.newAgent pl (conn env)
+      agent <- Agent.newAgent bs (conn env)
       void . forkIO $ do
         ret <- try $ agentHandler env agent
         case ret of
