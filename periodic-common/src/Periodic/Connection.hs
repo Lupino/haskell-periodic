@@ -72,7 +72,6 @@ receive c@Connection{..} =
         Nothing -> throwIO TransportTimeout
         Just bs -> return bs
     else do
-        setStatus c False
         if B.null magic then throwIO TransportClosed
                         else throwIO MagicNotMatch
 
@@ -107,10 +106,7 @@ send Connection{..} dat =
 connected :: Connection -> IO Bool
 connected Connection{..} = atomicModifyIORef' status $ \v -> (v, v)
 
-setStatus :: Connection -> Bool -> IO ()
-setStatus Connection{..} v' = atomicModifyIORef' status $ const (v', ())
-
 close :: Connection -> IO ()
 close c@Connection{..} = do
-  setStatus c False
+  atomicModifyIORef' status $ const (False, ())
   T.close transport

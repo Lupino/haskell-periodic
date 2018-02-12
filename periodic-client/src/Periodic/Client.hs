@@ -23,6 +23,7 @@ module Periodic.Client
   , shutdown
   ) where
 
+import           Control.Concurrent           (forkIO)
 import           Control.Monad                (void)
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
@@ -72,6 +73,7 @@ runClient f h m = do
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth
     liftIO $ repeatTimer' timer 100
+    void $ wapperIO forkIO startMainLoop
     m
 
 runClient_ :: Connection -> Client a -> IO a
