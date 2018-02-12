@@ -63,12 +63,13 @@ newWorker conn wSched = do
 runWorker :: Connection -> Worker a -> IO a
 runWorker = runPeriodicWithSpecEnv
 
-startWorker :: Connection -> IO ()
-startWorker env = runPeriodicWithSpecEnv env $ do
+startWorker :: Connection -> IO () -> IO ()
+startWorker env io = runPeriodicWithSpecEnv env $ do
   WorkerEnv {..} <- userEnv
   startMainLoop $ do
     mapM_ (failJob wSched) =<< toList wJobQueue
     mapM_ (removeFunc wSched) =<< toList wFuncList
+    io
 
 close :: Worker ()
 close = stopPeriodic

@@ -82,11 +82,11 @@ handleConnection sched clientList workerList transport = do
         Just TypeClient -> do
           client <- newClient conn sched
           HM.insert clientList (connid conn) client
-          startClient client
+          startClient client $ HM.delete clientList (connid conn)
         Just TypeWorker -> do
           worker <- newWorker conn sched
           HM.insert workerList (connid conn) worker
-          startWorker worker
+          startWorker worker $ HM.delete workerList (connid conn)
 
   where tp :: ByteString -> Maybe ClientType
         tp bs | B.null bs = Nothing

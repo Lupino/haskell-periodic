@@ -50,8 +50,8 @@ newClient conn sched = do
 runClient :: Connection -> Client a -> IO a
 runClient = runPeriodicWithSpecEnv
 
-startClient :: Connection -> IO ()
-startClient env = runPeriodicWithSpecEnv env . startMainLoop $ pure ()
+startClient :: Connection -> IO () -> IO ()
+startClient env = runPeriodicWithSpecEnv env . startMainLoop
 
 close :: Client ()
 close = stopPeriodic
