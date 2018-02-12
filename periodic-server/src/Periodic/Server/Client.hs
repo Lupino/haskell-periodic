@@ -11,13 +11,15 @@ module Periodic.Server.Client
   , isAlive
   , startClient
   , runClient
+  , getLastVist
+  , clientId
   ) where
 
 import           Control.Exception            (throwIO)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (concat, intercalate, pack)
 import           Data.Foldable                (forM_)
-import qualified Periodic.Connection          as Conn (Connection)
+import qualified Periodic.Connection          as Conn (Connection, connid)
 
 import           Periodic.Agent               (Agent, receive, send, send_)
 import           Periodic.Server.FuncStat     (FuncStat (..))
@@ -53,6 +55,14 @@ startClient env = runPeriodicWithSpecEnv env . startMainLoop $ pure ()
 
 close :: Client ()
 close = stopPeriodic
+
+getLastVist :: Client Int64
+getLastVist = do
+  ref <- userEnv
+  unsafeLiftIO $ atomicModifyIORef' ref (\t -> (t, t))
+
+clientId :: Client ByteString
+clientId = Conn.connid . conn <$> env
 
 handleAgent :: Scheduler -> IORef Int64 -> Agent -> IO ()
 handleAgent sched lastVist agent = do

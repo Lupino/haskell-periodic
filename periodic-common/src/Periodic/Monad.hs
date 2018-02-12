@@ -8,7 +8,7 @@ module Periodic.Monad
   , GenPeriodic
   , runPeriodic
   , startMainLoop
-  , Env
+  , Env (conn)
   , initEnv
   , initEnv_
   , cloneEnv

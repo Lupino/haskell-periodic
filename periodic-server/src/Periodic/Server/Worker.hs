@@ -9,6 +9,8 @@ module Periodic.Server.Worker
   , isAlive
   , startWorker
   , runWorker
+  , getLastVist
+  , workerId
   ) where
 
 import           Control.Exception            (throwIO)
@@ -16,7 +18,7 @@ import           Control.Monad                (unless, when)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as B (empty)
 import           Data.Int                     (Int64)
-import qualified Periodic.Connection          as Conn (Connection)
+import qualified Periodic.Connection          as Conn (Connection, connid)
 import qualified Periodic.Lock                as L (Lock, new, with)
 
 import           Periodic.Agent               (Agent, receive, send)
@@ -69,6 +71,14 @@ startWorker env = runPeriodicWithSpecEnv env $ do
 
 close :: Worker ()
 close = stopPeriodic
+
+getLastVist :: Worker Int64
+getLastVist = do
+  WorkerEnv {..} <- userEnv
+  unsafeLiftIO $ atomicModifyIORef' wLastVist (\t -> (t, t))
+
+workerId :: Worker ByteString
+workerId = Conn.connid . conn <$> env
 
 handleAgent :: WorkerEnv -> Agent -> IO ()
 handleAgent w agent = do
