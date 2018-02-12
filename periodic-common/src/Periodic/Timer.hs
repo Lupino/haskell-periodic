@@ -12,36 +12,42 @@ module Periodic.Timer
   ) where
 
 
-import           Control.Concurrent (forkIO, threadDelay)
+import           Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
 import           Control.Monad      (forever, when)
+import           Data.IORef         (IORef, atomicModifyIORef', newIORef)
 import qualified Periodic.Lock      as L
-import           Periodic.TM
 
-data Timer = Timer { timer  :: ThreadManager
+data Timer = Timer { timer  :: IORef ThreadId
                    , locker :: L.Lock
+                   , state  :: IORef Bool
                    }
 
 newTimer :: IO Timer
 newTimer = do
-  timer  <- newThreadManager
+  timer  <- newIORef $ error "not started"
   locker <- L.new
+  state <- newIORef False
   return Timer {..}
 
 clearTimer :: Timer -> IO ()
-clearTimer Timer {..} = do
-  killThread timer
+clearTimer Timer{..} = L.with locker $ do
+  started <- atomicModifyIORef' state (\t -> (False, t))
+  when (started) $ do
+    t <- atomicModifyIORef' timer (\t -> (t, t))
+    killThread t
 
 -- | startTimer for a given number of microseconds
 --
 startTimer :: Timer -> Int -> IO () -> IO ()
-startTimer Timer{..} delay io = L.with locker $ do
-  killThread timer
+startTimer tm@Timer{..} delay io = L.with locker $ do
+  clearTimer tm
+  atomicModifyIORef' state (const $ (True, ()))
 
   t <- forkIO $ do
     when (delay > 0) $ threadDelay delay
     io
 
-  setThreadId timer t
+  atomicModifyIORef' timer (const $ (t, ()))
 
 -- | startTimer' for a given number of seconds
 --
@@ -51,14 +57,15 @@ startTimer' t delay = startTimer t (delay * 1000000)
 -- | repeatTimer for a given number of microseconds
 --
 repeatTimer :: Timer -> Int -> IO () -> IO ()
-repeatTimer Timer{..} delay io = L.with locker $ do
-  killThread timer
+repeatTimer tm@Timer{..} delay io = L.with locker $ do
+  clearTimer tm
+  atomicModifyIORef' state (const $ (True, ()))
 
   t <- forkIO $ forever $ do
     when (delay > 0) $ threadDelay delay
     io
 
-  setThreadId timer t
+  atomicModifyIORef' timer (const $ (t, ()))
 
 
 -- | repeatTimer' for a given number of seconds

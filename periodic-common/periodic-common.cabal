@@ -36,7 +36,6 @@ library
                      , Periodic.IOHashMap
                      , Periodic.IOList
                      , Periodic.Agent
-                     , Periodic.TM
 
   build-depends:       base >= 4.7 && < 5
                      , bytestring
