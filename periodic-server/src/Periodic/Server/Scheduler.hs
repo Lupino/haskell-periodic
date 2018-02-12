@@ -86,15 +86,15 @@ newScheduler path sCleanup = do
   when exists $ mapM_ (restoreJob sched) =<< loadJob sched
   mapM_ (adjustFuncStat sched) =<< FL.keys sJobQueue
 
-  initTimer sMainTimer   $ processJob sched
-  initTimer sRevertTimer $ revertProcessQueue sched
-  initTimer sStoreTimer  $ saveJob sched
-
-  startTimer sMainTimer 0
-  repeatTimer' sRevertTimer 300
-  repeatTimer' sStoreTimer  300
+  startScheduler sched 0
+  repeatTimer' sRevertTimer 300 $ revertProcessQueue sched
+  repeatTimer' sStoreTimer  300 $ saveJob sched
 
   return sched
+
+startScheduler :: Scheduler -> Int -> IO ()
+startScheduler sched@Scheduler{..} delay =
+  startTimer' sMainTimer delay $ processJob sched
 
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@Scheduler{..} job = do
@@ -104,7 +104,7 @@ pushJob sched@Scheduler{..} job = do
             else unless isProc $ JQ.pushJob sJobQueue job
 
   adjustFuncStat sched fn
-  startTimer sMainTimer 0
+  startScheduler sched 0
 
   where fn = jFuncName job
         jh = jHandle job
@@ -140,7 +140,7 @@ removeJob sched@Scheduler{..} job = do
   when isProc $ PQ.removeJob sProcessJob (jFuncName job) (jName job)
   adjustFuncStat sched (jFuncName job)
 
-  startTimer sMainTimer 0
+  startScheduler sched 0
 
 dumpJob :: Scheduler -> IO [Job]
 dumpJob Scheduler{..} = do
@@ -159,18 +159,18 @@ addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched n = broadcastFunc sched n False
 
 broadcastFunc :: Scheduler -> FuncName -> Bool -> IO ()
-broadcastFunc Scheduler{..} n cast = L.with sLocker $ do
+broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
-  startTimer sMainTimer 0
+  startScheduler sched 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc Scheduler{..} n = L.with sLocker $ do
+removeFunc sched@Scheduler{..} n = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
-  startTimer sMainTimer 0
+  startScheduler sched 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
@@ -185,24 +185,24 @@ dropFunc Scheduler{..} n = L.with sLocker $ do
       FL.delete sJobQueue n
 
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
-pushGrab Scheduler{..} fl jh ag = do
+pushGrab sched@Scheduler{..} fl jh ag = do
   pushAgent sGrabQueue fl jh ag
-  startTimer sMainTimer 0
+  startScheduler sched 0
 
 processJob :: Scheduler -> IO ()
 processJob sched@Scheduler{..} = do
   st <- getFirstSched sFuncStatList sGrabQueue
   case st of
-    Nothing -> startTimer' sMainTimer 100
+    Nothing -> startScheduler sched 100
     Just st' -> do
       now <- getEpochTime
-      if now < sSchedAt st' then startTimer' sMainTimer (fromIntegral $ sSchedAt st' - now)
+      if now < sSchedAt st' then startScheduler sched (fromIntegral $ sSchedAt st' - now)
                             else submitJob now st'
 
   where revertJob :: Job -> IO ()
         revertJob job = do
           JQ.pushJob sJobQueue job
-          startTimer sMainTimer 0
+          startScheduler sched 0
 
         popJobThen :: Int64 -> FuncStat -> (Job -> IO ()) -> IO ()
         popJobThen now st done = do
@@ -210,7 +210,7 @@ processJob sched@Scheduler{..} = do
           case job of
             Nothing -> do
               adjustFuncStat sched (sFuncName st)
-              startTimer sMainTimer 0
+              startScheduler sched 0
             Just job' -> if jSchedAt job' > now then revertJob job'
                                                 else done job'
 
@@ -241,7 +241,7 @@ processJob sched@Scheduler{..} = do
                 PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
 
               adjustFuncStat sched (jFuncName job)
-              startTimer sMainTimer 0
+              startScheduler sched 0
 
         prepareAgent :: FuncStat -> (Bool -> Agent -> Job -> IO ()) -> Job -> IO ()
         prepareAgent st@FuncStat{sBroadcast=True} done  = popAgentListThen st (done True)
@@ -267,7 +267,7 @@ retryJob sched@Scheduler{..} job = do
   JQ.pushJob sJobQueue job
   PQ.removeJob sProcessJob fn jn
   adjustFuncStat sched fn
-  startTimer sMainTimer 0
+  startScheduler sched 0
 
   where  fn = jFuncName job
          jn = jName job

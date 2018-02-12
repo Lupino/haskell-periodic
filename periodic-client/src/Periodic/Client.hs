@@ -70,8 +70,7 @@ runClient f h m = do
   void $ Conn.receive c
   env0 <- initEnv c ()
   runPeriodic env0 $ do
-    wapperIO (initTimer timer) checkHealth
-    liftIO $ repeatTimer' timer 100
+    wapperIO (repeatTimer' timer 100) checkHealth
     void . wapperIO forkIO . startMainLoop $ pure ()
     m
 
