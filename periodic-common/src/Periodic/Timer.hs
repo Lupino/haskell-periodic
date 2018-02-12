@@ -30,7 +30,10 @@ newTimer = do
   return Timer {..}
 
 clearTimer :: Timer -> IO ()
-clearTimer Timer{..} = L.with locker $ do
+clearTimer tm@Timer{..} = L.with locker $ clearTimer_ tm
+
+clearTimer_ :: Timer -> IO ()
+clearTimer_ Timer{..} = do
   started <- atomicModifyIORef' state (\t -> (False, t))
   when (started) $ do
     t <- atomicModifyIORef' timer (\t -> (t, t))
@@ -40,7 +43,7 @@ clearTimer Timer{..} = L.with locker $ do
 --
 startTimer :: Timer -> Int -> IO () -> IO ()
 startTimer tm@Timer{..} delay io = L.with locker $ do
-  clearTimer tm
+  clearTimer_ tm
   atomicModifyIORef' state (const $ (True, ()))
 
   t <- forkIO $ do
@@ -58,7 +61,7 @@ startTimer' t delay = startTimer t (delay * 1000000)
 --
 repeatTimer :: Timer -> Int -> IO () -> IO ()
 repeatTimer tm@Timer{..} delay io = L.with locker $ do
-  clearTimer tm
+  clearTimer_ tm
   atomicModifyIORef' state (const $ (True, ()))
 
   t <- forkIO $ forever $ do
