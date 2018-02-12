@@ -8,7 +8,7 @@ import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString, append, take)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
-import           Prelude                 hiding (head, take)
+import           Prelude                 hiding (take)
 
 data ClientCommand =
     SubmitJob Job

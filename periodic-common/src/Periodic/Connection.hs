@@ -71,7 +71,7 @@ receive c@Connection{..} =
       case ret of
         Nothing -> throwIO TransportTimeout
         Just bs -> return bs
-    else do
+    else
         if B.null magic then throwIO TransportClosed
                         else throwIO MagicNotMatch
 

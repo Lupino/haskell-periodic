@@ -112,10 +112,14 @@ runPeriodicWithSpecEnv (SpecEnv env state ref) (GenPeriodic m) = do
     Throw e -> throw e
 
 initEnv :: Connection -> u -> IO (Env u)
-initEnv = initEnv_ (const $ pure ())
+initEnv = initEnv_ handler
+  where handler :: Agent -> IO ()
+        handler agent =
+          errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
+          where pid = msgid agent
 
 initEnv_ :: (Agent -> IO ()) -> Connection -> u -> IO (Env u)
-initEnv_ agentHandler conn uEnv = do
+initEnv_ agentHandler conn uEnv =
   return Env {..}
 
 cloneEnv :: u1 -> GenPeriodic u (Env u1)
@@ -203,7 +207,7 @@ doFeed env state ref bs = do
         case ret of
           Right _                 -> pure ()
           Left (e::SomeException) ->
-            atomicModifyIORef' state (const $ (False, ()))
+            atomicModifyIORef' state (const (False, ()))
 
 
 -- | Catch an exception in the Haxl monad

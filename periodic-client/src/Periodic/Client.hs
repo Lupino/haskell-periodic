@@ -24,7 +24,6 @@ module Periodic.Client
   ) where
 
 import           Control.Concurrent           (forkIO)
-import           Control.Monad                (void)
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
@@ -45,7 +44,7 @@ import           Periodic.Types.ServerCommand
 import           Data.Int                     (Int64)
 
 import           Control.Exception            (catch, throwIO)
-import           Control.Monad                (forever)
+import           Control.Monad                (forever, unless, void)
 import           GHC.IO.Handle                (Handle, hClose)
 import           Periodic.Utils               (getEpochTime, makeHeader,
                                                parseHeader)
@@ -157,7 +156,7 @@ status :: Client [[ByteString]]
 status = withAgent $ \agent -> do
   send agent Status
   ret <- receive_ agent
-  return . map (B.split ',') $ B.lines $ ret
+  return . map (B.split ',') $ B.lines ret
 
 shutdown :: Client ()
 shutdown = withAgent $ \agent ->
@@ -169,5 +168,4 @@ checkHealth = do
   case ret of
     Nothing -> close
     Just r ->
-      if r then return ()
-           else close
+      unless r close

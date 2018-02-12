@@ -5,12 +5,11 @@ module Periodic.Types.ServerCommand
   ) where
 
 import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (ByteString, append, concat, drop,
-                                          take)
+import           Data.ByteString         (ByteString, append, concat, take)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
 import           Periodic.Utils          (breakBS2)
-import           Prelude                 hiding (concat, drop, take)
+import           Prelude                 hiding (concat, take)
 
 data ServerCommand =
     Noop

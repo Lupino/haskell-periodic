@@ -14,7 +14,6 @@ module Periodic.Worker
   ) where
 
 import           Control.Concurrent           (forkIO)
-import           Control.Monad                (void)
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString              as B (empty)
@@ -38,7 +37,7 @@ import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
 
 import           Control.Concurrent.QSem
 import           Control.Exception            (SomeException, throwIO)
-import           Control.Monad                (forever, void)
+import           Control.Monad                (forever, unless, void)
 import           Periodic.Monad
 
 import           System.Log.Logger            (errorM)
@@ -145,5 +144,4 @@ checkHealth = do
   case ret of
     Nothing -> close
     Just r ->
-      if r then return ()
-           else close
+      unless r close
