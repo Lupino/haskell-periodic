@@ -61,16 +61,14 @@ runWorker :: Connection -> Worker a -> IO a
 runWorker = runPeriodicWithSpecEnv
 
 startWorker :: Connection -> IO ()
-startWorker env = runPeriodicWithSpecEnv env startMainLoop
+startWorker env = runPeriodicWithSpecEnv env $ do
+  WorkerEnv {..} <- userEnv
+  startMainLoop $ do
+    mapM_ (failJob wSched) =<< toList wJobQueue
+    mapM_ (removeFunc wSched) =<< toList wFuncList
 
 close :: Worker ()
-close = do
-  alive <- isAlive
-  WorkerEnv {..} <- userEnv
-  when alive $ do
-    stopPeriodic
-    unsafeLiftIO $ mapM_ (failJob wSched) =<< toList wJobQueue
-    unsafeLiftIO $ mapM_ (removeFunc wSched) =<< toList wFuncList
+close = stopPeriodic
 
 handleAgent :: WorkerEnv -> Agent -> IO ()
 handleAgent w agent = do

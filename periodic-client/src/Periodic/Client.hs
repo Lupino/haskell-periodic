@@ -72,7 +72,7 @@ runClient f h m = do
   runPeriodic env0 $ do
     wapperIO (initTimer timer) checkHealth
     liftIO $ repeatTimer' timer 100
-    void $ wapperIO forkIO startMainLoop
+    void . wapperIO forkIO . startMainLoop $ pure ()
     m
 
 runClient_ :: Connection -> Client a -> IO a

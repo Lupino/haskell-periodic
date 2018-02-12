@@ -49,7 +49,7 @@ runClient :: Connection -> Client a -> IO a
 runClient = runPeriodicWithSpecEnv
 
 startClient :: Connection -> IO ()
-startClient env = runPeriodicWithSpecEnv env startMainLoop
+startClient env = runPeriodicWithSpecEnv env . startMainLoop $ pure ()
 
 close :: Client ()
 close = stopPeriodic

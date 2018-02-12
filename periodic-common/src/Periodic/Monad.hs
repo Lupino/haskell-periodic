@@ -174,14 +174,15 @@ removeAgent ref a = HM.delete ref (msgid a)
 doFeedError :: IOHashMap Agent -> IO ()
 doFeedError ref = HM.elems ref >>= mapM_ (`feed` B.empty)
 
-startMainLoop :: GenPeriodic u ()
-startMainLoop = GenPeriodic $ \env state ref ->
-  Done <$> forever (mainLoop env state ref)
+startMainLoop :: IO () -> GenPeriodic u ()
+startMainLoop onClose = GenPeriodic $ \env state ref ->
+  Done <$> forever (mainLoop onClose env state ref)
 
-mainLoop :: Env u -> IORef Bool -> IOHashMap Agent -> IO ()
-mainLoop env state ref = do
+mainLoop :: IO () -> Env u -> IORef Bool -> IOHashMap Agent -> IO ()
+mainLoop onClose env state ref = do
   alive <- atomicModifyIORef' state (\v -> (v, v))
   unless alive $ do
+    onClose
     doFeedError ref
     close (conn env)
     killThread =<< myThreadId
