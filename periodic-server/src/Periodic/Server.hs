@@ -24,7 +24,7 @@ import           Periodic.Connection       (Connection, close, connid,
                                             newServerConn, receive, send)
 import           Periodic.Server.Client    (newClient, startClient)
 import           Periodic.Server.Scheduler
-import           Periodic.Server.Worker    (newWorker)
+import           Periodic.Server.Worker    (newWorker, startWorker)
 import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..))
 import           Periodic.Utils            (tryIO)
@@ -70,7 +70,9 @@ handleConnection sched transport = do
         Just TypeClient -> do
           client <- newClient conn sched
           startClient client
-        Just TypeWorker -> void $ newWorker conn sched 300
+        Just TypeWorker -> do
+          worker <- newWorker conn sched
+          startWorker worker
 
   where tp :: ByteString -> Maybe ClientType
         tp bs | B.null bs = Nothing

@@ -5,6 +5,7 @@
 module Periodic.Server.Client
   (
     Client
+  , Connection
   , newClient
   , close
   , isAlive
@@ -12,16 +13,13 @@ module Periodic.Server.Client
   , runClient
   ) where
 
-import           Control.Concurrent           (forkIO)
-import           Control.Exception            (SomeException, throwIO, try)
-import           Control.Monad                (forever, void, when)
+import           Control.Exception            (throwIO)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (concat, intercalate, pack)
 import           Data.Foldable                (forM_)
 import qualified Periodic.Connection          as Conn (Connection)
 
-import           Periodic.Agent               (Agent, newAgent, receive, send,
-                                               send_)
+import           Periodic.Agent               (Agent, receive, send, send_)
 import           Periodic.Server.FuncStat     (FuncStat (..))
 import           Periodic.Server.Scheduler    (Scheduler, dropFunc, dumpJob,
                                                pushJob, removeJob, shutdown,
@@ -31,7 +29,6 @@ import           Periodic.Types.Job           (Job, decodeJob, encodeJob)
 import           Periodic.Types.ServerCommand
 
 import           Periodic.Monad
-import           Periodic.Timer
 import           Periodic.Types.Error         (Error (EmptyError))
 import           Periodic.Utils               (getEpochTime)
 

@@ -5,27 +5,28 @@ module Periodic.Server.Worker
   (
     Worker
   , newWorker
-  , wClose
+  , close
+  , isAlive
+  , startWorker
+  , runWorker
   ) where
 
-import           Control.Concurrent           (forkIO)
-import           Control.Exception            (SomeException, try)
-import           Control.Monad                (forever, unless, void, when)
+import           Control.Exception            (throwIO)
+import           Control.Monad                (unless, when)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as B (empty)
 import           Data.Int                     (Int64)
-import           Periodic.Connection          (Connection, close)
-import qualified Periodic.Connection          as Conn (receive)
+import qualified Periodic.Connection          as Conn (Connection)
 import qualified Periodic.Lock                as L (Lock, new, with)
-import           Periodic.TM
 
-import           Periodic.Agent               (Agent, newAgent, receive, send)
+import           Periodic.Agent               (Agent, receive, send)
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
 import           Periodic.Server.Scheduler
 import           Prelude                      hiding (elem)
 
-import           Periodic.Timer
+import           Periodic.Monad
+import           Periodic.Types.Error         (Error (EmptyError))
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
@@ -34,67 +35,50 @@ import           Periodic.Utils               (breakBS, getEpochTime, readBS)
 import           Data.IORef                   (IORef, atomicModifyIORef',
                                                newIORef)
 
-data Worker = Worker { wConn      :: Connection
-                     , wSched     :: Scheduler
-                     , wRunner    :: ThreadManager
-                     , wTimer     :: Timer
-                     , wFuncList  :: IOList FuncName
-                     , wJobQueue  :: IOList JobHandle
-                     , wKeepAlive :: Int64
-                     , wLastVist  :: IORef Int64
-                     , wClosed    :: IORef Bool
-                     , wLocker    :: L.Lock
-                     }
+data WorkerEnv = WorkerEnv
+  { wSched    :: Scheduler
+  , wFuncList :: IOList FuncName
+  , wJobQueue :: IOList JobHandle
+  , wLastVist :: IORef Int64
+  }
 
-newWorker :: Connection -> Scheduler -> Int64 -> IO Worker
-newWorker wConn wSched wKeepAlive = do
+type Worker = GenPeriodic WorkerEnv
+type Connection = SpecEnv WorkerEnv
+
+
+newWorker :: Conn.Connection -> Scheduler -> IO Connection
+newWorker conn wSched = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
-  wRunner <- newThreadManager
-  wTimer <- newTimer
-  wClosed   <- newIORef False
-  wLocker   <- L.new
   wLastVist <- newIORef =<< getEpochTime
 
-  let w = Worker { .. }
+  let wEnv = WorkerEnv {..}
 
-  runner <- forkIO $ forever $ mainLoop w
-  setThreadId wRunner runner
+  env0 <- initEnv_ (handleAgent wEnv) conn wEnv
+  runPeriodic env0 specEnv
 
-  initTimer wTimer $ checkAlive w
-  repeatTimer' wTimer $ fromIntegral wKeepAlive
-  return w
+runWorker :: Connection -> Worker a -> IO a
+runWorker = runPeriodicWithSpecEnv
 
-mainLoop :: Worker -> IO ()
-mainLoop w@Worker{..} = do
-  e <- try $ Conn.receive wConn
-  setLastVistTime w =<< getEpochTime
-  case e of
-    Left (_::SomeException) -> wClose w
-    Right pl                -> do
-      e' <- try $ handlePayload w pl
-      case e' of
-        Left (_::SomeException) -> wClose w
-        Right _                 -> return ()
+startWorker :: Connection -> IO ()
+startWorker env = runPeriodicWithSpecEnv env startMainLoop
 
-setLastVistTime :: Worker -> Int64 -> IO ()
-setLastVistTime Worker{..} v = atomicModifyIORef' wLastVist (const (v, ()))
+close :: Worker ()
+close = do
+  alive <- isAlive
+  WorkerEnv {..} <- userEnv
+  when alive $ do
+    stopPeriodic
+    unsafeLiftIO $ mapM_ (failJob wSched) =<< toList wJobQueue
+    unsafeLiftIO $ mapM_ (removeFunc wSched) =<< toList wFuncList
 
-getLastVistTime :: Worker -> IO Int64
-getLastVistTime Worker{..} = atomicModifyIORef' wLastVist (\v -> (v, v))
-
-checkAlive :: Worker -> IO ()
-checkAlive w@Worker{..} = do
-  expiredAt <- (wKeepAlive +) <$> getLastVistTime w
-  now <- getEpochTime
-  when (now > expiredAt) $ wClose w
-
-handlePayload :: Worker -> ByteString -> IO ()
-handlePayload w pl = do
-  agent <- newAgent pl $ wConn w
+handleAgent :: WorkerEnv -> Agent -> IO ()
+handleAgent w agent = do
+  t <- getEpochTime
+  atomicModifyIORef' (wLastVist w) (const (t, ()))
   cmd <- receive agent :: IO (Either String WorkerCommand)
   case cmd of
-    Left e     -> wClose w
+    Left e     ->throwIO EmptyError -- close worker
     Right cmd' -> go agent cmd'
   where go :: Agent -> WorkerCommand -> IO ()
         go ag GrabJob            = pushGrab sc fl jq ag
@@ -106,7 +90,6 @@ handlePayload w pl = do
         go _ (CanDo fn)          = handleCanDo sc fl fn
         go _ (CantDo fn)         = handleCantDo sc fl fn
         go _ (Broadcast fn)      = handleBroadcast sc fl fn
-        go ag _                  = send ag Unknown
 
         sc = wSched w
         fl = wFuncList w
@@ -132,15 +115,3 @@ handleBroadcast sched fl fn = do
   unless has $ do
     broadcastFunc sched fn True
     insert fl fn
-
-wClose :: Worker -> IO ()
-wClose Worker{..} = void $ forkIO $ L.with wLocker $ do
-  closed <- atomicModifyIORef' wClosed (\v -> (True, v))
-  killThread wRunner
-
-  clearTimer wTimer
-
-  unless closed $ do
-    mapM_ (failJob wSched) =<< toList wJobQueue
-    mapM_ (removeFunc wSched) =<< toList wFuncList
-    close wConn
