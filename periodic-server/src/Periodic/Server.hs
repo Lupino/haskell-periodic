@@ -22,7 +22,7 @@ import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (head, null)
 import           Periodic.Connection       (Connection, close, connid,
                                             newServerConn, receive, send)
-import           Periodic.Server.Client    (newClient)
+import           Periodic.Server.Client    (newClient, startClient)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Worker    (newWorker)
 import           Periodic.Transport        (Transport)
@@ -67,7 +67,9 @@ handleConnection sched transport = do
     sendThen conn $
       case tp pl of
         Nothing         -> close conn
-        Just TypeClient -> void $ newClient conn sched 300
+        Just TypeClient -> do
+          client <- newClient conn sched
+          startClient client
         Just TypeWorker -> void $ newWorker conn sched 300
 
   where tp :: ByteString -> Maybe ClientType

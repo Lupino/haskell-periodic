@@ -6,18 +6,19 @@ module Periodic.Server.Client
   (
     Client
   , newClient
-  , cClose
+  , close
+  , isAlive
+  , startClient
+  , runClient
   ) where
 
 import           Control.Concurrent           (forkIO)
-import           Control.Exception            (SomeException, try)
+import           Control.Exception            (SomeException, throwIO, try)
 import           Control.Monad                (forever, void, when)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (concat, intercalate, pack)
 import           Data.Foldable                (forM_)
-import           Periodic.Connection          (Connection, close)
-import qualified Periodic.Connection          as Conn (receive)
-import           Periodic.TM
+import qualified Periodic.Connection          as Conn (Connection)
 
 import           Periodic.Agent               (Agent, newAgent, receive, send,
                                                send_)
@@ -29,66 +30,40 @@ import           Periodic.Types.ClientCommand
 import           Periodic.Types.Job           (Job, decodeJob, encodeJob)
 import           Periodic.Types.ServerCommand
 
+import           Periodic.Monad
 import           Periodic.Timer
+import           Periodic.Types.Error         (Error (EmptyError))
 import           Periodic.Utils               (getEpochTime)
 
 import           Data.Int                     (Int64)
 import           Data.IORef                   (IORef, atomicModifyIORef',
                                                newIORef)
 
-data Client = Client { cConn      :: Connection
-                     , cSched     :: Scheduler
-                     , cRunner    :: ThreadManager
-                     , cKeepAlive :: Int64
-                     , cTimer     :: Timer
-                     , cLastVist  :: IORef Int64
-                     }
+type Client = GenPeriodic (IORef Int64)
+type Connection = SpecEnv (IORef Int64)
 
-newClient :: Connection -> Scheduler -> Int64 -> IO Client
-newClient cConn cSched cKeepAlive = do
-  cRunner <- newThreadManager
-  cLastVist <- newIORef =<< getEpochTime
-  cTimer <- newTimer
-  let c = Client {..}
+newClient :: Conn.Connection -> Scheduler -> IO Connection
+newClient conn sched = do
+  lastVist <- newIORef =<< getEpochTime
+  env0 <- initEnv_ (handleAgent sched lastVist) conn lastVist
+  runPeriodic env0 specEnv
 
-  runner <- forkIO $ forever $ mainLoop c
-  initTimer cTimer $ checkAlive c
+runClient :: Connection -> Client a -> IO a
+runClient = runPeriodicWithSpecEnv
 
-  setThreadId cRunner runner
+startClient :: Connection -> IO ()
+startClient env = runPeriodicWithSpecEnv env startMainLoop
 
-  repeatTimer' cTimer (fromIntegral cKeepAlive)
-  return c
+close :: Client ()
+close = stopPeriodic
 
-mainLoop :: Client -> IO ()
-mainLoop c@Client{..} = do
-  e <- try $ Conn.receive cConn
-  setLastVistTime c =<< getEpochTime
-  case e of
-    Left (_::SomeException) -> cClose c
-    Right pl                -> do
-      e' <- try $ handlePayload c pl
-      case e' of
-        Left (_::SomeException) -> cClose c
-        Right _                 -> return ()
-
-setLastVistTime :: Client -> Int64 -> IO ()
-setLastVistTime Client{..} v = atomicModifyIORef' cLastVist (const (v, ()))
-
-getLastVistTime :: Client -> IO Int64
-getLastVistTime Client{..} = atomicModifyIORef' cLastVist (\v -> (v, v))
-
-checkAlive :: Client -> IO ()
-checkAlive c@Client{..} = do
-  expiredAt <- (cKeepAlive +) <$> getLastVistTime c
-  now <- getEpochTime
-  when (now > expiredAt) $ cClose c
-
-handlePayload :: Client -> ByteString -> IO ()
-handlePayload c pl = do
-  agent <- newAgent pl $ cConn c
+handleAgent :: Scheduler -> IORef Int64 -> Agent -> IO ()
+handleAgent sched lastVist agent = do
+  t <- getEpochTime
+  atomicModifyIORef' lastVist (const (t, ()))
   cmd <- receive agent :: IO (Either String ClientCommand)
   case cmd of
-    Left e     -> cClose c
+    Left e     -> throwIO EmptyError -- close client
     Right cmd' -> go agent cmd'
   where go :: Agent -> ClientCommand -> IO ()
         go agent (SubmitJob job) = handleSubmitJob sched agent job
@@ -99,15 +74,11 @@ handlePayload c pl = do
         go agent Dump            = handleDump sched agent
         go _ (Load dat)          = handleLoad sched dat
         go _ Shutdown            = handleShutdown sched
-        go agent _               = send agent Unknown
-
-        sched = cSched c
 
 handleSubmitJob :: Scheduler -> Agent -> Job -> IO ()
 handleSubmitJob sc ag j = do
   pushJob sc j
   send ag Success
-
 
 handleStatus :: Scheduler -> Agent -> IO ()
 handleStatus sc ag = do
@@ -150,9 +121,3 @@ handleLoad sc pl = forM_ (decodeJob pl) (pushJob sc)
 
 handleShutdown :: Scheduler -> IO ()
 handleShutdown = shutdown
-
-cClose :: Client -> IO ()
-cClose Client{ .. } = void $ forkIO $ do
-  killThread cRunner
-  clearTimer cTimer
-  close cConn

@@ -182,17 +182,18 @@ mainLoop :: Env u -> IORef Bool -> IOHashMap Agent -> IO ()
 mainLoop env state ref = do
   alive <- atomicModifyIORef' state (\v -> (v, v))
   unless alive $ do
+    doFeedError ref
     close (conn env)
     killThread =<< myThreadId
   e <- try $ receive (conn env)
   case e of
-    Left TransportClosed -> doFeedError ref >> setClose state
-    Left MagicNotMatch   -> doFeedError ref >> setClose state
+    Left TransportClosed -> setClose state
+    Left MagicNotMatch   -> setClose state
     Left _               -> return ()
     Right pl             -> doFeed env state ref pl
 
  where setClose :: IORef Bool -> IO ()
-       setClose state = atomicModifyIORef' state (const $ (False, ()))
+       setClose state = atomicModifyIORef' state (const (False, ()))
 
 doFeed :: Env u -> IORef Bool -> IOHashMap Agent -> ByteString -> IO ()
 doFeed env state ref bs = do
