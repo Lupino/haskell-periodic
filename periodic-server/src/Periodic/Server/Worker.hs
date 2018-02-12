@@ -4,6 +4,7 @@
 module Periodic.Server.Worker
   (
     Worker
+  , Connection
   , newWorker
   , close
   , isAlive

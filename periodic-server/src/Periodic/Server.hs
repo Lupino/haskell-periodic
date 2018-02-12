@@ -5,12 +5,12 @@ module Periodic.Server
     startServer
   ) where
 
-import           Control.Monad             (forever, void)
+import           Control.Monad             (forever, void, when)
 import           Network.Socket            (Socket, accept)
 import qualified Network.Socket            as Socket (close)
 
 -- process
-import           Control.Concurrent        (forkIO, killThread)
+import           Control.Concurrent        (forkIO, killThread, threadDelay)
 import           Control.Concurrent.MVar   (MVar, newEmptyMVar, takeMVar,
                                             tryPutMVar)
 import           System.Posix.Signals      (Handler (Catch), installHandler,
@@ -20,14 +20,20 @@ import           System.Posix.Signals      (Handler (Catch), installHandler,
 import           Control.Exception         (SomeException, try)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B (head, null)
+import           Data.Int                  (Int64)
 import           Periodic.Connection       (Connection, close, connid,
                                             newServerConn, receive, send)
-import           Periodic.Server.Client    (newClient, startClient)
+import           Periodic.IOHashMap        (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap        as HM
+import           Periodic.Server.Client    (newClient, runClient, startClient)
+import qualified Periodic.Server.Client    as Client
 import           Periodic.Server.Scheduler
-import           Periodic.Server.Worker    (newWorker, startWorker)
+import           Periodic.Server.Worker    (newWorker, runWorker, startWorker)
+import qualified Periodic.Server.Worker    as Worker
 import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..))
-import           Periodic.Utils            (tryIO)
+import           Periodic.Utils            (getEpochTime, tryIO)
+import           System.Log.Logger         (errorM)
 
 handleExit :: MVar () -> IO ()
 handleExit mv = void $ tryPutMVar mv ()
@@ -41,9 +47,15 @@ startServer makeTransport storePath sock = do
 
   sched <- newScheduler storePath $ handleExit bye
 
+  clientList <- newIOHashMap
+  workerList <- newIOHashMap
+
+  runCheckClientState clientList 100
+  runCheckWorkerState workerList 100
+
   thread <- forkIO $ forever $ do
     -- if accept failed exit
-    e <- tryIO $ mainLoop makeTransport sock sched
+    e <- tryIO $ mainLoop makeTransport sock sched clientList workerList
     case e of
       Right _ -> return ()
       Left e'  -> do
@@ -55,13 +67,13 @@ startServer makeTransport storePath sock = do
   shutdown sched
   Socket.close sock
 
-mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IO ()
-mainLoop makeTransport sock sched = do
+mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IOHashMap Client.Connection -> IOHashMap Worker.Connection -> IO ()
+mainLoop makeTransport sock sched clientList workerList = do
   (sock', _) <- accept sock
-  void $ forkIO $ handleConnection sched =<< makeTransport sock'
+  void $ forkIO $ handleConnection sched clientList workerList =<< makeTransport sock'
 
-handleConnection :: Scheduler -> Transport -> IO ()
-handleConnection sched transport = do
+handleConnection :: Scheduler -> IOHashMap Client.Connection -> IOHashMap Worker.Connection -> Transport -> IO ()
+handleConnection sched clientList workerList transport = do
   conn <- newServerConn transport
   receiveThen conn $ \pl ->
     sendThen conn $
@@ -69,9 +81,11 @@ handleConnection sched transport = do
         Nothing         -> close conn
         Just TypeClient -> do
           client <- newClient conn sched
+          HM.insert clientList (connid conn) client
           startClient client
         Just TypeWorker -> do
           worker <- newWorker conn sched
+          HM.insert workerList (connid conn) worker
           startWorker worker
 
   where tp :: ByteString -> Maybe ClientType
@@ -94,3 +108,35 @@ handleConnection sched transport = do
           case e of
             Left (_ :: SomeException) -> close conn
             Right _                   -> next
+
+runCheckWorkerState :: IOHashMap Worker.Connection -> Int64 -> IO ()
+runCheckWorkerState ref alive = void . forkIO . forever $ do
+  threadDelay $ fromIntegral alive * 1000 * 1000
+  mapM_ checkAlive =<< HM.elems ref
+  size <- HM.size ref
+  errorM "Periodic.Server" $ "Total Worker: " ++ show size
+
+  where checkAlive :: Worker.Connection -> IO ()
+        checkAlive w = do
+          expiredAt <- (alive +) <$> runWorker w Worker.getLastVist
+          now <- getEpochTime
+          when (now > expiredAt) $ do
+            runWorker w Worker.close
+            wid <- runWorker w Worker.workerId
+            HM.delete ref wid
+
+runCheckClientState :: IOHashMap Client.Connection -> Int64 -> IO ()
+runCheckClientState ref alive = void . forkIO . forever $ do
+  threadDelay $ fromIntegral alive * 1000 * 1000
+  mapM_ checkAlive =<< HM.elems ref
+  size <- HM.size ref
+  errorM "Periodic.Server" $ "Total Client: " ++ show size
+
+  where checkAlive :: Client.Connection -> IO ()
+        checkAlive c = do
+          expiredAt <- (alive +) <$> runClient c Client.getLastVist
+          now <- getEpochTime
+          when (now > expiredAt) $ do
+            runClient c Client.close
+            cid <- runClient c Client.clientId
+            HM.delete ref cid

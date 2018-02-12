@@ -33,6 +33,7 @@ library
                      , store
                      , directory
                      , filepath
+                     , hslogger
   default-language:    Haskell2010
 
 executable periodicd
