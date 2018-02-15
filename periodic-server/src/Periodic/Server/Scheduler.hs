@@ -99,7 +99,7 @@ startScheduler sched@Scheduler{..} delay =
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@Scheduler{..} job = do
   exists <- JQ.memberJob sJobQueue fn jn
-  isProc <- FL.member sProcessJob jh
+  isProc <- PQ.memberJob sProcessJob fn jn
   if exists then JQ.pushJob sJobQueue job
             else unless isProc $ JQ.pushJob sJobQueue job
 
@@ -136,7 +136,7 @@ removeJob sched@Scheduler{..} job = do
   has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
   when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
 
-  isProc <- FL.member sProcessJob (jHandle job)
+  isProc <- PQ.memberJob sProcessJob (jFuncName job) (jName job)
   when isProc $ PQ.removeJob sProcessJob (jFuncName job) (jName job)
   adjustFuncStat sched (jFuncName job)
 
