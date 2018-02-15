@@ -19,8 +19,8 @@ import qualified Data.ByteString.Char8        as B (concat, pack)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
 import           Periodic.Monad               (GenPeriodic, userEnv, withAgent)
-import           Periodic.Types.Job           (FuncName, JobHandle, JobName,
-                                               Workload)
+import           Periodic.Types.Job           (FuncName (..), JobHandle (..),
+                                               JobName (..), Workload (..))
 import qualified Periodic.Types.Job           as J
 import           Periodic.Types.WorkerCommand
 import           Periodic.Utils               (breakBS)

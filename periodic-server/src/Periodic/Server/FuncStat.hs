@@ -21,7 +21,7 @@ data FuncStat = FuncStat { sSchedAt   :: Int64
                          , sBroadcast :: Bool
                          }
 
-type FuncStatList = IOHashMap FuncStat
+type FuncStatList = IOHashMap FuncName FuncStat
 
 funcStat :: FuncName -> FuncStat
 funcStat sFuncName = FuncStat

@@ -22,6 +22,8 @@ import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR         (makeXORTransport)
+import           Periodic.Types.Job             (FuncName (..), JobName (..),
+                                                 Workload (..))
 import           Periodic.Worker                (addFunc, broadcast, runWorker,
                                                  work)
 import           System.Environment             (getArgs, lookupEnv)
@@ -109,7 +111,7 @@ main = do
 
   runWorker (makeTransport opts) host $ do
     let proc = if notify then broadcast else addFunc
-    proc (B.pack func) $ processWorker cmd argv
+    proc (FuncName $ B.pack func) $ processWorker cmd argv
     liftIO $ putStrLn "Worker started."
     work thread
 
@@ -128,8 +130,8 @@ makeTransport' p transport  = do
 
 processWorker :: String -> [String] -> Job ()
 processWorker cmd argv = do
-  n <- unpackBS <$> name
-  rb <- LB.fromStrict <$> workload
+  n <- unpackBS . unJN <$> name
+  rb <- LB.fromStrict . unWL <$> workload
   (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
   unless (LB.null out) $ liftIO $ LB.putStr out
   unless (LB.null err) $ liftIO $ LB.hPut stderr err

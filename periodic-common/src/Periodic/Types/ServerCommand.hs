@@ -7,13 +7,13 @@ module Periodic.Types.ServerCommand
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString, append, concat, take)
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (Job)
+import           Periodic.Types.Job      (Job, JobHandle)
 import           Periodic.Utils          (breakBS2)
 import           Prelude                 hiding (concat, take)
 
 data ServerCommand =
     Noop
-  | JobAssign ByteString Job
+  | JobAssign JobHandle Job
   | NoJob
   | Pong
   | Unknown
@@ -23,7 +23,7 @@ data ServerCommand =
 
 instance Byteable ServerCommand where
   toBytes Noop               = "\00"
-  toBytes (JobAssign jh job) = concat ["\05", nullChar, jh, nullChar, toBytes job]
+  toBytes (JobAssign jh job) = concat ["\05", nullChar, toBytes jh, nullChar, toBytes job]
   toBytes NoJob              = "\06"
   toBytes Pong               = "\10"
   toBytes Unknown            = "\12"
@@ -35,7 +35,8 @@ instance Parser ServerCommand where
                    "\05" -> do
                         let (jh, pl) = breakBS2 $ dropCmd bs
                         job <- runParser pl
-                        return (JobAssign jh job)
+                        jh' <- runParser jh
+                        return (JobAssign jh' job)
                    "\06" -> Right NoJob
                    "\10" -> Right Pong
                    "\12" -> Right Unknown

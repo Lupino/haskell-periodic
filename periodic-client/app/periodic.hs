@@ -18,6 +18,7 @@ import           Periodic.Socket        (getService)
 import           Periodic.Transport     (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR (makeXORTransport)
+import           Periodic.Types         (FuncName (..), JobName (..))
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
 import           System.IO              (IOMode (ReadMode, WriteMode), openFile)
@@ -180,14 +181,14 @@ processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
 processCommand Shutdown _ = shutdown
 
-doRemoveJob (x:xs) = mapM_ (removeJob (B.pack x) . B.pack) xs
+doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
 doRemoveJob []     = liftIO printRemoveHelp
 
-doDropFunc = mapM_ (dropFunc . B.pack)
+doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
 
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp
-doSubmitJob (x:y:xs) = void $ submitJob (B.pack x) (B.pack y) later
+doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack y) later
   where later = case xs of
                   []              -> 0
                   ("--later":l:_) -> fromMaybe 0 (readMaybe l)

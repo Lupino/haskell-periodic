@@ -16,6 +16,7 @@ module Periodic.Server.Client
   ) where
 
 import           Control.Exception            (throwIO)
+import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (concat, intercalate, pack)
 import           Data.Foldable                (forM_)
@@ -27,7 +28,7 @@ import           Periodic.Server.Scheduler    (Scheduler, dropFunc, dumpJob,
                                                pushJob, removeJob, shutdown,
                                                status)
 import           Periodic.Types.ClientCommand
-import           Periodic.Types.Job           (Job, decodeJob, encodeJob)
+import           Periodic.Types.Job           (FuncName, Job, decodeJob)
 import           Periodic.Types.ServerCommand
 
 import           Periodic.Monad
@@ -93,7 +94,7 @@ handleStatus sc ag = do
   send_ ag $ B.intercalate "\n" stats
 
   where go :: FuncStat -> ByteString
-        go FuncStat{..} = B.concat [ sFuncName
+        go FuncStat{..} = B.concat [ toBytes sFuncName
                                    , ","
                                    , B.pack $ show sWorker
                                    , ","
@@ -104,7 +105,7 @@ handleStatus sc ag = do
                                    , B.pack $ show sSchedAt
                                    ]
 
-handleDropFunc :: Scheduler -> Agent -> ByteString -> IO ()
+handleDropFunc :: Scheduler -> Agent -> FuncName -> IO ()
 handleDropFunc sc ag pl = do
   dropFunc sc pl
   send ag Success
@@ -121,7 +122,7 @@ handleDump sc ag = do
   send_ ag "EOF"
 
   where doSend :: Job -> IO ()
-        doSend = send_ ag . encodeJob
+        doSend = send_ ag . toBytes
 
 handleLoad :: Scheduler -> ByteString -> IO ()
 handleLoad sc pl = forM_ (decodeJob pl) (pushJob sc)

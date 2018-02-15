@@ -18,12 +18,12 @@ import           Data.HashPSQ       (HashPSQ, delete, findMin, fromList, insert,
                                      member, size, toList)
 import           Data.Int           (Int64)
 import           Periodic.IOHashMap (IOHashMap, adjust, alter, elems, lookup)
-import           Periodic.Types     (FuncName, Job (..))
+import           Periodic.Types     (FuncName, Job (..), JobName)
 import           Prelude            hiding (lookup)
 
-type SubJobQueue = HashPSQ FuncName Int64 Job
+type SubJobQueue = HashPSQ JobName Int64 Job
 
-type JobQueue = IOHashMap SubJobQueue
+type JobQueue = IOHashMap FuncName SubJobQueue
 
 pushJob :: JobQueue -> Job -> IO ()
 pushJob q j@Job{..} = alter q update jFuncName
@@ -48,11 +48,11 @@ popJob q n = do
       adjust q (delete (jName j')) n
       return j
 
-removeJob :: JobQueue -> FuncName -> ByteString -> IO ()
-removeJob q n jn = adjust q (delete jn) n
+removeJob :: JobQueue -> FuncName -> JobName -> IO ()
+removeJob q fn jn = adjust q (delete jn) fn
 
-memberJob :: JobQueue -> FuncName -> ByteString -> IO Bool
-memberJob q n jn = go <$> lookup q n
+memberJob :: JobQueue -> FuncName -> JobName -> IO Bool
+memberJob q fn jn = go <$> lookup q fn
   where go :: Maybe SubJobQueue -> Bool
         go Nothing   = False
         go (Just q') = member jn q'

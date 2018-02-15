@@ -57,9 +57,9 @@ instance Exception MonadFail
 
 data Env u = Env { uEnv :: u, conn :: Connection, agentHandler :: Agent -> IO () }
 
-data SpecEnv u = SpecEnv { sEnv :: Env u, sState :: IORef Bool, sRef :: IOHashMap Agent }
+data SpecEnv u = SpecEnv { sEnv :: Env u, sState :: IORef Bool, sRef :: IOHashMap ByteString Agent }
 
-newtype GenPeriodic u a = GenPeriodic { unPeriodic :: Env u -> IORef Bool -> IOHashMap Agent -> IO (Result a) }
+newtype GenPeriodic u a = GenPeriodic { unPeriodic :: Env u -> IORef Bool -> IOHashMap ByteString Agent -> IO (Result a) }
 
 data Result a = Done a
               | Throw SomeException
@@ -155,7 +155,7 @@ withAgent :: (Agent -> IO a) -> GenPeriodic u a
 withAgent f = GenPeriodic $ \env state ref ->
   Done <$> bracket (newEmptyAgent env ref) (removeAgent ref) f
 
-newEmptyAgent :: Env u -> IOHashMap Agent -> IO Agent
+newEmptyAgent :: Env u -> IOHashMap ByteString Agent -> IO Agent
 newEmptyAgent env ref = do
   aid <- genMsgid
   agent <- Agent.newEmptyAgent aid (conn env)
@@ -168,17 +168,17 @@ newEmptyAgent env ref = do
           if B.isInfixOf nullChar aid then genMsgid
                                       else return aid
 
-removeAgent :: IOHashMap Agent -> Agent -> IO ()
+removeAgent :: IOHashMap ByteString Agent -> Agent -> IO ()
 removeAgent ref a = HM.delete ref (msgid a)
 
-doFeedError :: IOHashMap Agent -> IO ()
+doFeedError :: IOHashMap ByteString Agent -> IO ()
 doFeedError ref = HM.elems ref >>= mapM_ (`feed` B.empty)
 
 startMainLoop :: IO () -> GenPeriodic u ()
 startMainLoop onClose = GenPeriodic $ \env state ref ->
   Done <$> forever (mainLoop onClose env state ref)
 
-mainLoop :: IO () -> Env u -> IORef Bool -> IOHashMap Agent -> IO ()
+mainLoop :: IO () -> Env u -> IORef Bool -> IOHashMap ByteString Agent -> IO ()
 mainLoop onClose env state ref = do
   alive <- atomicModifyIORef' state (\v -> (v, v))
   unless alive $ do
@@ -196,7 +196,7 @@ mainLoop onClose env state ref = do
  where setClose :: IORef Bool -> IO ()
        setClose state = atomicModifyIORef' state (const (False, ()))
 
-doFeed :: Env u -> IORef Bool -> IOHashMap Agent -> ByteString -> IO ()
+doFeed :: Env u -> IORef Bool -> IOHashMap ByteString Agent -> ByteString -> IO ()
 doFeed env state ref bs = do
   let (pid, pl) = breakBS2 bs
   v <- HM.lookup ref pid

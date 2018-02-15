@@ -105,21 +105,21 @@ handleAgent w agent = do
         fl = wFuncList w
         jq = wJobQueue w
 
-handleCanDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
+handleCanDo :: Scheduler -> IOList FuncName -> FuncName -> IO ()
 handleCanDo sched fl fn = do
   has <- elem fl fn
   unless has $ do
     addFunc sched fn
     insert fl fn
 
-handleCantDo :: Scheduler -> IOList FuncName -> ByteString -> IO ()
+handleCantDo :: Scheduler -> IOList FuncName -> FuncName -> IO ()
 handleCantDo sched fl fn = do
   has <- elem fl fn
   when has $ do
     removeFunc sched fn
     delete fl fn
 
-handleBroadcast :: Scheduler -> IOList FuncName -> ByteString -> IO ()
+handleBroadcast :: Scheduler -> IOList FuncName -> FuncName -> IO ()
 handleBroadcast sched fl fn = do
   has <- elem fl fn
   unless has $ do

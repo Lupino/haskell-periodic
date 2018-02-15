@@ -10,49 +10,60 @@ import           Data.ByteString         (ByteString, append, concat, empty,
 import           Data.ByteString.Char8   (pack)
 import           Data.Int                (Int64)
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (Job)
+import           Periodic.Types.Job      (FuncName, Job, JobHandle)
 import           Periodic.Utils          (breakBS, readBS)
 import           Prelude                 hiding (concat, take)
 
 data WorkerCommand =
     GrabJob
-  | SchedLater ByteString Int64 Int
-  | WorkDone ByteString
-  | WorkFail ByteString
+  | SchedLater JobHandle Int64 Int
+  | WorkDone JobHandle
+  | WorkFail JobHandle
   | Sleep
   | Ping
-  | CanDo ByteString
-  | CantDo ByteString
-  | Broadcast ByteString
+  | CanDo FuncName
+  | CantDo FuncName
+  | Broadcast FuncName
 
   deriving (Show)
 
 instance Byteable WorkerCommand where
   toBytes GrabJob = "\01"
-  toBytes (SchedLater bs later step) = concat $ ["\02", nullChar, bs, nullChar, pack $ show later ] ++ step'
+  toBytes (SchedLater jh later step) = concat $ ["\02", nullChar, toBytes jh, nullChar, pack $ show later ] ++ step'
     where step' | step > 0  = [nullChar, pack $ show step]
                 | otherwise = []
-  toBytes (WorkDone bs) = concat ["\03", nullChar, bs]
-  toBytes (WorkFail bs) = concat ["\04", nullChar, bs]
+  toBytes (WorkDone jh) = concat ["\03", nullChar, toBytes jh]
+  toBytes (WorkFail jh) = concat ["\04", nullChar, toBytes jh]
   toBytes Sleep = "\11"
   toBytes Ping = "\9"
-  toBytes (CanDo bs) = concat ["\07", nullChar, bs]
-  toBytes (CantDo bs) = concat ["\08", nullChar, bs]
-  toBytes (Broadcast bs) = concat ["\21", nullChar, bs]
+  toBytes (CanDo fn) = concat ["\07", nullChar, toBytes fn]
+  toBytes (CantDo fn) = concat ["\08", nullChar, toBytes fn]
+  toBytes (Broadcast fn) = concat ["\21", nullChar, toBytes fn]
 
 instance Parser WorkerCommand where
   runParser bs = case take 1 bs of
                    "\01" -> Right GrabJob
                    "\02" -> do
                         let (bs, later, step) = parseSchedLater $ breakBS 3 (dropCmd bs)
-                        return (SchedLater bs later step)
-                   "\03" -> Right (WorkDone $ dropCmd bs)
-                   "\04" -> Right (WorkFail $ dropCmd bs)
+                        jh <- runParser bs
+                        return (SchedLater jh later step)
+                   "\03" -> do
+                     jh <- runParser $ dropCmd bs
+                     return (WorkDone jh)
+                   "\04" -> do
+                     jh <- runParser $ dropCmd bs
+                     Right (WorkFail jh)
                    "\11" -> Right Sleep
                    "\09" -> Right Ping
-                   "\07" -> Right (CanDo $ dropCmd bs)
-                   "\08" -> Right (CantDo $ dropCmd bs)
-                   "\21" -> Right (Broadcast $ dropCmd bs)
+                   "\07" -> do
+                     fn <- runParser $ dropCmd bs
+                     return (CanDo fn)
+                   "\08" -> do
+                     fn <- runParser $ dropCmd bs
+                     return (CantDo fn)
+                   "\21" -> do
+                     fn <- runParser $ dropCmd bs
+                     return (Broadcast fn)
                    _ -> Left "Error WorkerCommand"
 
 parseSchedLater :: [ByteString] -> (ByteString, Int64, Int)

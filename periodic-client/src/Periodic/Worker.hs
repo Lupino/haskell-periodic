@@ -43,7 +43,7 @@ import           Periodic.Monad
 import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
 
-type TaskList = IOHashMap (Job ())
+type TaskList = IOHashMap FuncName (Job ())
 type Worker = GenPeriodic TaskList
 
 close :: Worker ()

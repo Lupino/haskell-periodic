@@ -35,6 +35,9 @@ import           Periodic.Types            (ClientType (..))
 import           Periodic.Utils            (getEpochTime, tryIO)
 import           System.Log.Logger         (errorM)
 
+type ClientList = IOHashMap ByteString Client.Connection
+type WorkerList = IOHashMap ByteString Worker.Connection
+
 handleExit :: MVar () -> IO ()
 handleExit mv = void $ tryPutMVar mv ()
 
@@ -67,12 +70,12 @@ startServer makeTransport storePath sock = do
   shutdown sched
   Socket.close sock
 
-mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> IOHashMap Client.Connection -> IOHashMap Worker.Connection -> IO ()
+mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> ClientList -> WorkerList -> IO ()
 mainLoop makeTransport sock sched clientList workerList = do
   (sock', _) <- accept sock
   void $ forkIO $ handleConnection sched clientList workerList =<< makeTransport sock'
 
-handleConnection :: Scheduler -> IOHashMap Client.Connection -> IOHashMap Worker.Connection -> Transport -> IO ()
+handleConnection :: Scheduler -> ClientList -> WorkerList -> Transport -> IO ()
 handleConnection sched clientList workerList transport = do
   conn <- newServerConn transport
   receiveThen conn $ \pl ->
@@ -109,7 +112,7 @@ handleConnection sched clientList workerList transport = do
             Left (_ :: SomeException) -> close conn
             Right _                   -> next
 
-runCheckWorkerState :: IOHashMap Worker.Connection -> Int64 -> IO ()
+runCheckWorkerState :: WorkerList -> Int64 -> IO ()
 runCheckWorkerState ref alive = void . forkIO . forever $ do
   threadDelay $ fromIntegral alive * 1000 * 1000
   mapM_ checkAlive =<< HM.elems ref
@@ -125,7 +128,7 @@ runCheckWorkerState ref alive = void . forkIO . forever $ do
             wid <- runWorker w Worker.workerId
             HM.delete ref wid
 
-runCheckClientState :: IOHashMap Client.Connection -> Int64 -> IO ()
+runCheckClientState :: ClientList -> Int64 -> IO ()
 runCheckClientState ref alive = void . forkIO . forever $ do
   threadDelay $ fromIntegral alive * 1000 * 1000
   mapM_ checkAlive =<< HM.elems ref

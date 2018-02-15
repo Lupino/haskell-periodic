@@ -16,12 +16,12 @@ import           Data.ByteString     (ByteString)
 import           Data.HashMap.Strict (HashMap, delete, insert, member, size)
 import qualified Data.HashMap.Strict as HM (elems, fromList, lookup)
 import           Periodic.IOHashMap  (IOHashMap, adjust, alter, elems, lookup)
-import           Periodic.Types      (FuncName, Job (..))
+import           Periodic.Types      (FuncName, Job (..), JobName)
 import           Prelude             hiding (lookup)
 
-type SubProcessQueue = HashMap FuncName Job
+type SubProcessQueue = HashMap JobName Job
 
-type ProcessQueue = IOHashMap SubProcessQueue
+type ProcessQueue = IOHashMap FuncName SubProcessQueue
 
 insertJob :: ProcessQueue -> Job -> IO ()
 insertJob q j@Job{..} = alter q update jFuncName
@@ -29,14 +29,14 @@ insertJob q j@Job{..} = alter q update jFuncName
         update Nothing   = Just (HM.fromList [(jName, j)])
         update (Just q') = Just (insert jName j q')
 
-lookupJob :: ProcessQueue -> FuncName -> ByteString -> IO (Maybe Job)
-lookupJob q n jn = maybe Nothing (HM.lookup jn) <$> lookup q n
+lookupJob :: ProcessQueue -> FuncName -> JobName -> IO (Maybe Job)
+lookupJob q fn jn = maybe Nothing (HM.lookup jn) <$> lookup q fn
 
-removeJob :: ProcessQueue -> FuncName -> ByteString -> IO ()
-removeJob q n jn = adjust q (delete jn) n
+removeJob :: ProcessQueue -> FuncName -> JobName -> IO ()
+removeJob q fn jn = adjust q (delete jn) fn
 
-memberJob :: ProcessQueue -> FuncName -> ByteString -> IO Bool
-memberJob q n jn = go <$> lookup q n
+memberJob :: ProcessQueue -> FuncName -> JobName -> IO Bool
+memberJob q fn jn = go <$> lookup q fn
   where go :: Maybe SubProcessQueue -> Bool
         go Nothing   = False
         go (Just q') = member jn q'
