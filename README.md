@@ -94,7 +94,7 @@ Quick start
 
 ### Start periodic server
 
-    $ periodicd
+    periodicd
 
 ### Show file worker
 
@@ -126,7 +126,7 @@ or use the `periodic-run` command
 
 ### Submit a job
 
-    $ periodic submit show_file abc.md
+    periodic submit show_file abc.md
 
 ### Show status
 
