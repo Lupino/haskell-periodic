@@ -106,21 +106,23 @@ module Main
   ) where
 
 import           Periodic.Job       (Job, name, workDone)
-import           Periodic.Socket    (connectToFile)
-import           Periodic.Transport (makeSocketTransport)
-import           Periodic.Worker    (addFunc, newWorker, work)
+import           Periodic.Worker    (addFunc, runWorker, work)
 
 main :: IO ()
 main = do
-  w <- newWorker =<< makeSocketTransport =<< connectToFile "/tmp/periodic.sock"
-  addFunc w "show_file" showFile
-  work w 10
+  runWorker (\t -> pure t) "unix:///tmp/periodic.sock" $ do
+    addFunc w "show_file" showFile
+    work w 10
 
-showFile :: Job -> IO ()
-showFile job = do
-  print $ name job
-  workDone job
+showFile :: Job ()
+showFile = do
+  print =<< name
+  workDone
 ```
+
+or use the `periodic-run` command
+
+    periodic-run show_file echo
 
 ### Submit a job
 
