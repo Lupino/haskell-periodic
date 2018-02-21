@@ -54,7 +54,6 @@ close = stopPeriodic
 
 runWorker :: (Transport -> IO Transport) -> String -> Worker a -> IO a
 runWorker f h m = do
-  timer <- newTimer
   transport <- f =<< makeSocketTransport =<< connect h
   taskList <- newIOHashMap
   c <- newClientConn transport
@@ -62,7 +61,6 @@ runWorker f h m = do
   void $ Conn.receive c
   env0 <- initEnv c taskList
   runPeriodic env0 $ do
-    wapperIO (repeatTimer' timer 100) checkHealth
     void . wapperIO forkIO . startMainLoop $ pure ()
     m
 
@@ -135,12 +133,3 @@ work size = do
                                 , show e
                                 ]
                 workFail
-
-
-checkHealth :: Worker ()
-checkHealth = do
-  ret <- wapperIO (timeout 10000000) ping
-  case ret of
-    Nothing -> close
-    Just r ->
-      unless r close
