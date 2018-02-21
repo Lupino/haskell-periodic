@@ -50,8 +50,8 @@ import           System.Directory             (createDirectoryIfMissing,
 import           System.FilePath              ((</>))
 
 import           Control.Concurrent           (forkIO)
-import           Data.IORef                   (IORef, atomicModifyIORef',
-                                               newIORef)
+import           Control.Concurrent.STM.TVar
+import           Control.Monad.STM            (atomically)
 
 
 data Scheduler = Scheduler { sFuncStatList :: FuncStatList
@@ -64,7 +64,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sStoreTimer   :: Timer
                            , sStorePath    :: FilePath
                            , sCleanup      :: IO ()
-                           , sAlive        :: IORef Bool
+                           , sAlive        :: TVar Bool
                            }
 
 newScheduler :: FilePath -> IO () -> IO Scheduler
@@ -77,7 +77,7 @@ newScheduler path sCleanup = do
   sMainTimer     <- newTimer
   sRevertTimer   <- newTimer
   sStoreTimer    <- newTimer
-  sAlive         <- newIORef True
+  sAlive         <- newTVarIO True
   let sStorePath = path </> "dump.db"
       sched = Scheduler {..}
 
@@ -304,7 +304,10 @@ revertProcessQueue sched@Scheduler{..} = do
 
 shutdown :: Scheduler -> IO ()
 shutdown sched@Scheduler{..} = L.with sLocker $ do
-  alive <- atomicModifyIORef' sAlive $ \v -> (False, v)
+  alive <- atomically $ do
+    t <- readTVar sAlive
+    writeTVar sAlive False
+    return t
   when alive $ do
     clearTimer sMainTimer
     clearTimer sRevertTimer

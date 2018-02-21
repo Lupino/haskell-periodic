@@ -4,17 +4,20 @@ module Periodic.Transport.XOR
   , makeXORTransport
   ) where
 
-import           Control.Arrow        ((&&&))
-import           Data.Bits            (xor)
-import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as LB
-import           Data.IORef           (IORef, atomicModifyIORef', newIORef)
-import qualified Periodic.Lock        as L
-import           Periodic.Transport   (Transport (..))
+import           Control.Arrow               ((&&&))
+import           Control.Concurrent.STM.TVar
+import           Control.Monad.STM           (atomically)
+import           Data.Bits                   (xor)
+import qualified Data.ByteString             as B
+import qualified Data.ByteString.Lazy        as LB
+import qualified Periodic.Lock               as L
+import           Periodic.Transport          (Transport (..))
 
-xorBS :: IORef LB.ByteString -> B.ByteString -> IO B.ByteString
-xorBS ref bs =
-  xor' <$> atomicModifyIORef' ref (LB.drop len &&& LB.take len)
+xorBS :: TVar LB.ByteString -> B.ByteString -> IO B.ByteString
+xorBS ref bs = atomically $ do
+  buf <- readTVar ref
+  writeTVar ref $ LB.drop len buf
+  return . xor' $ LB.take len buf
 
  where  bs' = LB.fromStrict bs
         len = LB.length bs'
@@ -22,8 +25,8 @@ xorBS ref bs =
 
 makeXORTransport :: LB.ByteString -> Transport -> IO Transport
 makeXORTransport key transport = do
-  sn <- newIORef $ LB.cycle key
-  rn <- newIORef $ LB.cycle key
+  sn <- newTVarIO $ LB.cycle key
+  rn <- newTVarIO $ LB.cycle key
   sl <- L.new
   rl <- L.new
   return Transport { recvData = \nbytes -> L.with rl $

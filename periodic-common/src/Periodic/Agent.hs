@@ -3,6 +3,7 @@
 module Periodic.Agent
   (
     Agent
+  , AgentList
   , newAgent
   , newEmptyAgent
   , send
@@ -26,6 +27,7 @@ import           Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar,
 import           Control.Exception       (throwIO)
 import           Control.Monad           (void)
 import           Data.Byteable           (Byteable (..))
+import           Periodic.IOHashMap      (IOHashMap)
 import           Periodic.Types.Internal
 import           Periodic.Utils          (breakBS2)
 
@@ -33,6 +35,8 @@ data Agent = Agent { aMsgid  :: ByteString
                    , aConn   :: Connection
                    , aReader :: MVar ByteString
                    }
+
+type AgentList = IOHashMap ByteString Agent
 
 newAgent :: ByteString -> Connection -> IO Agent
 newAgent bs aConn = do

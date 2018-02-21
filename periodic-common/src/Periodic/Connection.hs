@@ -16,28 +16,30 @@ module Periodic.Connection
   , connid
   ) where
 
-import qualified Data.ByteString    as B
-import qualified Periodic.Lock      as L (Lock, new, with)
-import           Periodic.Transport (Transport (recvData, sendData))
-import qualified Periodic.Transport as T (Transport (close))
+import qualified Data.ByteString             as B
+import qualified Periodic.Lock               as L (Lock, new, with)
+import           Periodic.Transport          (Transport (recvData, sendData))
+import qualified Periodic.Transport          as T (Transport (close))
 
-import           Control.Arrow      ((&&&))
-import           Control.Exception  (throwIO)
-import           Control.Monad      (when)
-import           Data.IORef         (IORef, atomicModifyIORef', newIORef)
-import           Periodic.Types     (Error (..))
-import           Periodic.Utils     (makeHeader, maxLength, parseHeader)
-import           System.Entropy     (getEntropy)
-import           System.Timeout     (timeout)
+import           Control.Arrow               ((&&&))
+import           Control.Concurrent.STM.TVar
+import           Control.Exception           (throwIO)
+import           Control.Monad               (when)
+import           Control.Monad.STM           (atomically)
+import           Periodic.Types              (Error (..))
+import           Periodic.Utils              (makeHeader, maxLength,
+                                              parseHeader)
+import           System.Entropy              (getEntropy)
+import           System.Timeout              (timeout)
 
 data Connection = Connection { transport     :: Transport
                              , requestMagic  :: B.ByteString
                              , responseMagic :: B.ByteString
                              , readLock      :: L.Lock
                              , writeLock     :: L.Lock
-                             , status        :: IORef Bool
+                             , status        :: TVar Bool
                              , connid        :: B.ByteString
-                             , buffer        :: IORef B.ByteString
+                             , buffer        :: TVar B.ByteString
                              }
 
 magicREQ :: B.ByteString
@@ -50,9 +52,9 @@ newConn :: Transport -> B.ByteString -> B.ByteString -> IO Connection
 newConn transport requestMagic responseMagic = do
   readLock <- L.new
   writeLock <- L.new
-  status <- newIORef True
+  status <- newTVarIO True
   connid <- getEntropy 4
-  buffer <- newIORef B.empty
+  buffer <- newTVarIO B.empty
   return Connection {..}
 
 newServerConn :: Transport -> IO Connection
@@ -77,13 +79,16 @@ receive c@Connection{..} =
 
 recv' :: Connection -> Int -> IO B.ByteString
 recv' Connection{..} nbytes = do
-  buf <- atomicModifyIORef' buffer (B.drop nbytes &&& B.take nbytes)
+  buf <- atomically $ do
+    bf <- readTVar buffer
+    writeTVar buffer $! B.drop nbytes bf
+    return $ B.take nbytes bf
   if B.length buf == nbytes then return buf
                             else do
                               otherBuf <- readBuf (nbytes - B.length buf)
                               let out = B.concat [ buf, otherBuf ]
-                              atomicModifyIORef' buffer $
-                                const (B.drop nbytes out, B.take nbytes out)
+                              atomically . writeTVar buffer $! B.drop nbytes out
+                              return $ B.take nbytes out
 
   where readBuf :: Int -> IO B.ByteString
         readBuf 0  = return B.empty
@@ -104,9 +109,9 @@ send Connection{..} dat =
     sendData transport $ B.concat [ responseMagic, makeHeader $ B.length dat, dat ]
 
 connected :: Connection -> IO Bool
-connected Connection{..} = atomicModifyIORef' status $ \v -> (v, v)
+connected Connection{..} = readTVarIO status
 
 close :: Connection -> IO ()
 close c@Connection{..} = do
-  atomicModifyIORef' status $ const (False, ())
+  atomically $ writeTVar status False
   T.close transport

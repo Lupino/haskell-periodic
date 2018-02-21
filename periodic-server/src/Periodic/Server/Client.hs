@@ -35,16 +35,16 @@ import           Periodic.Monad
 import           Periodic.Types.Error         (Error (EmptyError))
 import           Periodic.Utils               (getEpochTime)
 
+import           Control.Concurrent.STM.TVar
+import           Control.Monad.STM            (atomically)
 import           Data.Int                     (Int64)
-import           Data.IORef                   (IORef, atomicModifyIORef',
-                                               newIORef)
 
-type Client = GenPeriodic (IORef Int64)
-type Connection = SpecEnv (IORef Int64)
+type Client = GenPeriodic (TVar Int64)
+type Connection = SpecEnv (TVar Int64)
 
 newClient :: Conn.Connection -> Scheduler -> IO Connection
 newClient conn sched = do
-  lastVist <- newIORef =<< getEpochTime
+  lastVist <- newTVarIO =<< getEpochTime
   env0 <- initEnv_ (handleAgent sched lastVist) conn lastVist
   runPeriodic env0 specEnv
 
@@ -60,15 +60,15 @@ close = stopPeriodic
 getLastVist :: Client Int64
 getLastVist = do
   ref <- userEnv
-  unsafeLiftIO $ atomicModifyIORef' ref (\t -> (t, t))
+  unsafeLiftIO $ readTVarIO ref
 
 clientId :: Client ByteString
 clientId = Conn.connid . conn <$> env
 
-handleAgent :: Scheduler -> IORef Int64 -> Agent -> IO ()
+handleAgent :: Scheduler -> TVar Int64 -> Agent -> IO ()
 handleAgent sched lastVist agent = do
   t <- getEpochTime
-  atomicModifyIORef' lastVist (const (t, ()))
+  atomically $ writeTVar lastVist t
   cmd <- receive agent :: IO (Either String ClientCommand)
   case cmd of
     Left e     -> throwIO EmptyError -- close client

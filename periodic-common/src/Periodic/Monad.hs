@@ -29,26 +29,28 @@ module Periodic.Monad
   , wapperIO
   ) where
 
-import           Control.Concurrent     (forkIO, killThread, myThreadId)
-import           Control.Exception      (Exception (..), SomeException, bracket,
-                                         throw, try)
-import           Control.Monad          (forever, unless, void)
-import           Control.Monad.IO.Class (MonadIO (..))
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B (cons, empty, isInfixOf)
-import           Data.IORef             (IORef, atomicModifyIORef', newIORef)
-import           Data.Typeable          (Typeable)
-import           Periodic.Agent         (Agent, feed, msgid)
-import qualified Periodic.Agent         as Agent (newAgent, newEmptyAgent)
-import           Periodic.Connection    (Connection, close, newClientConn,
-                                         receive, send)
-import           Periodic.IOHashMap     (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap     as HM (delete, elems, insert, lookup)
-import           Periodic.Transport     (Transport)
+import           Control.Concurrent          (forkIO, killThread, myThreadId)
+import           Control.Concurrent.STM.TVar
+import           Control.Exception           (Exception (..), SomeException,
+                                              bracket, throw, try)
+import           Control.Monad               (forever, unless, void)
+import           Control.Monad.IO.Class      (MonadIO (..))
+import           Control.Monad.STM           (atomically)
+import           Data.ByteString             (ByteString)
+import qualified Data.ByteString             as B (cons, empty, isInfixOf)
+import           Data.Typeable               (Typeable)
+import           Periodic.Agent              (Agent, AgentList, feed, msgid)
+import qualified Periodic.Agent              as Agent (newAgent, newEmptyAgent)
+import           Periodic.Connection         (Connection, close, newClientConn,
+                                              receive, send)
+import           Periodic.IOHashMap          (newIOHashMap)
+import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
+                                                    lookup)
+import           Periodic.Transport          (Transport)
 import           Periodic.Types
-import           Periodic.Utils         (breakBS2)
-import           System.Entropy         (getEntropy)
-import           System.Log.Logger      (errorM)
+import           Periodic.Utils              (breakBS2)
+import           System.Entropy              (getEntropy)
+import           System.Log.Logger           (errorM)
 
 newtype MonadFail = MonadFail String
   deriving (Typeable, Show)
@@ -57,9 +59,9 @@ instance Exception MonadFail
 
 data Env u = Env { uEnv :: u, conn :: Connection, agentHandler :: Agent -> IO () }
 
-data SpecEnv u = SpecEnv { sEnv :: Env u, sState :: IORef Bool, sRef :: IOHashMap ByteString Agent }
+data SpecEnv u = SpecEnv { sEnv :: Env u, sState :: TVar Bool, sRef :: AgentList }
 
-newtype GenPeriodic u a = GenPeriodic { unPeriodic :: Env u -> IORef Bool -> IOHashMap ByteString Agent -> IO (Result a) }
+newtype GenPeriodic u a = GenPeriodic { unPeriodic :: Env u -> TVar Bool -> AgentList -> IO (Result a) }
 
 data Result a = Done a
               | Throw SomeException
@@ -98,7 +100,7 @@ instance Applicative (GenPeriodic u) where
 runPeriodic :: Env u -> GenPeriodic u a -> IO a
 runPeriodic env (GenPeriodic m) = do
   ref <- newIOHashMap
-  state <- newIORef True
+  state <- newTVarIO True
   e <- m env state ref
   case e of
     Done a  -> return a
@@ -155,7 +157,7 @@ withAgent :: (Agent -> IO a) -> GenPeriodic u a
 withAgent f = GenPeriodic $ \env state ref ->
   Done <$> bracket (newEmptyAgent env ref) (removeAgent ref) f
 
-newEmptyAgent :: Env u -> IOHashMap ByteString Agent -> IO Agent
+newEmptyAgent :: Env u -> AgentList -> IO Agent
 newEmptyAgent env ref = do
   aid <- genMsgid
   agent <- Agent.newEmptyAgent aid (conn env)
@@ -168,19 +170,19 @@ newEmptyAgent env ref = do
           if B.isInfixOf nullChar aid then genMsgid
                                       else return aid
 
-removeAgent :: IOHashMap ByteString Agent -> Agent -> IO ()
+removeAgent :: AgentList -> Agent -> IO ()
 removeAgent ref a = HM.delete ref (msgid a)
 
-doFeedError :: IOHashMap ByteString Agent -> IO ()
+doFeedError :: AgentList -> IO ()
 doFeedError ref = HM.elems ref >>= mapM_ (`feed` B.empty)
 
 startMainLoop :: IO () -> GenPeriodic u ()
 startMainLoop onClose = GenPeriodic $ \env state ref ->
   Done <$> forever (mainLoop onClose env state ref)
 
-mainLoop :: IO () -> Env u -> IORef Bool -> IOHashMap ByteString Agent -> IO ()
+mainLoop :: IO () -> Env u -> TVar Bool -> AgentList -> IO ()
 mainLoop onClose env state ref = do
-  alive <- atomicModifyIORef' state (\v -> (v, v))
+  alive <- readTVarIO state
   unless alive $ do
     onClose
     doFeedError ref
@@ -193,10 +195,10 @@ mainLoop onClose env state ref = do
     Left _               -> return ()
     Right pl             -> doFeed env state ref pl
 
- where setClose :: IORef Bool -> IO ()
-       setClose state = atomicModifyIORef' state (const (False, ()))
+ where setClose :: TVar Bool -> IO ()
+       setClose state = atomically $ writeTVar state False
 
-doFeed :: Env u -> IORef Bool -> IOHashMap ByteString Agent -> ByteString -> IO ()
+doFeed :: Env u -> TVar Bool -> AgentList -> ByteString -> IO ()
 doFeed env state ref bs = do
   let (pid, pl) = breakBS2 bs
   v <- HM.lookup ref pid
@@ -208,8 +210,7 @@ doFeed env state ref bs = do
         ret <- try $ agentHandler env agent
         case ret of
           Right _                 -> pure ()
-          Left (e::SomeException) ->
-            atomicModifyIORef' state (const (False, ()))
+          Left (e::SomeException) -> atomically $ writeTVar state False
 
 
 -- | Catch an exception in the Haxl monad
@@ -232,8 +233,8 @@ wapperIO f (GenPeriodic m) = GenPeriodic $ \env state ref -> do
     Right a -> return $ Done a
 
 isAlive :: GenPeriodic u Bool
-isAlive = GenPeriodic $ \_ state _ -> Done <$> atomicModifyIORef' state (\v -> (v, v))
+isAlive = GenPeriodic $ \_ state _ -> Done <$> readTVarIO state
 
 stopPeriodic :: GenPeriodic u ()
 stopPeriodic = GenPeriodic $ \_ state _ ->
-  Done <$> atomicModifyIORef' state (const (False, ()))
+  Done <$> atomically (writeTVar state False)

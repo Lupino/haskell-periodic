@@ -35,14 +35,14 @@ import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 import           Periodic.Utils               (breakBS, getEpochTime, readBS)
 
-import           Data.IORef                   (IORef, atomicModifyIORef',
-                                               newIORef)
+import           Control.Concurrent.STM.TVar
+import           Control.Monad.STM            (atomically)
 
 data WorkerEnv = WorkerEnv
   { wSched    :: Scheduler
   , wFuncList :: IOList FuncName
   , wJobQueue :: IOList JobHandle
-  , wLastVist :: IORef Int64
+  , wLastVist :: TVar Int64
   }
 
 type Worker = GenPeriodic WorkerEnv
@@ -53,7 +53,7 @@ newWorker :: Conn.Connection -> Scheduler -> IO Connection
 newWorker conn wSched = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
-  wLastVist <- newIORef =<< getEpochTime
+  wLastVist <- newTVarIO =<< getEpochTime
 
   let wEnv = WorkerEnv {..}
 
@@ -77,7 +77,7 @@ close = stopPeriodic
 getLastVist :: Worker Int64
 getLastVist = do
   WorkerEnv {..} <- userEnv
-  unsafeLiftIO $ atomicModifyIORef' wLastVist (\t -> (t, t))
+  unsafeLiftIO $ readTVarIO wLastVist
 
 workerId :: Worker ByteString
 workerId = Conn.connid . conn <$> env
@@ -85,7 +85,7 @@ workerId = Conn.connid . conn <$> env
 handleAgent :: WorkerEnv -> Agent -> IO ()
 handleAgent w agent = do
   t <- getEpochTime
-  atomicModifyIORef' (wLastVist w) (const (t, ()))
+  atomically $ writeTVar (wLastVist w) t
   cmd <- receive agent :: IO (Either String WorkerCommand)
   case cmd of
     Left e     ->throwIO EmptyError -- close worker

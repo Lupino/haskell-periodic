@@ -35,6 +35,7 @@ library
                      , filepath
                      , hslogger
                      , byteable
+                     , stm
   default-language:    Haskell2010
 
 executable periodicd

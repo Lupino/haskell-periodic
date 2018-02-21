@@ -16,51 +16,51 @@ module Periodic.IOHashMap
   , clear
   ) where
 
-import           Prelude             hiding (lookup, null)
+import           Prelude                     hiding (lookup, null)
 
-import           Data.ByteString     (ByteString)
+import           Control.Concurrent.STM.TVar
+import           Control.Monad.STM           (atomically)
 import           Data.Hashable
-import           Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HM
-import           Data.IORef          (IORef, atomicModifyIORef', newIORef)
+import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as HM
 
-newtype IOHashMap a b = IOHashMap (IORef (HashMap a b))
+newtype IOHashMap a b = IOHashMap (TVar (HashMap a b))
 
 newIOHashMap :: IO (IOHashMap a b)
-newIOHashMap = IOHashMap <$> newIORef HM.empty
+newIOHashMap = IOHashMap <$> newTVarIO HM.empty
 
 insert :: (Eq a, Hashable a) => IOHashMap a b -> a -> b -> IO ()
-insert (IOHashMap h) k v = atomicModifyIORef' h $ \m -> (HM.insert k v m, ())
+insert (IOHashMap h) k v = atomically . modifyTVar' h $ HM.insert k v
 
 delete :: (Eq a, Hashable a) => IOHashMap a b -> a -> IO ()
-delete (IOHashMap h) k = atomicModifyIORef' h $ \m -> (HM.delete k m, ())
+delete (IOHashMap h) k = atomically . modifyTVar' h $ HM.delete k
 
 lookup :: (Eq a, Hashable a) => IOHashMap a b -> a -> IO (Maybe b)
-lookup (IOHashMap h) k = atomicModifyIORef' h $ \m -> (m, HM.lookup k m)
+lookup (IOHashMap h) k = HM.lookup k <$> readTVarIO h
 
 adjust :: (Eq a, Hashable a) => IOHashMap a b -> (b -> b) -> a -> IO ()
-adjust (IOHashMap h) f k = atomicModifyIORef' h $ \m -> (HM.adjust f k m, ())
+adjust (IOHashMap h) f k = atomically . modifyTVar' h $ HM.adjust f k
 
 update :: (Eq a, Hashable a) => IOHashMap a b -> (b -> Maybe b) -> a -> IO ()
-update (IOHashMap h) f k = atomicModifyIORef' h $ \m -> (HM.update f k m, ())
+update (IOHashMap h) f k = atomically . modifyTVar' h $ HM.update f k
 
 alter :: (Eq a, Hashable a) => IOHashMap a b -> (Maybe b -> Maybe b) -> a -> IO ()
-alter (IOHashMap h) f k = atomicModifyIORef' h $ \m -> (HM.alter f k m, ())
+alter (IOHashMap h) f k = atomically . modifyTVar' h $ HM.alter f k
 
 null :: IOHashMap a b -> IO Bool
-null (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.null m)
+null (IOHashMap h) = HM.null <$> readTVarIO h
 
 size :: IOHashMap a b -> IO Int
-size (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.size m)
+size (IOHashMap h) = HM.size <$> readTVarIO h
 
 member :: (Eq a, Hashable a) => IOHashMap a b -> a -> IO Bool
-member (IOHashMap h) k = atomicModifyIORef' h $ \m -> (m, HM.member k m)
+member (IOHashMap h) k = HM.member k <$> readTVarIO h
 
 keys :: IOHashMap a b -> IO [a]
-keys (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.keys m)
+keys (IOHashMap h) = HM.keys <$> readTVarIO h
 
 elems :: IOHashMap a b -> IO [b]
-elems (IOHashMap h) = atomicModifyIORef' h $ \m -> (m, HM.elems m)
+elems (IOHashMap h) = HM.elems <$> readTVarIO h
 
 clear :: IOHashMap a b -> IO ()
-clear (IOHashMap h) = atomicModifyIORef' h $ const (HM.empty, ())
+clear (IOHashMap h) = atomically . modifyTVar' h $ const HM.empty

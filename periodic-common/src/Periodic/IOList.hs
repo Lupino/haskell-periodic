@@ -10,33 +10,31 @@ module Periodic.IOList
   , fromList
   ) where
 
-import           Data.IORef (IORef, atomicModifyIORef', newIORef)
-import qualified Data.List  as L
-import           Prelude    hiding (elem)
+import           Control.Concurrent.STM.TVar
+import           Control.Monad.STM           (atomically)
+import qualified Data.List                   as L
+import           Prelude                     hiding (elem)
 
 
-newtype IOList a = IOList (IORef [a])
-
-modify :: IOList a -> ([a] -> ([a], b)) -> IO b
-modify (IOList h) = atomicModifyIORef' h
+newtype IOList a = IOList (TVar [a])
 
 newIOList :: IO (IOList a)
-newIOList = IOList <$> newIORef []
+newIOList = IOList <$> newTVarIO []
 
 fromList :: [a] -> IO (IOList a)
-fromList l = IOList <$> newIORef l
+fromList l = IOList <$> newTVarIO l
 
 insert :: IOList a -> a -> IO ()
-insert h a = modify h $ \v -> (a:v, ())
+insert (IOList h) a = atomically . modifyTVar' h $ \v -> a:v
 
 append :: IOList a -> a -> IO ()
-append h a = modify h $ \v -> (v ++ [a], ())
+append (IOList h) a = atomically . modifyTVar' h $ \v -> v ++ [a]
 
 elem :: (Eq a) => IOList a -> a -> IO Bool
-elem h a = modify h $ \v -> (v, a `L.elem` v)
+elem (IOList h) a = L.elem a <$> readTVarIO h
 
 delete :: (Eq a) => IOList a -> a -> IO ()
-delete h a = modify h $ \v -> (L.delete a v, ())
+delete (IOList h) a = atomically . modifyTVar' h $ L.delete a
 
 toList :: IOList a -> IO [a]
-toList h = modify h $ \v -> (v, v)
+toList (IOList h) = readTVarIO h
