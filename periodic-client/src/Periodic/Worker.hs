@@ -13,7 +13,7 @@ module Periodic.Worker
   , close
   ) where
 
-import           Control.Concurrent           (forkIO)
+import           Control.Concurrent           (forkFinally, forkIO)
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString              as B (empty)
@@ -121,7 +121,7 @@ work size = do
               workFail
             Just task' -> do
               liftIO $ waitQSem sem
-              void . wapperIO forkIO $ do
+              void . wapperIO (flip forkFinally (const $ signalQSem sem)) $ do
                 catch task' $ \(e :: SomeException) -> do
                   n <- name
                   liftIO $ errorM "Periodic.Worker"
@@ -135,7 +135,6 @@ work size = do
                                   ]
                   workFail
 
-                liftIO $ signalQSem sem
 
 checkHealth :: Worker ()
 checkHealth = do
