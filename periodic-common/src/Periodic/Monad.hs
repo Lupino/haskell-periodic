@@ -45,7 +45,7 @@ import           Periodic.Connection         (Connection, close, newClientConn,
                                               receive, send)
 import           Periodic.IOHashMap          (newIOHashMap)
 import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
-                                                    lookup)
+                                                    lookup, member)
 import           Periodic.Transport          (Transport)
 import           Periodic.Types
 import           Periodic.Utils              (breakBS2)
@@ -161,8 +161,11 @@ newEmptyAgent :: Env u -> AgentList -> IO Agent
 newEmptyAgent env ref = do
   aid <- genMsgid
   agent <- Agent.newEmptyAgent aid (conn env)
-  HM.insert ref aid agent
-  return agent
+  has <- HM.member ref aid
+  if has then newEmptyAgent env ref
+         else do
+          HM.insert ref aid agent
+          return agent
 
   where genMsgid :: IO ByteString
         genMsgid = do
