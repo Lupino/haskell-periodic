@@ -20,7 +20,8 @@ module Periodic.Types.Job
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
-                                               empty, length, null, pack)
+                                               empty, length, null, pack,
+                                               unpack)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
@@ -180,8 +181,8 @@ sepLength = B.length sep
 jHandle :: Job -> JobHandle
 jHandle Job{ jFuncName = FuncName fn
            , jName = JobName jn
-           } = JobHandle $ B.concat [ fn, sep, jn ]
+           } = JobHandle $ B.concat [ fn, sep, B.pack . show $ hash jn ]
 
-unHandle :: JobHandle -> (FuncName, JobName)
+unHandle :: JobHandle -> (FuncName, Int)
 unHandle (JobHandle bs) = go $ B.breakSubstring sep bs
-  where go (fn, jn) = (FuncName fn, JobName $ B.drop sepLength jn)
+  where go (fn, jn) = (FuncName fn, read . B.unpack $ B.drop sepLength jn)

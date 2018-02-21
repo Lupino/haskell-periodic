@@ -24,6 +24,7 @@ module Periodic.Server.Scheduler
 import           Control.Exception            (SomeException, try)
 import           Control.Monad                (unless, void, when)
 import qualified Data.ByteString              as B (concat, readFile, writeFile)
+import           Data.Hashable                (hash)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Periodic.Agent               (Agent, aAlive, send)
@@ -99,7 +100,7 @@ startScheduler sched@Scheduler{..} delay =
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@Scheduler{..} job = do
   exists <- JQ.memberJob sJobQueue fn jn
-  isProc <- PQ.memberJob sProcessJob fn jn
+  isProc <- PQ.memberJob sProcessJob fn (hash jn)
   if exists then JQ.pushJob sJobQueue job
             else unless isProc $ JQ.pushJob sJobQueue job
 
@@ -136,8 +137,8 @@ removeJob sched@Scheduler{..} job = do
   has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
   when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
 
-  isProc <- PQ.memberJob sProcessJob (jFuncName job) (jName job)
-  when isProc $ PQ.removeJob sProcessJob (jFuncName job) (jName job)
+  isProc <- PQ.memberJob sProcessJob (jFuncName job) (hash $ jName job)
+  when isProc $ PQ.removeJob sProcessJob (jFuncName job) (hash $ jName job)
   adjustFuncStat sched (jFuncName job)
 
   startScheduler sched 0
@@ -265,7 +266,7 @@ failJob sched@Scheduler{..} jh = do
 retryJob :: Scheduler -> Job -> IO ()
 retryJob sched@Scheduler{..} job = do
   JQ.pushJob sJobQueue job
-  PQ.removeJob sProcessJob fn jn
+  PQ.removeJob sProcessJob fn (hash jn)
   adjustFuncStat sched fn
   startScheduler sched 0
 
