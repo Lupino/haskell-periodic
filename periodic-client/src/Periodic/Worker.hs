@@ -17,7 +17,7 @@ import           Control.Concurrent           (forkFinally, forkIO)
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString              as B (empty)
-import           Periodic.Agent               (receive, send)
+import           Periodic.Agent               (Agent, receive, send)
 import           Periodic.Job                 (Job, JobEnv (..), func,
                                                initJobEnv, name, workFail)
 import           Periodic.Socket              (connect)
@@ -42,6 +42,9 @@ import           Periodic.Monad
 
 import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
+
+import           Control.Monad                (when)
+import           Data.Maybe                   (fromJust, isJust)
 
 type TaskList = IOHashMap FuncName (Job ())
 type Worker = GenPeriodic TaskList
@@ -72,16 +75,15 @@ ping = withAgent $ \agent -> do
     Right Pong -> return True
     Right _    -> return False
 
-grabJob :: Worker (Maybe JobEnv)
-grabJob  = do
-  pl <- withAgent $ \agent -> do
-          send agent GrabJob
-          receive agent
+grabJob :: Agent -> Worker (Maybe JobEnv)
+grabJob agent = do
+  liftIO $ send agent GrabJob
+  pl <- liftIO . timeout 10000000 $ receive agent
 
   case pl of
-    Left _                   -> pure Nothing
-    Right (JobAssign jh job) -> return $ Just (initJobEnv job jh)
-    _                        -> grabJob
+    Nothing                         -> pure Nothing
+    Just (Right (JobAssign jh job)) -> pure (Just $ initJobEnv job jh)
+    _                               -> pure Nothing
 
 addFunc :: FuncName -> Job () -> Worker ()
 addFunc f j = do
@@ -106,34 +108,33 @@ work size = do
   env0 <- env
   taskList <- userEnv
   sem <- liftIO $ newQSem size
+  agent <- newEmptyAgent
   forever $ do
-    j <- grabJob
-    case j of
-      Nothing -> liftIO $ errorM "Periodic.Worker" "Nothing Job"
-      Just job -> do
-        env1 <- cloneEnv job
-        withEnv env1 $ do
-          f <- func
-          task <- liftIO $ HM.lookup taskList f
-          case task of
-            Nothing -> do
-              withEnv env0 $ removeFunc f
-              workFail
-            Just task' -> do
-              liftIO $ waitQSem sem
-              void . wapperIO (flip forkFinally (const $ signalQSem sem)) $ do
-                catch task' $ \(e :: SomeException) -> do
-                  n <- name
-                  liftIO $ errorM "Periodic.Worker"
-                         $ concat [ "Failing on running job { name = "
-                                  , show n
-                                  , ", "
-                                  , show f
-                                  , " }"
-                                  , "\nError: "
-                                  , show e
-                                  ]
-                  workFail
+    j <- grabJob agent
+    when (isJust j) $ do
+      env1 <- cloneEnv $ fromJust j
+      withEnv env1 $ do
+        f <- func
+        task <- liftIO $ HM.lookup taskList f
+        case task of
+          Nothing -> do
+            withEnv env0 $ removeFunc f
+            workFail
+          Just task' -> do
+            liftIO $ waitQSem sem
+            void . wapperIO (flip forkFinally (const $ signalQSem sem)) $ do
+              catch task' $ \(e :: SomeException) -> do
+                n <- name
+                liftIO $ errorM "Periodic.Worker"
+                       $ concat [ "Failing on running job { name = "
+                                , show n
+                                , ", "
+                                , show f
+                                , " }"
+                                , "\nError: "
+                                , show e
+                                ]
+                workFail
 
 
 checkHealth :: Worker ()

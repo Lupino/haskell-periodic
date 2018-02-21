@@ -17,6 +17,7 @@ module Periodic.Monad
   , userEnv
   , unsafeLiftIO
   , withAgent
+  , newEmptyAgent
 
   , SpecEnv
   , specEnv
@@ -154,15 +155,19 @@ instance MonadIO (GenPeriodic u) where
   liftIO = unsafeLiftIO
 
 withAgent :: (Agent -> IO a) -> GenPeriodic u a
-withAgent f = GenPeriodic $ \env state ref ->
-  Done <$> bracket (newEmptyAgent env ref) (removeAgent ref) f
+withAgent f = GenPeriodic $ \env _ ref ->
+  Done <$> bracket (newEmptyAgent_ env ref) (removeAgent ref) f
 
-newEmptyAgent :: Env u -> AgentList -> IO Agent
-newEmptyAgent env ref = do
+newEmptyAgent :: GenPeriodic u Agent
+newEmptyAgent = GenPeriodic $ \env _ ref ->
+  Done <$> newEmptyAgent_ env ref
+
+newEmptyAgent_ :: Env u -> AgentList -> IO Agent
+newEmptyAgent_ env ref = do
   aid <- genMsgid
   agent <- Agent.newEmptyAgent aid (conn env)
   has <- HM.member ref aid
-  if has then newEmptyAgent env ref
+  if has then newEmptyAgent_ env ref
          else do
           HM.insert ref aid agent
           return agent
