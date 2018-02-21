@@ -40,8 +40,7 @@ clearTimer_ Timer{..} = do
     st <- readTVar state
     writeTVar state False
     return st
-  when (started) $ do
-    killThread =<< readTVarIO timer
+  when started $ killThread =<< readTVarIO timer
 
 -- | startTimer for a given number of microseconds
 --

@@ -113,33 +113,32 @@ handleConnection sched clientList workerList transport = do
             Right _                   -> next
 
 runCheckWorkerState :: WorkerList -> Int64 -> IO ()
-runCheckWorkerState ref alive = void . forkIO . forever $ do
-  threadDelay $ fromIntegral alive * 1000 * 1000
-  mapM_ checkAlive =<< HM.elems ref
-  size <- HM.size ref
-  errorM "Periodic.Server" $ "Total Worker: " ++ show size
+runCheckWorkerState ref alive = runCheckState "Worker" ref (checkWorkerState ref alive) alive
 
-  where checkAlive :: Worker.Connection -> IO ()
-        checkAlive w = do
-          expiredAt <- (alive +) <$> runWorker w Worker.getLastVist
-          now <- getEpochTime
-          when (now > expiredAt) $ do
-            runWorker w Worker.close
-            wid <- runWorker w Worker.workerId
-            HM.delete ref wid
+checkWorkerState :: WorkerList -> Int64 -> Worker.Connection -> IO ()
+checkWorkerState ref alive w = do
+  expiredAt <- (alive +) <$> runWorker w Worker.getLastVist
+  now <- getEpochTime
+  when (now > expiredAt) $ do
+    runWorker w Worker.close
+    wid <- runWorker w Worker.workerId
+    HM.delete ref wid
 
 runCheckClientState :: ClientList -> Int64 -> IO ()
-runCheckClientState ref alive = void . forkIO . forever $ do
+runCheckClientState ref alive = runCheckState "Client" ref (checkClientState ref alive) alive
+
+checkClientState :: ClientList -> Int64 -> Client.Connection -> IO ()
+checkClientState ref alive c = do
+  expiredAt <- (alive +) <$> runClient c Client.getLastVist
+  now <- getEpochTime
+  when (now > expiredAt) $ do
+    runClient c Client.close
+    cid <- runClient c Client.clientId
+    HM.delete ref cid
+
+runCheckState :: String -> IOHashMap a b -> (b -> IO ()) -> Int64 -> IO ()
+runCheckState var ref checkAlive alive = void . forkIO . forever $ do
   threadDelay $ fromIntegral alive * 1000 * 1000
   mapM_ checkAlive =<< HM.elems ref
   size <- HM.size ref
-  errorM "Periodic.Server" $ "Total Client: " ++ show size
-
-  where checkAlive :: Client.Connection -> IO ()
-        checkAlive c = do
-          expiredAt <- (alive +) <$> runClient c Client.getLastVist
-          now <- getEpochTime
-          when (now > expiredAt) $ do
-            runClient c Client.close
-            cid <- runClient c Client.clientId
-            HM.delete ref cid
+  errorM "Periodic.Server" $ "Total " ++ var ++ ": " ++ show size
