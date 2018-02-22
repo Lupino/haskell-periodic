@@ -35,15 +35,16 @@ import qualified Periodic.Connection          as Conn (receive, send)
 import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
 
+import           Control.Concurrent.Async     (async, waitAnyCancel)
 import           Control.Concurrent.QSem
 import           Control.Exception            (SomeException, throwIO)
-import           Control.Monad                (forever, unless, void)
+import           Control.Monad                (forever, replicateM, unless,
+                                               void, when)
 import           Periodic.Monad
 
 import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
 
-import           Control.Monad                (when)
 import           Data.Maybe                   (fromJust, isJust)
 
 type TaskList = IOHashMap FuncName (Job ())
@@ -103,9 +104,13 @@ removeFunc f = do
 
 work :: Int -> Worker ()
 work size = do
+  asyncs <- replicateM size $ wapperIO async work_
+  void . liftIO $ waitAnyCancel asyncs
+
+work_ :: Worker ()
+work_ = do
   env0 <- env
   taskList <- userEnv
-  sem <- liftIO $ newQSem size
   agent <- newEmptyAgent
   forever $ do
     j <- grabJob agent
@@ -118,18 +123,16 @@ work size = do
           Nothing -> do
             withEnv env0 $ removeFunc f
             workFail
-          Just task' -> do
-            liftIO $ waitQSem sem
-            void . wapperIO (flip forkFinally (const $ signalQSem sem)) $ do
-              catch task' $ \(e :: SomeException) -> do
-                n <- name
-                liftIO $ errorM "Periodic.Worker"
-                       $ concat [ "Failing on running job { name = "
-                                , show n
-                                , ", "
-                                , show f
-                                , " }"
-                                , "\nError: "
-                                , show e
-                                ]
-                workFail
+          Just task' ->
+            catch task' $ \(e :: SomeException) -> do
+              n <- name
+              liftIO $ errorM "Periodic.Worker"
+                     $ concat [ "Failing on running job { name = "
+                              , show n
+                              , ", "
+                              , show f
+                              , " }"
+                              , "\nError: "
+                              , show e
+                              ]
+              workFail
