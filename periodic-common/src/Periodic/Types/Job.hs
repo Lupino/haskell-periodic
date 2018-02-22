@@ -13,6 +13,7 @@ module Periodic.Types.Job
   , newJob
   , decodeJob
   , encodeJob
+  , hashJobName
   , jHandle
   , unHandle
   ) where
@@ -22,10 +23,12 @@ import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
                                                empty, length, null, pack,
                                                unpack)
+import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
 
+import           Data.Binary             (encode)
 import           Data.Maybe              (catMaybes)
 import           Data.Store              (Store)
 import           Data.String             (IsString (..))
@@ -178,11 +181,14 @@ sep = "::"
 sepLength :: Int
 sepLength = B.length sep
 
+hashJobName :: JobName -> ByteString
+hashJobName jn = toStrict . encode $ hash jn
+
 jHandle :: Job -> JobHandle
 jHandle Job{ jFuncName = FuncName fn
-           , jName = JobName jn
-           } = JobHandle $ B.concat [ fn, sep, B.pack . show $ hash jn ]
+           , jName = jn
+           } = JobHandle $ B.concat [ fn, sep, hashJobName jn ]
 
-unHandle :: JobHandle -> (FuncName, Int)
+unHandle :: JobHandle -> (FuncName, ByteString)
 unHandle (JobHandle bs) = go $ B.breakSubstring sep bs
-  where go (fn, jn) = (FuncName fn, read . B.unpack $ B.drop sepLength jn)
+  where go (fn, jn) = (FuncName fn, B.drop sepLength jn)
