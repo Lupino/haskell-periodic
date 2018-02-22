@@ -12,7 +12,7 @@ module Periodic.Server.GrabQueue
   ) where
 
 import           Control.Arrow   ((&&&))
-import           Control.Monad   (when)
+import           Control.Monad   (unless)
 import           Data.ByteString (ByteString)
 import           Periodic.Agent  (Agent, agentid)
 import           Periodic.IOList (IOList, append, delete, elem, newIOList,
@@ -42,7 +42,7 @@ newGrabQueue = newIOList
 pushAgent :: GrabQueue -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
 pushAgent q gFuncList gJobQueue gAgent = do
   has <- elem q i
-  when (not has) $ append q i
+  unless has $ append q i
   where i = GrabItem {..}
 
 popMaybeAgent :: GrabQueue -> FuncName -> IO (Maybe (IOList JobHandle, Agent))
