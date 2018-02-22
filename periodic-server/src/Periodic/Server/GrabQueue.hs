@@ -6,10 +6,8 @@ module Periodic.Server.GrabQueue
   , newGrabQueue
   , GrabItem (..)
   , pushAgent
-  , popMaybeAgent
   , popAgentSTM
   , popAgentList
-  , hasAgent
   ) where
 
 import           Control.Arrow     ((&&&))
@@ -47,22 +45,6 @@ pushAgent q gFuncList gJobQueue gAgent = do
   unless has $ append q i
   where i = GrabItem {..}
 
-popMaybeAgent :: GrabQueue -> FuncName -> IO (Maybe (IOList JobHandle, Agent))
-popMaybeAgent q n = do
-  item <- go =<< toList q
-  case item of
-    Nothing -> return Nothing
-    Just i  -> do
-      delete q i
-      return (Just (gJobQueue i, gAgent i))
-
- where go :: [GrabItem] -> IO (Maybe GrabItem)
-       go [] = return Nothing
-       go (x:xs) = do
-         has <- elem (gFuncList x) n
-         if has then return (Just x)
-                else go xs
-
 popAgentSTM :: GrabQueue -> FuncName -> STM (IOList JobHandle, Agent)
 popAgentSTM q n = do
   item <- go =<< toListSTM q
@@ -89,12 +71,3 @@ popAgentList q n = do
          xs' <- go xs
          if has then pure (x:xs')
                 else pure xs'
-
-hasAgent :: GrabQueue -> FuncName -> IO Bool
-hasAgent q n = go =<< toList q
- where go :: [GrabItem] -> IO Bool
-       go [] = return False
-       go (x:xs) = do
-         has <- elem (gFuncList x) n
-         if has then return True
-                else go xs

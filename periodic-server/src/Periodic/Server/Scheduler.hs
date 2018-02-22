@@ -61,7 +61,6 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sGrabQueue    :: GrabQueue
                            , sJobQueue     :: JobQueue
                            , sProcessJob   :: ProcessQueue
-                           , sMainTimer    :: Timer
                            , sRevertTimer  :: Timer
                            , sStoreTimer   :: Timer
                            , sStorePath    :: FilePath
@@ -78,7 +77,6 @@ newScheduler path sCleanup = do
   sJobQueue      <- newIOHashMap
   sProcessJob    <- newIOHashMap
   sAsyncJob      <- newIOHashMap
-  sMainTimer     <- newTimer
   sRevertTimer   <- newTimer
   sStoreTimer    <- newTimer
   sAlive         <- newTVarIO True
@@ -307,8 +305,8 @@ shutdown sched@Scheduler{..} = L.with sLocker $ do
     writeTVar sAlive False
     return t
   when alive $ do
-    clearTimer sMainTimer
     clearTimer sRevertTimer
     clearTimer sStoreTimer
+    mapM_ cancel =<< FL.elems sAsyncJob
     saveJob sched
     void $ forkIO sCleanup
