@@ -37,6 +37,7 @@ library
                      , byteable
                      , stm
                      , hashable
+                     , async
   default-language:    Haskell2010
 
 executable periodicd

@@ -7,18 +7,20 @@ module Periodic.Server.GrabQueue
   , GrabItem (..)
   , pushAgent
   , popMaybeAgent
+  , popAgentSTM
   , popAgentList
   , hasAgent
   ) where
 
-import           Control.Arrow   ((&&&))
-import           Control.Monad   (unless)
-import           Data.ByteString (ByteString)
-import           Periodic.Agent  (Agent, agentid)
-import           Periodic.IOList (IOList, append, delete, elem, newIOList,
-                                  toList)
-import           Periodic.Types  (FuncName, JobHandle)
-import           Prelude         hiding (elem)
+import           Control.Arrow     ((&&&))
+import           Control.Monad     (unless)
+import           Control.Monad.STM (STM, atomically, retry)
+import           Data.ByteString   (ByteString)
+import           Periodic.Agent    (Agent, agentid)
+import           Periodic.IOList   (IOList, append, delete, deleteSTM, elem,
+                                    elemSTM, newIOList, toList, toListSTM)
+import           Periodic.Types    (FuncName, JobHandle)
+import           Prelude           hiding (elem)
 
 data GrabItem = GrabItem { gFuncList :: IOList FuncName
                          , gAgent    :: Agent
@@ -59,6 +61,19 @@ popMaybeAgent q n = do
        go (x:xs) = do
          has <- elem (gFuncList x) n
          if has then return (Just x)
+                else go xs
+
+popAgentSTM :: GrabQueue -> FuncName -> STM (IOList JobHandle, Agent)
+popAgentSTM q n = do
+  item <- go =<< toListSTM q
+  deleteSTM q item
+  return (gJobQueue item, gAgent item)
+
+ where go :: [GrabItem] -> STM GrabItem
+       go [] = retry
+       go (x:xs) = do
+         has <- elemSTM (gFuncList x) n
+         if has then return x
                 else go xs
 
 popAgentList :: GrabQueue -> FuncName -> IO [(IOList JobHandle, Agent)]

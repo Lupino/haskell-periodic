@@ -22,12 +22,12 @@ module Periodic.Server.Scheduler
   ) where
 
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (unless, void, when)
+import           Control.Monad                (forever, unless, void, when)
 import qualified Data.ByteString              as B (concat, readFile, writeFile)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Periodic.Agent               (Agent, aAlive, send)
-import           Periodic.IOHashMap           (newIOHashMap)
+import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as FL
 import           Periodic.IOList              (IOList)
 import qualified Periodic.IOList              as IL
@@ -49,9 +49,11 @@ import           System.Directory             (createDirectoryIfMissing,
                                                doesFileExist)
 import           System.FilePath              ((</>))
 
-import           Control.Concurrent           (forkIO)
+import           Control.Concurrent           (forkIO, killThread, myThreadId,
+                                               threadDelay)
+import           Control.Concurrent.Async     (Async, async, cancel)
 import           Control.Concurrent.STM.TVar
-import           Control.Monad.STM            (atomically)
+import           Control.Monad.STM            (atomically, retry)
 
 
 data Scheduler = Scheduler { sFuncStatList :: FuncStatList
@@ -65,6 +67,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sStorePath    :: FilePath
                            , sCleanup      :: IO ()
                            , sAlive        :: TVar Bool
+                           , sAsyncJob     :: IOHashMap JobHandle (Async ())
                            }
 
 newScheduler :: FilePath -> IO () -> IO Scheduler
@@ -74,6 +77,7 @@ newScheduler path sCleanup = do
   sGrabQueue     <- newGrabQueue
   sJobQueue      <- newIOHashMap
   sProcessJob    <- newIOHashMap
+  sAsyncJob      <- newIOHashMap
   sMainTimer     <- newTimer
   sRevertTimer   <- newTimer
   sStoreTimer    <- newTimer
@@ -86,29 +90,82 @@ newScheduler path sCleanup = do
   when exists $ mapM_ (restoreJob sched) =<< loadJob sched
   mapM_ (adjustFuncStat sched) =<< FL.keys sJobQueue
 
-  startScheduler sched 0
   repeatTimer' sRevertTimer 300 $ revertProcessQueue sched
   repeatTimer' sStoreTimer  300 $ saveJob sched
 
   return sched
 
-startScheduler :: Scheduler -> Int -> IO ()
-startScheduler sched@Scheduler{..} delay =
-  startTimer' sMainTimer delay $ processJob sched
-
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@Scheduler{..} job = do
   exists <- JQ.memberJob sJobQueue fn jn
   isProc <- PQ.memberJob sProcessJob fn (hashJobName jn)
-  if exists then JQ.pushJob sJobQueue job
-            else unless isProc $ JQ.pushJob sJobQueue job
+  if exists then doPushJob
+            else unless isProc $ doPushJob
 
   adjustFuncStat sched fn
-  startScheduler sched 0
 
   where fn = jFuncName job
         jh = jHandle job
         jn = jName job
+
+        doPushJob :: IO ()
+        doPushJob = do
+          w <- FL.lookup sAsyncJob (jHandle job)
+          when (isJust w) $ do
+            cancel (fromJust w)
+            FL.delete sAsyncJob (jHandle job)
+
+          w' <- runJob sched job
+          FL.insert sAsyncJob (jHandle job) w'
+
+          JQ.pushJob sJobQueue job
+
+
+runJob :: Scheduler -> Job -> IO (Async ())
+runJob sched@Scheduler{..} job@Job{..} = async . forever $ do
+  now <- getEpochTime
+  when (jSchedAt > now) . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
+  FuncStat{..} <- atomically $ do
+    st <- FL.lookupSTM sFuncStatList jFuncName
+    case st of
+      Nothing                  -> retry
+      Just FuncStat{sWorker=0} -> retry
+      Just st'                 -> pure st'
+  if sBroadcast then popAgentListThen $ doneSubmitJob True
+                else popAgentThen $ doneSubmitJob False
+
+  where popAgentThen :: (Agent -> IO ()) -> IO ()
+        popAgentThen done = do
+          (jq, agent) <- atomically $ popAgentSTM sGrabQueue jFuncName
+          alive <- aAlive agent
+          if alive then IL.insert jq (jHandle job) >> done agent
+                   else pure () -- retry
+
+        popAgentListThen :: (Agent -> IO ()) -> IO ()
+        popAgentListThen done = do
+          agents <- popAgentList sGrabQueue jFuncName
+          mapM_ (done . snd) agents
+          unless (null agents) $ doneJob
+
+        doneSubmitJob :: Bool -> Agent -> IO ()
+        doneSubmitJob cast agent = do
+          e <- try $ assignJob agent job
+          case e of
+            Left (_::SomeException) -> pure () -- retry
+            Right _ -> do
+              unless cast $ do
+                nextSchedAt <- getEpochTime
+                PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
+
+              adjustFuncStat sched jFuncName
+
+              doneJob
+
+        doneJob :: IO ()
+        doneJob = do
+          JQ.removeJob sJobQueue jFuncName jName
+          FL.delete sAsyncJob (jHandle job)
+          killThread =<< myThreadId
 
 adjustFuncStat :: Scheduler -> FuncName -> IO ()
 adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
@@ -140,7 +197,10 @@ removeJob sched@Scheduler{..} job = do
   when isProc $ PQ.removeJob sProcessJob (jFuncName job) (hashJobName $ jName job)
   adjustFuncStat sched (jFuncName job)
 
-  startScheduler sched 0
+  w <- FL.lookup sAsyncJob (jHandle job)
+  when (isJust w) $ do
+    cancel (fromJust w)
+    FL.delete sAsyncJob (jHandle job)
 
 dumpJob :: Scheduler -> IO [Job]
 dumpJob Scheduler{..} = do
@@ -161,7 +221,6 @@ addFunc sched n = broadcastFunc sched n False
 broadcastFunc :: Scheduler -> FuncName -> Bool -> IO ()
 broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
-  startScheduler sched 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
@@ -170,7 +229,6 @@ broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $ do
 removeFunc :: Scheduler -> FuncName -> IO ()
 removeFunc sched@Scheduler{..} n = L.with sLocker $ do
   FL.alter sFuncStatList updateStat n
-  startScheduler sched 0
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
@@ -187,68 +245,6 @@ dropFunc Scheduler{..} n = L.with sLocker $ do
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
 pushGrab sched@Scheduler{..} fl jh ag = do
   pushAgent sGrabQueue fl jh ag
-  startScheduler sched 0
-
-processJob :: Scheduler -> IO ()
-processJob sched@Scheduler{..} = do
-  st <- getFirstSched sFuncStatList sGrabQueue
-  case st of
-    Nothing -> startScheduler sched 100
-    Just st' -> do
-      now <- getEpochTime
-      if now < sSchedAt st' then startScheduler sched (fromIntegral $ sSchedAt st' - now)
-                            else submitJob now st'
-
-  where revertJob :: Job -> IO ()
-        revertJob job = do
-          JQ.pushJob sJobQueue job
-          startScheduler sched 0
-
-        popJobThen :: Int64 -> FuncStat -> (Job -> IO ()) -> IO ()
-        popJobThen now st done = do
-          job <- JQ.popJob sJobQueue (sFuncName st)
-          case job of
-            Nothing -> do
-              adjustFuncStat sched (sFuncName st)
-              startScheduler sched 0
-            Just job' -> if jSchedAt job' > now then revertJob job'
-                                                else done job'
-
-        popMaybeAgentThen :: FuncStat -> (Agent -> Job -> IO ()) -> Job -> IO ()
-        popMaybeAgentThen st done job = do
-          agent <- popMaybeAgent sGrabQueue (sFuncName st)
-          case agent of
-            Nothing           -> revertJob job
-            Just (jq, agent') -> do
-              alive <- aAlive agent'
-              if alive then IL.insert jq (jHandle job) >> done agent' job
-                       else revertJob job
-
-        popAgentListThen :: FuncStat -> (Agent -> Job -> IO ()) -> Job -> IO ()
-        popAgentListThen st done job = do
-          agents <- popAgentList sGrabQueue (sFuncName st)
-          when (null agents) $ revertJob job
-          mapM_ (flip done job . snd) agents
-
-        doneSubmitJob :: Bool -> Agent -> Job -> IO ()
-        doneSubmitJob cast agent job = do
-          e <- try $ assignJob agent job
-          case e of
-            Left (_::SomeException) -> unless cast $ revertJob job
-            Right _ -> do
-              unless cast $ do
-                nextSchedAt <- getEpochTime
-                PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
-
-              adjustFuncStat sched (jFuncName job)
-              startScheduler sched 0
-
-        prepareAgent :: FuncStat -> (Bool -> Agent -> Job -> IO ()) -> Job -> IO ()
-        prepareAgent st@FuncStat{sBroadcast=True} done  = popAgentListThen st (done True)
-        prepareAgent st@FuncStat{sBroadcast=False} done = popMaybeAgentThen st (done False)
-
-        submitJob :: Int64 -> FuncStat -> IO ()
-        submitJob now st = popJobThen now st $ prepareAgent st doneSubmitJob
 
 assignJob :: Agent -> Job -> IO ()
 assignJob agent job = send agent (JobAssign (jHandle job) job)
@@ -267,7 +263,9 @@ retryJob sched@Scheduler{..} job = do
   JQ.pushJob sJobQueue job
   PQ.removeJob sProcessJob fn (hashJobName jn)
   adjustFuncStat sched fn
-  startScheduler sched 0
+
+  w <- runJob sched job
+  FL.insert sAsyncJob (jHandle job) w
 
   where  fn = jFuncName job
          jn = jName job

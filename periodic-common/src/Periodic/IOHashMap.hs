@@ -14,12 +14,14 @@ module Periodic.IOHashMap
   , keys
   , elems
   , clear
+
+  , lookupSTM
   ) where
 
 import           Prelude                     hiding (lookup, null)
 
 import           Control.Concurrent.STM.TVar
-import           Control.Monad.STM           (atomically)
+import           Control.Monad.STM           (STM, atomically)
 import           Data.Hashable
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HM
@@ -64,3 +66,6 @@ elems (IOHashMap h) = HM.elems <$> readTVarIO h
 
 clear :: IOHashMap a b -> IO ()
 clear (IOHashMap h) = atomically . modifyTVar' h $ const HM.empty
+
+lookupSTM :: (Eq a, Hashable a) => IOHashMap a b -> a -> STM (Maybe b)
+lookupSTM (IOHashMap h) k = HM.lookup k <$> readTVar h
