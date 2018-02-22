@@ -15,7 +15,8 @@ import qualified Data.ByteString.Lazy.Char8     as LB (hPut, lines, putStr)
 import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
 import qualified Data.Text                      as T (unpack)
-import           Data.Text.Encoding             (decodeUtf8)
+import           Data.Text.Encoding             (decodeUtf8With)
+import           Data.Text.Encoding.Error       (ignore)
 import           Periodic.Job                   (Job, name, schedLater,
                                                  workDone, workFail, workload)
 import           Periodic.Socket                (getService)
@@ -147,4 +148,4 @@ processWorker cmd argv = do
            Just later -> schedLater later
 
 unpackBS :: B.ByteString -> String
-unpackBS = T.unpack . decodeUtf8
+unpackBS = T.unpack . decodeUtf8With ignore
