@@ -98,7 +98,7 @@ pushJob sched@Scheduler{..} job = do
   exists <- JQ.memberJob sJobQueue fn jn
   isProc <- PQ.memberJob sProcessJob fn (hashJobName jn)
   if exists then doPushJob
-            else unless isProc $ doPushJob
+            else unless isProc doPushJob
 
   adjustFuncStat sched fn
 
@@ -143,7 +143,7 @@ runJob sched@Scheduler{..} job@Job{..} = async . forever $ do
         popAgentListThen done = do
           agents <- popAgentList sGrabQueue jFuncName
           mapM_ (done . snd) agents
-          unless (null agents) $ doneJob
+          unless (null agents) doneJob
 
         doneSubmitJob :: Bool -> Agent -> IO ()
         doneSubmitJob cast agent = do
@@ -217,7 +217,7 @@ addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched n = broadcastFunc sched n False
 
 broadcastFunc :: Scheduler -> FuncName -> Bool -> IO ()
-broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $ do
+broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $
   FL.alter sFuncStatList updateStat n
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
@@ -225,7 +225,7 @@ broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $ do
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc sched@Scheduler{..} n = L.with sLocker $ do
+removeFunc sched@Scheduler{..} n = L.with sLocker $
   FL.alter sFuncStatList updateStat n
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
@@ -241,8 +241,7 @@ dropFunc Scheduler{..} n = L.with sLocker $ do
       FL.delete sJobQueue n
 
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
-pushGrab sched@Scheduler{..} fl jh ag = do
-  pushAgent sGrabQueue fl jh ag
+pushGrab sched@Scheduler{..} = pushAgent sGrabQueue
 
 assignJob :: Agent -> Job -> IO ()
 assignJob agent job = send agent (JobAssign (jHandle job) job)
