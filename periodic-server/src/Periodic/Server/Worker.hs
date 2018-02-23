@@ -57,7 +57,7 @@ newWorker conn wSched = do
 
   let wEnv = WorkerEnv {..}
 
-  env0 <- initEnv_ (handleAgent wEnv) conn wEnv
+  env0 <- initEnv_ handleAgent conn wEnv
   runPeriodic env0 specEnv
 
 runWorker :: Connection -> Worker a -> IO a
@@ -82,46 +82,39 @@ getLastVist = do
 workerId :: Worker ByteString
 workerId = Conn.connid . conn <$> env
 
-handleAgent :: WorkerEnv -> Agent -> IO ()
-handleAgent w agent = do
-  t <- getEpochTime
-  atomically $ writeTVar (wLastVist w) t
-  cmd <- receive agent :: IO (Either String WorkerCommand)
+handleAgent :: Agent -> Worker ()
+handleAgent agent = do
+  WorkerEnv {..} <- userEnv
+  unsafeLiftIO $ do
+    t <- getEpochTime
+    atomically $ writeTVar wLastVist t
+  cmd <- unsafeLiftIO $ receive agent :: Worker (Either String WorkerCommand)
   case cmd of
-    Left e     ->throwIO EmptyError -- close worker
-    Right cmd' -> go agent cmd'
-  where go :: Agent -> WorkerCommand -> IO ()
-        go ag GrabJob            = pushGrab sc fl jq ag
-        go _ (WorkDone jh)       = doneJob sc jh >> delete jq jh
-        go _ (WorkFail jh)       = failJob sc jh >> delete jq jh
-        go _ (SchedLater jh l s) = schedLaterJob sc jh l s >> delete jq jh
-        go ag Sleep              = send ag Noop
-        go ag Ping               = send ag Pong
-        go _ (CanDo fn)          = handleCanDo sc fl fn
-        go _ (CantDo fn)         = handleCantDo sc fl fn
-        go _ (Broadcast fn)      = handleBroadcast sc fl fn
-
-        sc = wSched w
-        fl = wFuncList w
-        jq = wJobQueue w
-
-handleCanDo :: Scheduler -> IOList FuncName -> FuncName -> IO ()
-handleCanDo sched fl fn = do
-  has <- elem fl fn
-  unless has $ do
-    addFunc sched fn
-    insert fl fn
-
-handleCantDo :: Scheduler -> IOList FuncName -> FuncName -> IO ()
-handleCantDo sched fl fn = do
-  has <- elem fl fn
-  when has $ do
-    removeFunc sched fn
-    delete fl fn
-
-handleBroadcast :: Scheduler -> IOList FuncName -> FuncName -> IO ()
-handleBroadcast sched fl fn = do
-  has <- elem fl fn
-  unless has $ do
-    broadcastFunc sched fn True
-    insert fl fn
+    Left e     -> close -- close worker
+    Right GrabJob -> unsafeLiftIO $ pushGrab wSched wFuncList wJobQueue agent
+    Right (WorkDone jh) -> unsafeLiftIO $ do
+      doneJob wSched jh
+      delete wJobQueue jh
+    Right (WorkFail jh) -> unsafeLiftIO $ do
+      failJob wSched jh
+      delete wJobQueue jh
+    Right (SchedLater jh l s) -> unsafeLiftIO $ do
+      schedLaterJob wSched jh l s
+      delete wJobQueue jh
+    Right Sleep -> unsafeLiftIO $ send agent Noop
+    Right Ping -> unsafeLiftIO $ send agent Pong
+    Right (CanDo fn) -> unsafeLiftIO $ do
+      has <- elem wFuncList fn
+      unless has $ do
+        addFunc wSched fn
+        insert wFuncList fn
+    Right (CantDo fn) -> unsafeLiftIO $ do
+      has <- elem wFuncList fn
+      when has $ do
+        removeFunc wSched fn
+        delete wFuncList fn
+    Right (Broadcast fn) -> unsafeLiftIO $ do
+      has <- elem wFuncList fn
+      unless has $ do
+        broadcastFunc wSched fn True
+        insert wFuncList fn

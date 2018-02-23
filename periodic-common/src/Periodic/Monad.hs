@@ -12,6 +12,7 @@ module Periodic.Monad
   , initEnv
   , initEnv_
   , cloneEnv
+  , cloneEnv_
   , withEnv
   , env
   , userEnv
@@ -58,7 +59,7 @@ newtype MonadFail = MonadFail String
 
 instance Exception MonadFail
 
-data Env u = Env { uEnv :: u, conn :: Connection, agentHandler :: Agent -> IO () }
+data Env u = Env { uEnv :: u, conn :: Connection, agentHandler :: Agent -> GenPeriodic u () }
 
 data SpecEnv u = SpecEnv { sEnv :: Env u, sState :: TVar Bool, sRef :: AgentList }
 
@@ -115,18 +116,22 @@ runPeriodicWithSpecEnv (SpecEnv env state ref) (GenPeriodic m) = do
     Throw e -> throw e
 
 initEnv :: Connection -> u -> IO (Env u)
-initEnv = initEnv_ handler
-  where handler :: Agent -> IO ()
-        handler agent =
-          errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
-          where pid = msgid agent
+initEnv = initEnv_ defaultHandler
 
-initEnv_ :: (Agent -> IO ()) -> Connection -> u -> IO (Env u)
+defaultHandler :: Agent -> GenPeriodic u ()
+defaultHandler agent =
+  unsafeLiftIO $ errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
+  where pid = msgid agent
+
+initEnv_ :: (Agent -> GenPeriodic u ()) -> Connection -> u -> IO (Env u)
 initEnv_ agentHandler conn uEnv =
   return Env {..}
 
 cloneEnv :: u1 -> GenPeriodic u (Env u1)
-cloneEnv u = GenPeriodic $ \env _ _ -> return . Done $ env { uEnv = u }
+cloneEnv u = cloneEnv_ u defaultHandler
+
+cloneEnv_ :: u1 -> (Agent -> GenPeriodic u1 ()) -> GenPeriodic u (Env u1)
+cloneEnv_ u h = GenPeriodic $ \env _ _ -> return . Done $ env { uEnv = u, agentHandler = h }
 
 withEnv :: Env u1 -> GenPeriodic u1 a -> GenPeriodic u a
 withEnv newEnv (GenPeriodic m) = GenPeriodic $ \_ state ref -> do
@@ -215,7 +220,7 @@ doFeed env state ref bs = do
     Nothing    -> do
       agent <- Agent.newAgent bs (conn env)
       void . forkIO $ do
-        ret <- try $ agentHandler env agent
+        ret <- try $ unPeriodic (agentHandler env agent) env state ref
         case ret of
           Right _                 -> pure ()
           Left (e::SomeException) -> atomically $ writeTVar state False

@@ -18,7 +18,7 @@ module Periodic.Server.Client
 import           Control.Exception            (throwIO)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
-import qualified Data.ByteString.Char8        as B (concat, intercalate, pack)
+import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.Foldable                (forM_)
 import qualified Periodic.Connection          as Conn (Connection, connid)
 
@@ -45,7 +45,7 @@ type Connection = SpecEnv (TVar Int64)
 newClient :: Conn.Connection -> Scheduler -> IO Connection
 newClient conn sched = do
   lastVist <- newTVarIO =<< getEpochTime
-  env0 <- initEnv_ (handleAgent sched lastVist) conn lastVist
+  env0 <- initEnv_ (handleAgent sched) conn lastVist
   runPeriodic env0 specEnv
 
 runClient :: Connection -> Client a -> IO a
@@ -65,67 +65,32 @@ getLastVist = do
 clientId :: Client ByteString
 clientId = Conn.connid . conn <$> env
 
-handleAgent :: Scheduler -> TVar Int64 -> Agent -> IO ()
-handleAgent sched lastVist agent = do
-  t <- getEpochTime
-  atomically $ writeTVar lastVist t
-  cmd <- receive agent :: IO (Either String ClientCommand)
+handleAgent :: Scheduler -> Agent -> Client ()
+handleAgent sched agent = do
+  lastVist <- userEnv
+  unsafeLiftIO $ do
+    t <- getEpochTime
+    atomically $ writeTVar lastVist t
+
+  cmd <- unsafeLiftIO $ receive agent :: Client (Either String ClientCommand)
   case cmd of
-    Left e     -> throwIO EmptyError -- close client
-    Right cmd' -> go agent cmd'
-  where go :: Agent -> ClientCommand -> IO ()
-        go agent (SubmitJob job) = handleSubmitJob sched agent job
-        go agent Status          = handleStatus sched agent
-        go agent Ping            = send agent Pong
-        go agent (DropFunc fn)   = handleDropFunc sched agent fn
-        go agent (RemoveJob job) = handleRemoveJob sched agent job
-        go agent Dump            = handleDump sched agent
-        go _ (Load dat)          = handleLoad sched dat
-        go _ Shutdown            = handleShutdown sched
-
-handleSubmitJob :: Scheduler -> Agent -> Job -> IO ()
-handleSubmitJob sc ag j = do
-  pushJob sc j
-  send ag Success
-
-handleStatus :: Scheduler -> Agent -> IO ()
-handleStatus sc ag = do
-  stats <- map go <$> status sc
-  send_ ag $ B.intercalate "\n" stats
-
-  where go :: FuncStat -> ByteString
-        go FuncStat{..} = B.concat [ toBytes sFuncName
-                                   , ","
-                                   , B.pack $ show sWorker
-                                   , ","
-                                   , B.pack $ show sJob
-                                   , ","
-                                   , B.pack $ show sProcess
-                                   , ","
-                                   , B.pack $ show sSchedAt
-                                   ]
-
-handleDropFunc :: Scheduler -> Agent -> FuncName -> IO ()
-handleDropFunc sc ag pl = do
-  dropFunc sc pl
-  send ag Success
-
-handleRemoveJob :: Scheduler -> Agent -> Job -> IO ()
-handleRemoveJob sc ag job = do
-  removeJob sc job
-  send ag Success
-
-handleDump :: Scheduler -> Agent -> IO ()
-handleDump sc ag = do
-  jobs <- dumpJob sc
-  mapM_ doSend jobs
-  send_ ag "EOF"
-
-  where doSend :: Job -> IO ()
-        doSend = send_ ag . toBytes
-
-handleLoad :: Scheduler -> ByteString -> IO ()
-handleLoad sc pl = forM_ (decodeJob pl) (pushJob sc)
-
-handleShutdown :: Scheduler -> IO ()
-handleShutdown = shutdown
+    Left e     -> close -- close client
+    Right (SubmitJob job) -> unsafeLiftIO $ do
+      pushJob sched job
+      send agent Success
+    Right Status -> unsafeLiftIO $ do
+      stats <- map toBytes <$> status sched
+      send_ agent $ B.intercalate "\n" stats
+    Right Ping -> unsafeLiftIO $ send agent Pong
+    Right (DropFunc fn) -> unsafeLiftIO $ do
+      dropFunc sched fn
+      send agent Success
+    Right (RemoveJob job) -> unsafeLiftIO $ do
+      removeJob sched job
+      send agent Success
+    Right Dump -> unsafeLiftIO $ do
+      jobs <- dumpJob sched
+      mapM_ (send_ agent . toBytes) jobs
+      send_ agent "EOF"
+    Right (Load dat) -> unsafeLiftIO $ forM_ (decodeJob dat) (pushJob sched)
+    Right Shutdown -> unsafeLiftIO $ shutdown sched
