@@ -113,14 +113,14 @@ pushJob sched@Scheduler{..} job = do
             cancel (fromJust w)
             FL.delete sAsyncJob (jHandle job)
 
-          w' <- runJob sched job
+          w' <- schedJob sched job
           FL.insert sAsyncJob (jHandle job) w'
 
           JQ.pushJob sJobQueue job
 
 
-runJob :: Scheduler -> Job -> IO (Async ())
-runJob sched@Scheduler{..} job@Job{..} = async . forever $ do
+schedJob :: Scheduler -> Job -> IO (Async ())
+schedJob sched@Scheduler{..} job@Job{..} = async . forever $ do
   now <- getEpochTime
   when (jSchedAt > now) . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
   FuncStat{..} <- atomically $ do
@@ -136,8 +136,9 @@ runJob sched@Scheduler{..} job@Job{..} = async . forever $ do
         popAgentThen done = do
           (jq, agent) <- atomically $ popAgentSTM sGrabQueue jFuncName
           alive <- aAlive agent
-          if alive then IL.insert jq (jHandle job) >> done agent
-                   else pure () -- retry
+          when alive $ do
+            IL.insert jq (jHandle job)
+            done agent
 
         popAgentListThen :: (Agent -> IO ()) -> IO ()
         popAgentListThen done = do
@@ -258,7 +259,7 @@ retryJob sched@Scheduler{..} job = do
   PQ.removeJob sProcessJob fn (hashJobName jn)
   adjustFuncStat sched fn
 
-  w <- runJob sched job
+  w <- schedJob sched job
   FL.insert sAsyncJob (jHandle job) w
 
   where  fn = jFuncName job
