@@ -8,7 +8,6 @@ module Periodic.Server.ProcessQueue
   , removeJob
   , memberJob
   , dumpJob
-  , dumpJobByFuncName
   , sizeJob
   ) where
 
@@ -46,13 +45,6 @@ dumpJob jq = concatMap go <$> elems jq
 
   where go :: SubProcessQueue -> [Job]
         go = HM.elems
-
-dumpJobByFuncName :: ProcessQueue -> FuncName -> IO [Job]
-dumpJobByFuncName jq n = do
-  q <- lookup jq n
-  case q of
-    Nothing -> return []
-    Just q' -> return $ HM.elems q'
 
 sizeJob :: ProcessQueue -> FuncName -> IO Int
 sizeJob q n = go <$> lookup q n

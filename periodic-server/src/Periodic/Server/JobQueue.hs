@@ -5,11 +5,9 @@ module Periodic.Server.JobQueue
   , JobQueue
   , pushJob
   , findMinJob
-  , popJob
   , removeJob
   , memberJob
   , dumpJob
-  , dumpJobByFuncName
   , sizeJob
   ) where
 
@@ -38,15 +36,6 @@ findMinJob q n = doFindMin <$> lookup q n
                                 Nothing        -> Nothing
                                 Just (_, _, v) -> Just v
 
-popJob :: JobQueue -> FuncName -> IO (Maybe Job)
-popJob q n = do
-  j <- findMinJob q n
-  case j of
-    Nothing -> return Nothing
-    Just j' -> do
-      adjust q (delete (jName j')) n
-      return j
-
 removeJob :: JobQueue -> FuncName -> JobName -> IO ()
 removeJob q fn jn = adjust q (delete jn) fn
 
@@ -61,13 +50,6 @@ dumpJob jq = concatMap go <$> elems jq
 
   where go :: SubJobQueue -> [Job]
         go sq = map (\(_, _, v) -> v) $ toList sq
-
-dumpJobByFuncName :: JobQueue -> FuncName -> IO [Job]
-dumpJobByFuncName jq n = do
-  q <- lookup jq n
-  case q of
-    Nothing -> return []
-    Just q' -> return $ map (\(_, _, v) -> v) $ toList q'
 
 sizeJob :: JobQueue -> FuncName -> IO Int
 sizeJob q n = go <$> lookup q n
