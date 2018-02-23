@@ -148,16 +148,17 @@ schedJob sched@Scheduler{..} job@Job{..} = async . forever $ do
 
         doneSubmitJob :: Bool -> Agent -> IO ()
         doneSubmitJob cast agent = do
+          unless cast $ do
+            nextSchedAt <- getEpochTime
+            PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
+
           e <- try $ assignJob agent job
           case e of
-            Left (_::SomeException) -> pure () -- retry
+            Left (_::SomeException) ->
+              unless cast $
+                PQ.removeJob sProcessJob jFuncName (hashJobName jName)
             Right _ -> do
-              unless cast $ do
-                nextSchedAt <- getEpochTime
-                PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
-
               adjustFuncStat sched jFuncName
-
               doneJob
 
         doneJob :: IO ()
