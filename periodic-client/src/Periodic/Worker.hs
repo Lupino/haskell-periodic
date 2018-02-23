@@ -13,17 +13,14 @@ module Periodic.Worker
   , close
   ) where
 
-import           Control.Concurrent           (forkFinally, forkIO)
+import           Control.Concurrent           (forkIO)
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
-import qualified Data.ByteString              as B (empty)
 import           Periodic.Agent               (Agent, receive, send)
 import           Periodic.Job                 (Job, JobEnv (..), func,
                                                initJobEnv, name, workFail)
 import           Periodic.Socket              (connect)
-import           Periodic.Timer
 import           Periodic.Transport           (Transport, makeSocketTransport)
-import           Periodic.Types.Error
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 
@@ -36,10 +33,8 @@ import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
 
 import           Control.Concurrent.Async     (async, waitAnyCancel)
-import           Control.Concurrent.QSem
-import           Control.Exception            (SomeException, throwIO)
-import           Control.Monad                (forever, replicateM, unless,
-                                               void, when)
+import           Control.Exception            (SomeException)
+import           Control.Monad                (forever, replicateM, void, when)
 import           Periodic.Monad
 
 import           System.Log.Logger            (errorM)

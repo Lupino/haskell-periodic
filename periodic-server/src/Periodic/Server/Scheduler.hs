@@ -22,8 +22,8 @@ module Periodic.Server.Scheduler
   ) where
 
 import           Control.Exception            (SomeException, try)
-import           Control.Monad                (forever, unless, void, when)
-import qualified Data.ByteString              as B (concat, readFile, writeFile)
+import           Control.Monad                (unless, void, when)
+import qualified Data.ByteString              as B (readFile, writeFile)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Periodic.Agent               (Agent, aAlive, send)
@@ -39,7 +39,6 @@ import qualified Periodic.Server.JobQueue     as JQ
 import           Periodic.Server.ProcessQueue (ProcessQueue)
 import qualified Periodic.Server.ProcessQueue as PQ
 import           Periodic.Timer
-import           Periodic.Types.Internal      (nullChar)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           Periodic.Utils               (getEpochTime)
@@ -49,8 +48,7 @@ import           System.Directory             (createDirectoryIfMissing,
                                                doesFileExist)
 import           System.FilePath              ((</>))
 
-import           Control.Concurrent           (forkIO, killThread, myThreadId,
-                                               threadDelay)
+import           Control.Concurrent           (forkIO, threadDelay)
 import           Control.Concurrent.Async     (Async, async, cancel, poll)
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.STM            (atomically, retry)
@@ -117,19 +115,15 @@ pollJob sched@Scheduler{..} = do
 
 
 pushJob :: Scheduler -> Job -> IO ()
-pushJob sched@Scheduler{..} job = do
-  exists <- JQ.memberJob sJobQueue fn jn
-  isProc <- PQ.memberJob sProcessJob fn (hashJobName jn)
+pushJob sched@Scheduler{..} job@Job{..} = do
+  exists <- JQ.memberJob sJobQueue jFuncName jName
+  isProc <- PQ.memberJob sProcessJob jFuncName (hashJobName jName)
   if exists then doPushJob
             else unless isProc doPushJob
 
-  adjustFuncStat sched fn
+  adjustFuncStat sched jFuncName
 
-  where fn = jFuncName job
-        jh = jHandle job
-        jn = jName job
-
-        doPushJob :: IO ()
+  where doPushJob :: IO ()
         doPushJob = do
           reSchedJob sched job
           JQ.pushJob sJobQueue job
@@ -240,7 +234,7 @@ addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched n = broadcastFunc sched n False
 
 broadcastFunc :: Scheduler -> FuncName -> Bool -> IO ()
-broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $
+broadcastFunc Scheduler{..} n cast = L.with sLocker $
   FL.alter sFuncStatList updateStat n
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
@@ -248,7 +242,7 @@ broadcastFunc sched@Scheduler{..} n cast = L.with sLocker $
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
 removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc sched@Scheduler{..} n = L.with sLocker $
+removeFunc Scheduler{..} n = L.with sLocker $
   FL.alter sFuncStatList updateStat n
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
@@ -264,7 +258,7 @@ dropFunc Scheduler{..} n = L.with sLocker $ do
       FL.delete sJobQueue n
 
 pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
-pushGrab sched@Scheduler{..} = pushAgent sGrabQueue
+pushGrab Scheduler{..} = pushAgent sGrabQueue
 
 assignJob :: Agent -> Job -> IO ()
 assignJob agent job = send agent (JobAssign (jHandle job) job)

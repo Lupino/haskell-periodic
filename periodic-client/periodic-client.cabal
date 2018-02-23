@@ -22,7 +22,6 @@ library
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring
-                     , entropy
                      , hslogger
                      , byteable
                      , async
@@ -35,7 +34,6 @@ executable periodic
   build-depends:       base
                      , periodic-client
                      , periodic-common
-                     , directory
                      , bytestring
                      , boxes
                      , unix-time

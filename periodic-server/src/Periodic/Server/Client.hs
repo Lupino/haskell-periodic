@@ -14,7 +14,6 @@ module Periodic.Server.Client
   , clientId
   ) where
 
-import           Control.Exception            (throwIO)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (intercalate)
@@ -22,16 +21,14 @@ import           Data.Foldable                (forM_)
 import qualified Periodic.Connection          as Conn (Connection, connid)
 
 import           Periodic.Agent               (Agent, receive, send, send_)
-import           Periodic.Server.FuncStat     (FuncStat (..))
 import           Periodic.Server.Scheduler    (Scheduler, dropFunc, dumpJob,
                                                pushJob, removeJob, shutdown,
                                                status)
 import           Periodic.Types.ClientCommand
-import           Periodic.Types.Job           (FuncName, Job, decodeJob)
+import           Periodic.Types.Job           (decodeJob)
 import           Periodic.Types.ServerCommand
 
 import           Periodic.Monad
-import           Periodic.Types.Error         (Error (EmptyError))
 import           Periodic.Utils               (getEpochTime)
 
 import           Control.Concurrent.STM.TVar
@@ -42,16 +39,16 @@ type Client = GenPeriodic (TVar Int64)
 type Connection = SpecEnv (TVar Int64)
 
 newClient :: Conn.Connection -> Scheduler -> IO Connection
-newClient conn sched = do
+newClient conn0 sched = do
   lastVist <- newTVarIO =<< getEpochTime
-  env0 <- initEnv_ (handleAgent sched) conn lastVist
+  env0 <- initEnv_ (handleAgent sched) conn0 lastVist
   runPeriodic env0 specEnv
 
 runClient :: Connection -> Client a -> IO a
 runClient = runPeriodicWithSpecEnv
 
 startClient :: Connection -> IO () -> IO ()
-startClient env = runPeriodicWithSpecEnv env . startMainLoop
+startClient env0 = runPeriodicWithSpecEnv env0 . startMainLoop
 
 close :: Client ()
 close = stopPeriodic
@@ -73,7 +70,7 @@ handleAgent sched agent = do
 
   cmd <- unsafeLiftIO $ receive agent :: Client (Either String ClientCommand)
   case cmd of
-    Left e     -> close -- close client
+    Left _     -> close -- close client
     Right (SubmitJob job) -> unsafeLiftIO $ do
       pushJob sched job
       send agent Success

@@ -9,7 +9,6 @@ module Periodic.Server.FuncStat
   ) where
 
 import           Data.Byteable
-import           Data.ByteString       (ByteString)
 import qualified Data.ByteString.Char8 as B (intercalate, pack)
 import           Data.Int              (Int64)
 import           Periodic.IOHashMap    (IOHashMap)

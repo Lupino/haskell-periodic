@@ -21,8 +21,7 @@ module Periodic.Types.Job
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
-                                               empty, length, null, pack,
-                                               unpack)
+                                               empty, length, null, pack)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)

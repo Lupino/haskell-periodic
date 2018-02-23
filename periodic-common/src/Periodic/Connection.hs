@@ -21,7 +21,6 @@ import qualified Periodic.Lock               as L (Lock, new, with)
 import           Periodic.Transport          (Transport (recvData, sendData))
 import qualified Periodic.Transport          as T (Transport (close))
 
-import           Control.Arrow               ((&&&))
 import           Control.Concurrent.STM.TVar
 import           Control.Exception           (throwIO)
 import           Control.Monad               (when)
@@ -112,6 +111,6 @@ connected :: Connection -> IO Bool
 connected Connection{..} = readTVarIO status
 
 close :: Connection -> IO ()
-close c@Connection{..} = do
+close Connection{..} = do
   atomically $ writeTVar status False
   T.close transport

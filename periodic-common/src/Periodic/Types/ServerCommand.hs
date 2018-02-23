@@ -5,7 +5,7 @@ module Periodic.Types.ServerCommand
   ) where
 
 import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (ByteString, append, concat, take)
+import           Data.ByteString         (concat, take)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job, JobHandle)
 import           Periodic.Utils          (breakBS2)

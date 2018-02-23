@@ -13,7 +13,6 @@ module Periodic.Server.JobQueue
   , sizeJob
   ) where
 
-import           Data.ByteString    (ByteString)
 import           Data.HashPSQ       (HashPSQ, delete, findMin, fromList, insert,
                                      member, size, toList)
 import           Data.Int           (Int64)

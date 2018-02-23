@@ -4,7 +4,6 @@ module Periodic.Transport.XOR
   , makeXORTransport
   ) where
 
-import           Control.Arrow               ((&&&))
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.STM           (atomically)
 import           Data.Bits                   (xor)

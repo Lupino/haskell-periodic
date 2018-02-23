@@ -14,13 +14,10 @@ module Periodic.Server.Worker
   , workerId
   ) where
 
-import           Control.Exception            (throwIO)
 import           Control.Monad                (unless, when)
 import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as B (empty)
 import           Data.Int                     (Int64)
 import qualified Periodic.Connection          as Conn (Connection, connid)
-import qualified Periodic.Lock                as L (Lock, new, with)
 
 import           Periodic.Agent               (Agent, receive, send)
 import           Periodic.IOList              (IOList, delete, elem, insert,
@@ -29,11 +26,10 @@ import           Periodic.Server.Scheduler
 import           Prelude                      hiding (elem)
 
 import           Periodic.Monad
-import           Periodic.Types.Error         (Error (EmptyError))
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
-import           Periodic.Utils               (breakBS, getEpochTime, readBS)
+import           Periodic.Utils               (getEpochTime)
 
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.STM            (atomically)
@@ -50,21 +46,21 @@ type Connection = SpecEnv WorkerEnv
 
 
 newWorker :: Conn.Connection -> Scheduler -> IO Connection
-newWorker conn wSched = do
+newWorker conn0 wSched = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
   wLastVist <- newTVarIO =<< getEpochTime
 
   let wEnv = WorkerEnv {..}
 
-  env0 <- initEnv_ handleAgent conn wEnv
+  env0 <- initEnv_ handleAgent conn0 wEnv
   runPeriodic env0 specEnv
 
 runWorker :: Connection -> Worker a -> IO a
 runWorker = runPeriodicWithSpecEnv
 
 startWorker :: Connection -> IO () -> IO ()
-startWorker env io = runPeriodicWithSpecEnv env $ do
+startWorker env0 io = runPeriodicWithSpecEnv env0 $ do
   WorkerEnv {..} <- userEnv
   startMainLoop $ do
     mapM_ (failJob wSched) =<< toList wJobQueue
@@ -90,7 +86,7 @@ handleAgent agent = do
     atomically $ writeTVar wLastVist t
   cmd <- unsafeLiftIO $ receive agent :: Worker (Either String WorkerCommand)
   case cmd of
-    Left e     -> close -- close worker
+    Left _     -> close -- close worker
     Right GrabJob -> unsafeLiftIO $ pushGrab wSched wFuncList wJobQueue agent
     Right (WorkDone jh) -> unsafeLiftIO $ do
       doneJob wSched jh

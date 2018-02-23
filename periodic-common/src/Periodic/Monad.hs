@@ -39,16 +39,14 @@ import           Control.Monad               (forever, unless, void)
 import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.STM           (atomically)
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as B (cons, empty, isInfixOf)
+import qualified Data.ByteString             as B (empty, isInfixOf)
 import           Data.Typeable               (Typeable)
 import           Periodic.Agent              (Agent, AgentList, feed, msgid)
 import qualified Periodic.Agent              as Agent (newAgent, newEmptyAgent)
-import           Periodic.Connection         (Connection, close, newClientConn,
-                                              receive, send)
+import           Periodic.Connection         (Connection, close, receive)
 import           Periodic.IOHashMap          (newIOHashMap)
 import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
                                                     lookup, member)
-import           Periodic.Transport          (Transport)
 import           Periodic.Types
 import           Periodic.Utils              (breakBS2)
 import           System.Entropy              (getEntropy)
@@ -223,7 +221,7 @@ doFeed env state ref bs = do
         ret <- try $ unPeriodic (agentHandler env agent) env state ref
         case ret of
           Right _                 -> pure ()
-          Left (e::SomeException) -> atomically $ writeTVar state False
+          Left (_::SomeException) -> atomically $ writeTVar state False
 
 
 -- | Catch an exception in the Haxl monad

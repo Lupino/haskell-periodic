@@ -17,14 +17,13 @@ module Periodic.Agent
   ) where
 
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as B (concat, cons, empty, null)
+import qualified Data.ByteString             as B (concat)
 
 import           Periodic.Connection         (Connection, connected, connid)
 import qualified Periodic.Connection         as Conn (send)
 
 import           Control.Concurrent.STM.TVar
-import           Control.Exception           (throwIO)
-import           Control.Monad               (void, when)
+import           Control.Monad               (when)
 import           Control.Monad.STM           (atomically, retry)
 import           Data.Byteable               (Byteable (..))
 import           Periodic.IOHashMap          (IOHashMap)

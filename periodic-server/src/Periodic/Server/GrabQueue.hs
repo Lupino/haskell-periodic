@@ -12,7 +12,7 @@ module Periodic.Server.GrabQueue
 
 import           Control.Arrow     ((&&&))
 import           Control.Monad     (unless)
-import           Control.Monad.STM (STM, atomically, retry)
+import           Control.Monad.STM (STM, retry)
 import           Data.ByteString   (ByteString)
 import           Periodic.Agent    (Agent, agentid)
 import           Periodic.IOList   (IOList, append, delete, deleteSTM, elem,

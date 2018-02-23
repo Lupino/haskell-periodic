@@ -36,7 +36,6 @@ library
                      , hslogger
                      , byteable
                      , stm
-                     , hashable
                      , async
   default-language:    Haskell2010
 
