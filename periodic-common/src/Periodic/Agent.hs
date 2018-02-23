@@ -16,24 +16,24 @@ module Periodic.Agent
   , receive_
   ) where
 
-import           Data.ByteString         (ByteString)
-import qualified Data.ByteString         as B (concat, cons, empty, null)
+import           Data.ByteString             (ByteString)
+import qualified Data.ByteString             as B (concat, cons, empty, null)
 
-import           Periodic.Connection     (Connection, connected, connid)
-import qualified Periodic.Connection     as Conn (send)
+import           Periodic.Connection         (Connection, connected, connid)
+import qualified Periodic.Connection         as Conn (send)
 
-import           Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar,
-                                          tryPutMVar)
-import           Control.Exception       (throwIO)
-import           Control.Monad           (void)
-import           Data.Byteable           (Byteable (..))
-import           Periodic.IOHashMap      (IOHashMap)
+import           Control.Concurrent.STM.TVar
+import           Control.Exception           (throwIO)
+import           Control.Monad               (void, when)
+import           Control.Monad.STM           (atomically, retry)
+import           Data.Byteable               (Byteable (..))
+import           Periodic.IOHashMap          (IOHashMap)
 import           Periodic.Types.Internal
-import           Periodic.Utils          (breakBS2)
+import           Periodic.Utils              (breakBS2)
 
 data Agent = Agent { aMsgid  :: ByteString
                    , aConn   :: Connection
-                   , aReader :: MVar ByteString
+                   , aReader :: TVar [ByteString]
                    }
 
 type AgentList = IOHashMap ByteString Agent
@@ -41,12 +41,12 @@ type AgentList = IOHashMap ByteString Agent
 newAgent :: ByteString -> Connection -> IO Agent
 newAgent bs aConn = do
   let (aMsgid, pl) = breakBS2 bs
-  aReader <- newMVar pl
+  aReader <- newTVarIO [pl]
   return Agent {..}
 
 newEmptyAgent :: ByteString -> Connection -> IO Agent
 newEmptyAgent aMsgid aConn = do
-  aReader <- newEmptyMVar
+  aReader <- newTVarIO []
   return Agent {..}
 
 agentid :: Agent -> ByteString
@@ -66,10 +66,14 @@ send :: Byteable cmd => Agent -> cmd -> IO ()
 send ag cmd = send_ ag $ toBytes cmd
 
 feed :: Agent -> ByteString -> IO ()
-feed Agent{..} = void . tryPutMVar aReader
+feed Agent{..} dat = atomically . modifyTVar' aReader $ \v -> v ++ [dat]
 
 receive :: Parser cmd => Agent -> IO (Either String cmd)
-receive Agent{..} = runParser <$> takeMVar aReader
+receive agent = runParser <$> receive_ agent
 
 receive_ :: Agent -> IO ByteString
-receive_ Agent{..} = takeMVar aReader
+receive_ Agent{..} = atomically $ do
+  v <- readTVar aReader
+  when (null v) retry
+  writeTVar aReader $ tail v
+  pure $ head v
