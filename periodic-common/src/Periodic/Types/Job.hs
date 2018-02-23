@@ -23,12 +23,10 @@ import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
                                                empty, length, null, pack,
                                                unpack)
-import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
 
-import           Data.Binary             (encode)
 import           Data.Maybe              (catMaybes)
 import           Data.Store              (Store)
 import           Data.String             (IsString (..))
@@ -182,7 +180,7 @@ sepLength :: Int
 sepLength = B.length sep
 
 hashJobName :: JobName -> ByteString
-hashJobName jn = toStrict . encode $ hash jn
+hashJobName = B.pack . show . hash
 
 jHandle :: Job -> JobHandle
 jHandle Job{ jFuncName = FuncName fn
