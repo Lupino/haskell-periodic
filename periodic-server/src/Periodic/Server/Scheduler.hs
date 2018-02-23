@@ -67,7 +67,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sStorePath    :: FilePath
                            , sCleanup      :: IO ()
                            , sAlive        :: TVar Bool
-                           , sAsyncJob     :: IOHashMap JobHandle (Async ())
+                           , sSchedJobQ    :: IOHashMap JobHandle (Async ())
                            }
 
 newScheduler :: FilePath -> IO () -> IO Scheduler
@@ -77,7 +77,7 @@ newScheduler path sCleanup = do
   sGrabQueue    <- newGrabQueue
   sJobQueue     <- newIOHashMap
   sProcessJob   <- newIOHashMap
-  sAsyncJob     <- newIOHashMap
+  sSchedJobQ    <- newIOHashMap
   sRevertTimer  <- newTimer
   sStoreTimer   <- newTimer
   sPollTimer    <- newTimer
@@ -98,12 +98,12 @@ newScheduler path sCleanup = do
 
 pollJob :: Scheduler -> IO ()
 pollJob sched@Scheduler{..} = do
-  mapM_ checkPoll =<< FL.toList sAsyncJob
+  mapM_ checkPoll =<< FL.toList sSchedJobQ
   mapM_ checkJob =<< JQ.dumpJob sJobQueue
 
   where checkJob :: Job -> IO ()
         checkJob job@Job{..} = do
-          w <- FL.lookup sAsyncJob (jHandle job)
+          w <- FL.lookup sSchedJobQ (jHandle job)
           case w of
             Nothing -> reSchedJob sched job
             Just w' -> do
@@ -113,7 +113,7 @@ pollJob sched@Scheduler{..} = do
         checkPoll :: (JobHandle, Async ()) -> IO ()
         checkPoll (jh, w) = do
           r <- poll w
-          when (isJust r) $ FL.delete sAsyncJob jh
+          when (isJust r) $ FL.delete sSchedJobQ jh
 
 
 pushJob :: Scheduler -> Job -> IO ()
@@ -136,13 +136,13 @@ pushJob sched@Scheduler{..} job = do
 
 reSchedJob :: Scheduler -> Job -> IO ()
 reSchedJob sched@Scheduler{..} job = do
-  w <- FL.lookup sAsyncJob (jHandle job)
+  w <- FL.lookup sSchedJobQ (jHandle job)
   when (isJust w) $ do
     cancel (fromJust w)
-    FL.delete sAsyncJob (jHandle job)
+    FL.delete sSchedJobQ (jHandle job)
 
   w' <- schedJob sched job
-  FL.insert sAsyncJob (jHandle job) w'
+  FL.insert sSchedJobQ (jHandle job) w'
 
 schedJob :: Scheduler -> Job -> IO (Async ())
 schedJob sched@Scheduler{..} job@Job{..} = async $ do
@@ -189,7 +189,7 @@ schedJob sched@Scheduler{..} job@Job{..} = async $ do
         endSchedJob :: IO ()
         endSchedJob = do
           JQ.removeJob sJobQueue jFuncName jName
-          FL.delete sAsyncJob (jHandle job)
+          FL.delete sSchedJobQ (jHandle job)
 
 adjustFuncStat :: Scheduler -> FuncName -> IO ()
 adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
@@ -218,10 +218,10 @@ removeJob sched@Scheduler{..} job = do
   when isProc $ PQ.removeJob sProcessJob (jFuncName job) (hashJobName $ jName job)
   adjustFuncStat sched (jFuncName job)
 
-  w <- FL.lookup sAsyncJob (jHandle job)
+  w <- FL.lookup sSchedJobQ (jHandle job)
   when (isJust w) $ do
     cancel (fromJust w)
-    FL.delete sAsyncJob (jHandle job)
+    FL.delete sSchedJobQ (jHandle job)
 
 dumpJob :: Scheduler -> IO [Job]
 dumpJob Scheduler{..} = do
@@ -329,6 +329,6 @@ shutdown sched@Scheduler{..} = L.with sLocker $ do
     clearTimer sRevertTimer
     clearTimer sStoreTimer
     clearTimer sPollTimer
-    mapM_ cancel =<< FL.elems sAsyncJob
+    mapM_ cancel =<< FL.elems sSchedJobQ
     saveJob sched
     void $ forkIO sCleanup
