@@ -24,7 +24,6 @@ module Periodic.Client
   ) where
 
 import           Control.Concurrent           (forkIO)
-import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as B (empty, hGet, hPut, length)
@@ -94,7 +93,7 @@ submitJob_ j = withAgent $ \agent -> do
 submitJob :: FuncName -> JobName -> Int64 -> Client Bool
 submitJob jFuncName jName later = do
 
-  jSchedAt <- (+later) <$> liftIO getEpochTime
+  jSchedAt <- (+later) <$> unsafeLiftIO getEpochTime
   submitJob_ Job{jWorkload = "", jCount = 0, ..}
 
 dropFunc :: FuncName -> Client Bool

@@ -7,7 +7,6 @@ module Main
   ) where
 
 import           Control.Monad                  (unless, when)
-import           Control.Monad.IO.Class         (liftIO)
 import qualified Data.ByteString.Char8          as B (ByteString, pack)
 import qualified Data.ByteString.Lazy           as LB (fromStrict, null,
                                                        readFile, toStrict)
@@ -19,6 +18,7 @@ import           Data.Text.Encoding             (decodeUtf8With)
 import           Data.Text.Encoding.Error       (ignore)
 import           Periodic.Job                   (Job, name, schedLater,
                                                  workDone, workFail, workload)
+import           Periodic.Monad                 (unsafeLiftIO)
 import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
@@ -113,7 +113,7 @@ main = do
   runWorker (makeTransport opts) host $ do
     let proc = if notify then broadcast else addFunc
     proc (FuncName $ B.pack func) $ processWorker cmd argv
-    liftIO $ putStrLn "Worker started."
+    unsafeLiftIO $ putStrLn "Worker started."
     work thread
 
 makeTransport :: Options -> Transport -> IO Transport
@@ -133,9 +133,9 @@ processWorker :: String -> [String] -> Job ()
 processWorker cmd argv = do
   n <- unpackBS . unJN <$> name
   rb <- LB.fromStrict . unWL <$> workload
-  (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
-  unless (LB.null out) $ liftIO $ LB.putStr out
-  unless (LB.null err) $ liftIO $ LB.hPut stderr err
+  (code, out, err) <- unsafeLiftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
+  unless (LB.null out) $ unsafeLiftIO $ LB.putStr out
+  unless (LB.null err) $ unsafeLiftIO $ LB.hPut stderr err
   case code of
     ExitFailure _ -> workFail
     ExitSuccess   ->

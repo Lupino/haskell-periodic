@@ -14,7 +14,6 @@ module Periodic.Worker
   ) where
 
 import           Control.Concurrent           (forkIO)
-import           Control.Monad.IO.Class       (liftIO)
 import           Data.Byteable                (toBytes)
 import           Periodic.Agent               (Agent, receive, send)
 import           Periodic.Job                 (Job, JobEnv (..), func,
@@ -71,8 +70,8 @@ ping = withAgent $ \agent -> do
 
 grabJob :: Agent -> Worker (Maybe JobEnv)
 grabJob agent = do
-  liftIO $ send agent GrabJob
-  pl <- liftIO . timeout 10000000 $ receive agent
+  unsafeLiftIO $ send agent GrabJob
+  pl <- unsafeLiftIO . timeout 10000000 $ receive agent
 
   case pl of
     Nothing                         -> pure Nothing
@@ -83,24 +82,24 @@ addFunc :: FuncName -> Job () -> Worker ()
 addFunc f j = do
   withAgent $ \agent -> send agent (CanDo f)
   ref <- userEnv
-  liftIO $ HM.insert ref f j
+  unsafeLiftIO $ HM.insert ref f j
 
 broadcast :: FuncName -> Job () -> Worker ()
 broadcast f j = do
   withAgent $ \agent -> send agent (Broadcast f)
   ref <- userEnv
-  liftIO $ HM.insert ref f j
+  unsafeLiftIO $ HM.insert ref f j
 
 removeFunc :: FuncName -> Worker ()
 removeFunc f = do
   withAgent $ \agent -> send agent (CantDo f)
   ref <- userEnv
-  liftIO $ HM.delete ref f
+  unsafeLiftIO $ HM.delete ref f
 
 work :: Int -> Worker ()
 work size = do
   asyncs <- replicateM size $ wapperIO async work_
-  void . liftIO $ waitAnyCancel asyncs
+  void . unsafeLiftIO $ waitAnyCancel asyncs
 
 work_ :: Worker ()
 work_ = do
@@ -113,7 +112,7 @@ work_ = do
       env1 <- cloneEnv $ fromJust j
       withEnv env1 $ do
         f <- func
-        task <- liftIO $ HM.lookup taskList f
+        task <- unsafeLiftIO $ HM.lookup taskList f
         case task of
           Nothing -> do
             withEnv env0 $ removeFunc f
@@ -121,7 +120,7 @@ work_ = do
           Just task' ->
             catch task' $ \(e :: SomeException) -> do
               n <- name
-              liftIO $ errorM "Periodic.Worker"
+              unsafeLiftIO $ errorM "Periodic.Worker"
                      $ concat [ "Failing on running job { name = "
                               , show n
                               , ", "

@@ -7,13 +7,13 @@ module Main
   ) where
 
 import           Control.Monad          (void, when)
-import           Control.Monad.IO.Class (liftIO)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString.Char8  as B (pack, unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf, transpose)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
+import           Periodic.Monad         (unsafeLiftIO)
 import           Periodic.Socket        (getService)
 import           Periodic.Transport     (Transport)
 import           Periodic.Transport.TLS
@@ -172,7 +172,7 @@ makeTransport' p transport  = do
   makeXORTransport key transport
 
 processCommand :: Command -> [String] -> Client ()
-processCommand Help _     = liftIO printHelp
+processCommand Help _     = unsafeLiftIO printHelp
 processCommand Status _   = doStatus
 processCommand Load   _   = doLoad
 processCommand Dump   _   = doDump
@@ -182,25 +182,25 @@ processCommand Drop xs    = doDropFunc xs
 processCommand Shutdown _ = shutdown
 
 doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
-doRemoveJob []     = liftIO printRemoveHelp
+doRemoveJob []     = unsafeLiftIO printRemoveHelp
 
 doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
 
-doSubmitJob []       = liftIO printSubmitHelp
-doSubmitJob [_]      = liftIO printSubmitHelp
+doSubmitJob []       = unsafeLiftIO printSubmitHelp
+doSubmitJob [_]      = unsafeLiftIO printSubmitHelp
 doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack y) later
   where later = case xs of
                   []              -> 0
                   ("--later":l:_) -> fromMaybe 0 (readMaybe l)
                   _               -> 0
 
-doDump = liftIO (openFile "dump.db" WriteMode) >>= dump
+doDump = unsafeLiftIO (openFile "dump.db" WriteMode) >>= dump
 
-doLoad = liftIO (openFile "dump.db" ReadMode) >>= load
+doLoad = unsafeLiftIO (openFile "dump.db" ReadMode) >>= load
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status
-  liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
+  unsafeLiftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]
 unpackBS = map (map B.unpack)

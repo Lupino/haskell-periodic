@@ -36,7 +36,6 @@ import           Control.Concurrent.STM.TVar
 import           Control.Exception           (Exception (..), SomeException,
                                               bracket, throw, try)
 import           Control.Monad               (forever, unless, void)
-import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.STM           (atomically)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B (empty, isInfixOf)
@@ -153,9 +152,6 @@ specEnv = GenPeriodic $ \env state ref -> return (Done $ SpecEnv env state ref)
 -- monad should generally /not/ perform arbitrary IO.
 unsafeLiftIO :: IO a -> GenPeriodic u a
 unsafeLiftIO m = GenPeriodic $ \_ _ _ -> Done <$> m
-
-instance MonadIO (GenPeriodic u) where
-  liftIO = unsafeLiftIO
 
 withAgent :: (Agent -> IO a) -> GenPeriodic u a
 withAgent f = GenPeriodic $ \env _ ref ->
