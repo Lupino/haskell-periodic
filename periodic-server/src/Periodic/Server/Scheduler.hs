@@ -51,7 +51,7 @@ import           System.FilePath              ((</>))
 
 import           Control.Concurrent           (forkIO, killThread, myThreadId,
                                                threadDelay)
-import           Control.Concurrent.Async     (Async, async, cancel)
+import           Control.Concurrent.Async     (Async, async, cancel, poll)
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.STM            (atomically, retry)
 
@@ -63,6 +63,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sProcessJob   :: ProcessQueue
                            , sRevertTimer  :: Timer
                            , sStoreTimer   :: Timer
+                           , sPollTimer    :: Timer
                            , sStorePath    :: FilePath
                            , sCleanup      :: IO ()
                            , sAlive        :: TVar Bool
@@ -71,15 +72,16 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
 
 newScheduler :: FilePath -> IO () -> IO Scheduler
 newScheduler path sCleanup = do
-  sFuncStatList  <- newIOHashMap
-  sLocker        <- L.new
-  sGrabQueue     <- newGrabQueue
-  sJobQueue      <- newIOHashMap
-  sProcessJob    <- newIOHashMap
-  sAsyncJob      <- newIOHashMap
-  sRevertTimer   <- newTimer
-  sStoreTimer    <- newTimer
-  sAlive         <- newTVarIO True
+  sFuncStatList <- newIOHashMap
+  sLocker       <- L.new
+  sGrabQueue    <- newGrabQueue
+  sJobQueue     <- newIOHashMap
+  sProcessJob   <- newIOHashMap
+  sAsyncJob     <- newIOHashMap
+  sRevertTimer  <- newTimer
+  sStoreTimer   <- newTimer
+  sPollTimer    <- newTimer
+  sAlive        <- newTVarIO True
   let sStorePath = path </> "dump.db"
       sched = Scheduler {..}
 
@@ -90,8 +92,29 @@ newScheduler path sCleanup = do
 
   repeatTimer' sRevertTimer 300 $ revertProcessQueue sched
   repeatTimer' sStoreTimer  300 $ saveJob sched
+  repeatTimer' sPollTimer   10  $ pollJob sched
 
   return sched
+
+pollJob :: Scheduler -> IO ()
+pollJob sched@Scheduler{..} = do
+  mapM_ checkPoll =<< FL.toList sAsyncJob
+  mapM_ checkJob =<< JQ.dumpJob sJobQueue
+
+  where checkJob :: Job -> IO ()
+        checkJob job@Job{..} = do
+          w <- FL.lookup sAsyncJob (jHandle job)
+          case w of
+            Nothing -> reSchedJob sched job
+            Just w' -> do
+              r <- poll w'
+              unless (isJust r) $ reSchedJob sched job
+
+        checkPoll :: (JobHandle, Async ()) -> IO ()
+        checkPoll (jh, w) = do
+          r <- poll w
+          when (isJust r) $ FL.delete sAsyncJob jh
+
 
 pushJob :: Scheduler -> Job -> IO ()
 pushJob sched@Scheduler{..} job = do
@@ -108,19 +131,21 @@ pushJob sched@Scheduler{..} job = do
 
         doPushJob :: IO ()
         doPushJob = do
-          w <- FL.lookup sAsyncJob (jHandle job)
-          when (isJust w) $ do
-            cancel (fromJust w)
-            FL.delete sAsyncJob (jHandle job)
-
-          w' <- schedJob sched job
-          FL.insert sAsyncJob (jHandle job) w'
-
+          reSchedJob sched job
           JQ.pushJob sJobQueue job
 
+reSchedJob :: Scheduler -> Job -> IO ()
+reSchedJob sched@Scheduler{..} job = do
+  w <- FL.lookup sAsyncJob (jHandle job)
+  when (isJust w) $ do
+    cancel (fromJust w)
+    FL.delete sAsyncJob (jHandle job)
+
+  w' <- schedJob sched job
+  FL.insert sAsyncJob (jHandle job) w'
 
 schedJob :: Scheduler -> Job -> IO (Async ())
-schedJob sched@Scheduler{..} job@Job{..} = async . forever $ do
+schedJob sched@Scheduler{..} job@Job{..} = async $ do
   now <- getEpochTime
   when (jSchedAt > now) . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
   FuncStat{..} <- atomically $ do
@@ -144,7 +169,7 @@ schedJob sched@Scheduler{..} job@Job{..} = async . forever $ do
         popAgentListThen done = do
           agents <- popAgentList sGrabQueue jFuncName
           mapM_ (done . snd) agents
-          unless (null agents) doneJob
+          unless (null agents) endSchedJob
 
         doneSubmitJob :: Bool -> Agent -> IO ()
         doneSubmitJob cast agent = do
@@ -159,13 +184,12 @@ schedJob sched@Scheduler{..} job@Job{..} = async . forever $ do
                 PQ.removeJob sProcessJob jFuncName (hashJobName jName)
             Right _ -> do
               adjustFuncStat sched jFuncName
-              doneJob
+              endSchedJob
 
-        doneJob :: IO ()
-        doneJob = do
+        endSchedJob :: IO ()
+        endSchedJob = do
           JQ.removeJob sJobQueue jFuncName jName
           FL.delete sAsyncJob (jHandle job)
-          killThread =<< myThreadId
 
 adjustFuncStat :: Scheduler -> FuncName -> IO ()
 adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
@@ -260,8 +284,7 @@ retryJob sched@Scheduler{..} job = do
   PQ.removeJob sProcessJob fn (hashJobName jn)
   adjustFuncStat sched fn
 
-  w <- schedJob sched job
-  FL.insert sAsyncJob (jHandle job) w
+  reSchedJob sched job
 
   where  fn = jFuncName job
          jn = jName job
@@ -305,6 +328,7 @@ shutdown sched@Scheduler{..} = L.with sLocker $ do
   when alive $ do
     clearTimer sRevertTimer
     clearTimer sStoreTimer
+    clearTimer sPollTimer
     mapM_ cancel =<< FL.elems sAsyncJob
     saveJob sched
     void $ forkIO sCleanup

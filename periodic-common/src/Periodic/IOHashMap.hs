@@ -14,6 +14,7 @@ module Periodic.IOHashMap
   , keys
   , elems
   , clear
+  , toList
 
   , lookupSTM
   ) where
@@ -66,6 +67,9 @@ elems (IOHashMap h) = HM.elems <$> readTVarIO h
 
 clear :: IOHashMap a b -> IO ()
 clear (IOHashMap h) = atomically . modifyTVar' h $ const HM.empty
+
+toList :: IOHashMap a b -> IO [(a, b)]
+toList (IOHashMap h) = HM.toList <$> readTVarIO h
 
 lookupSTM :: (Eq a, Hashable a) => IOHashMap a b -> a -> STM (Maybe b)
 lookupSTM (IOHashMap h) k = HM.lookup k <$> readTVar h
