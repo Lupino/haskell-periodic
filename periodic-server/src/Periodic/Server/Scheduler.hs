@@ -85,7 +85,7 @@ newScheduler path sCleanup = do
 
   createDirectoryIfMissing True path
   exists <- doesFileExist sStorePath
-  when exists $ mapM_ (restoreJob sched) =<< loadJob sched
+  when exists $ mapM_ (pushJob sched) =<< loadJob sched
   mapM_ (adjustFuncStat sched) =<< FL.keys sJobQueue
 
   repeatTimer' sRevertTimer 300 $ revertProcessQueue sched
@@ -182,9 +182,6 @@ adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
                                              , sProcess = sizePQ
                                              , sSchedAt = schedAt
                                              })
-
-restoreJob :: Scheduler -> Job -> IO ()
-restoreJob Scheduler{..} = JQ.pushJob sJobQueue
 
 removeJob :: Scheduler -> Job -> IO ()
 removeJob sched@Scheduler{..} job = do
