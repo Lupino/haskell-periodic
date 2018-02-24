@@ -9,10 +9,11 @@ module Periodic.Server.JobQueue
   , memberJob
   , dumpJob
   , sizeJob
+  , findLessJob
   ) where
 
-import           Data.HashPSQ       (HashPSQ, delete, findMin, fromList, insert,
-                                     member, size, toList)
+import           Data.HashPSQ       (HashPSQ, delete, findMin, fold', fromList,
+                                     insert, member, size, toList)
 import           Data.Int           (Int64)
 import           Periodic.IOHashMap (IOHashMap, adjust, alter, elems, lookup)
 import           Periodic.Types     (FuncName, Job (..), JobName)
@@ -56,3 +57,12 @@ sizeJob q n = go <$> lookup q n
   where go :: Maybe SubJobQueue -> Int
         go Nothing   = 0
         go (Just q') = size q'
+
+findLessJob :: JobQueue -> Int64 -> IO [Job]
+findLessJob q ts = concatMap go <$> elems q
+  where go :: SubJobQueue -> [Job]
+        go = fold' foldFunc []
+
+        foldFunc :: JobName -> Int64 -> Job -> [Job] -> [Job]
+        foldFunc _ schedAt job xs = if schedAt < ts then job : xs
+                                                    else xs

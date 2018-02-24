@@ -66,6 +66,7 @@ data Scheduler = Scheduler { sFuncStatList :: FuncStatList
                            , sCleanup      :: IO ()
                            , sAlive        :: TVar Bool
                            , sSchedJobQ    :: IOHashMap JobHandle (Async ())
+                           , sSchedDelay   :: Int64
                            }
 
 newScheduler :: FilePath -> IO () -> IO Scheduler
@@ -81,6 +82,7 @@ newScheduler path sCleanup = do
   sPollTimer    <- newTimer
   sAlive        <- newTVarIO True
   let sStorePath = path </> "dump.db"
+      sSchedDelay = 10
       sched = Scheduler {..}
 
   createDirectoryIfMissing True path
@@ -90,14 +92,16 @@ newScheduler path sCleanup = do
 
   repeatTimer' sRevertTimer 300 $ revertProcessQueue sched
   repeatTimer' sStoreTimer  300 $ saveJob sched
-  repeatTimer' sPollTimer   10  $ pollJob sched
+  repeatTimer' sPollTimer   (fromIntegral sSchedDelay)  $ pollJob sched
 
   return sched
 
 pollJob :: Scheduler -> IO ()
 pollJob sched@Scheduler{..} = do
   mapM_ checkPoll =<< FL.toList sSchedJobQ
-  mapM_ checkJob =<< JQ.dumpJob sJobQueue
+
+  next <- (+ sSchedDelay * 2) <$> getEpochTime
+  mapM_ checkJob =<< JQ.findLessJob sJobQueue next
 
   where checkJob :: Job -> IO ()
         checkJob job@Job{..} = do
@@ -135,8 +139,10 @@ reSchedJob sched@Scheduler{..} job = do
     cancel (fromJust w)
     FL.delete sSchedJobQ (jHandle job)
 
-  w' <- schedJob sched job
-  FL.insert sSchedJobQ (jHandle job) w'
+  next <- (+ sSchedDelay * 2) <$> getEpochTime
+  when (jSchedAt job < next) $ do
+    w' <- schedJob sched job
+    FL.insert sSchedJobQ (jHandle job) w'
 
 schedJob :: Scheduler -> Job -> IO (Async ())
 schedJob sched@Scheduler{..} job@Job{..} = async $ do
