@@ -50,7 +50,7 @@ instance IsString FuncName where
   fromString = FuncName . fromString
 
 instance FromBS FuncName where
-  fromBS = FuncName
+  fromBS = FuncName . fromBS
 
 newtype JobName   = JobName {unJN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -69,7 +69,7 @@ instance IsString JobName where
   fromString = JobName . fromString
 
 instance FromBS JobName where
-  fromBS = JobName
+  fromBS = JobName . fromBS
 
 newtype JobHandle = JobHandle {unJH :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -88,7 +88,7 @@ instance IsString JobHandle where
   fromString = JobHandle . fromString
 
 instance FromBS JobHandle where
-  fromBS = JobHandle
+  fromBS = JobHandle . fromBS
 
 newtype Workload  = Workload {unWL :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -107,7 +107,7 @@ instance IsString Workload where
   fromString = Workload . fromString
 
 instance FromBS Workload where
-  fromBS = Workload
+  fromBS = Workload . fromBS
 
 data Job = Job { jSchedAt  :: Int64
                , jFuncName :: FuncName

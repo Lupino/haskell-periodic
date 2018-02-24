@@ -9,6 +9,7 @@ module Periodic.Types.Internal
   , FromBS (..)
   ) where
 
+import           Data.Byteable
 import           Data.ByteString          (ByteString, drop)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
 import           Data.Text                (Text)
@@ -31,13 +32,10 @@ class Parser a where
   runParser :: ByteString -> Either String a
 
 class FromBS a where
-  fromBS :: ByteString -> a
+  fromBS :: Byteable b => b -> a
 
 instance FromBS Text where
-  fromBS = decodeUtf8With ignore
-
-instance FromBS Char where
-  fromBS = head . T.unpack . fromBS
+  fromBS = decodeUtf8With ignore . toBytes
 
 instance FromBS [Char] where
   fromBS = T.unpack . fromBS
@@ -46,4 +44,7 @@ instance FromBS LT.Text where
   fromBS = LT.fromStrict . fromBS
 
 instance FromBS LB.ByteString where
-  fromBS = LB.fromStrict
+  fromBS = LB.fromStrict . toBytes
+
+instance FromBS ByteString where
+  fromBS = toBytes
