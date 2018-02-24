@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Periodic.Types.Internal
   (
@@ -5,10 +6,17 @@ module Periodic.Types.Internal
   , nullCharLength
   , dropCmd
   , Parser (..)
+  , FromBS (..)
   ) where
 
-import           Data.ByteString (ByteString, drop)
-import           Prelude         hiding (drop)
+import           Data.ByteString          (ByteString, drop)
+import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
+import           Data.Text                (Text)
+import qualified Data.Text                as T (unpack)
+import           Data.Text.Encoding       (decodeUtf8With)
+import           Data.Text.Encoding.Error (ignore)
+import qualified Data.Text.Lazy           as LT (Text, fromStrict)
+import           Prelude                  hiding (drop)
 
 nullChar :: ByteString
 nullChar = "\00\01"
@@ -21,3 +29,21 @@ dropCmd = drop (nullCharLength + 1)
 
 class Parser a where
   runParser :: ByteString -> Either String a
+
+class FromBS a where
+  fromBS :: ByteString -> a
+
+instance FromBS Text where
+  fromBS = decodeUtf8With ignore
+
+instance FromBS Char where
+  fromBS = head . T.unpack . fromBS
+
+instance FromBS [Char] where
+  fromBS = T.unpack . fromBS
+
+instance FromBS LT.Text where
+  fromBS = LT.fromStrict . fromBS
+
+instance FromBS LB.ByteString where
+  fromBS = LB.fromStrict

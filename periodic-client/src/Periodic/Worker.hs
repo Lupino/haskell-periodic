@@ -122,7 +122,7 @@ work_ = do
               n <- name
               unsafeLiftIO $ errorM "Periodic.Worker"
                      $ concat [ "Failing on running job { name = "
-                              , show n
+                              , n
                               , ", "
                               , show f
                               , " }"

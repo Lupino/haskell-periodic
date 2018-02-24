@@ -49,6 +49,9 @@ instance Parser FuncName where
 instance IsString FuncName where
   fromString = FuncName . fromString
 
+instance FromBS FuncName where
+  fromBS = FuncName
+
 newtype JobName   = JobName {unJN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
@@ -64,6 +67,9 @@ instance Parser JobName where
 
 instance IsString JobName where
   fromString = JobName . fromString
+
+instance FromBS JobName where
+  fromBS = JobName
 
 newtype JobHandle = JobHandle {unJH :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -81,6 +87,9 @@ instance Parser JobHandle where
 instance IsString JobHandle where
   fromString = JobHandle . fromString
 
+instance FromBS JobHandle where
+  fromBS = JobHandle
+
 newtype Workload  = Workload {unWL :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
@@ -96,6 +105,9 @@ instance Parser Workload where
 
 instance IsString Workload where
   fromString = Workload . fromString
+
+instance FromBS Workload where
+  fromBS = Workload
 
 data Job = Job { jSchedAt  :: Int64
                , jFuncName :: FuncName

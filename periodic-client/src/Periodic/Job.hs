@@ -14,11 +14,11 @@ module Periodic.Job
   , schedLater'
   ) where
 
+import           Data.Byteable                (toBytes)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
 import           Periodic.Monad               (GenPeriodic, userEnv, withAgent)
-import           Periodic.Types.Job           (FuncName (..), JobHandle (..),
-                                               JobName (..), Workload (..))
+import           Periodic.Types               (FromBS (..), JobHandle)
 import qualified Periodic.Types.Job           as J
 import           Periodic.Types.WorkerCommand
 
@@ -26,14 +26,14 @@ data JobEnv = JobEnv { job :: J.Job, handle :: JobHandle }
 
 type Job = GenPeriodic JobEnv
 
-name :: Job JobName
-name = J.jName . job <$> userEnv
+name :: (FromBS a, Show a) => Job a
+name = fromBS . toBytes . J.jName . job <$> userEnv
 
-func :: Job FuncName
-func = J.jFuncName . job <$> userEnv
+func :: (FromBS a, Show a) => Job a
+func = fromBS . toBytes . J.jFuncName . job <$> userEnv
 
-workload :: Job Workload
-workload = J.jWorkload . job <$> userEnv
+workload :: (FromBS a, Show a) => Job a
+workload = fromBS . toBytes . J.jWorkload . job <$> userEnv
 
 counter :: Job Int
 counter = J.jCount . job <$> userEnv

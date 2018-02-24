@@ -131,7 +131,7 @@ makeTransport' p transport  = do
 
 processWorker :: String -> [String] -> Job ()
 processWorker cmd argv = do
-  n <- unpackBS . unJN <$> name
+  n <- name
   rb <- LB.fromStrict . unWL <$> workload
   (code, out, err) <- unsafeLiftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
   unless (LB.null out) $ unsafeLiftIO $ LB.putStr out
