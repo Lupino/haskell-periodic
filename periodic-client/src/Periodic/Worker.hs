@@ -16,7 +16,7 @@ module Periodic.Worker
 import           Control.Concurrent           (forkIO)
 import           Data.Byteable                (toBytes)
 import           Periodic.Agent               (Agent, receive, send)
-import           Periodic.Job                 (Job, JobEnv (..), func,
+import           Periodic.Job                 (Job, JobEnv (..), func_,
                                                initJobEnv, name, workFail)
 import           Periodic.Socket              (connect)
 import           Periodic.Transport           (Transport, makeSocketTransport)
@@ -111,7 +111,7 @@ work_ = do
     when (isJust j) $ do
       env1 <- cloneEnv $ fromJust j
       withEnv env1 $ do
-        f <- func
+        f <- func_
         task <- unsafeLiftIO $ HM.lookup taskList f
         case task of
           Nothing -> do

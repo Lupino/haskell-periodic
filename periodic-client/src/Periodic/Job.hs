@@ -6,6 +6,9 @@ module Periodic.Job
   , name
   , func
   , workload
+  , name_
+  , func_
+  , workload_
   , counter
 
   , workDone
@@ -18,7 +21,8 @@ import           Data.Byteable                (toBytes)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
 import           Periodic.Monad               (GenPeriodic, userEnv, withAgent)
-import           Periodic.Types               (FromBS (..), JobHandle)
+import           Periodic.Types               (FromBS (..), FuncName, JobHandle,
+                                               JobName, Workload)
 import qualified Periodic.Types.Job           as J
 import           Periodic.Types.WorkerCommand
 
@@ -27,13 +31,22 @@ data JobEnv = JobEnv { job :: J.Job, handle :: JobHandle }
 type Job = GenPeriodic JobEnv
 
 name :: (FromBS a, Show a) => Job a
-name = fromBS . toBytes . J.jName . job <$> userEnv
+name = fromBS . toBytes <$> name_
+
+name_ :: Job JobName
+name_ = J.jName . job <$> userEnv
 
 func :: (FromBS a, Show a) => Job a
-func = fromBS . toBytes . J.jFuncName . job <$> userEnv
+func = fromBS . toBytes <$> func_
+
+func_ :: Job FuncName
+func_ = J.jFuncName . job <$> userEnv
 
 workload :: (FromBS a, Show a) => Job a
-workload = fromBS . toBytes . J.jWorkload . job <$> userEnv
+workload = fromBS . toBytes <$> workload_
+
+workload_ :: Job Workload
+workload_ = J.jWorkload . job <$> userEnv
 
 counter :: Job Int
 counter = J.jCount . job <$> userEnv
