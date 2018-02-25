@@ -28,10 +28,10 @@ parseBinary bs = case decodeOrFail (LB.fromStrict bs) of
                    Right (_, _, v) -> Right v
 
 class FromBS a where
-  fromBS :: Byteable b => b -> a
+  fromBS :: ByteString -> a
 
 instance FromBS Text where
-  fromBS = decodeUtf8With ignore . toBytes
+  fromBS = decodeUtf8With ignore
 
 instance FromBS [Char] where
   fromBS = T.unpack . fromBS
@@ -40,7 +40,7 @@ instance FromBS LT.Text where
   fromBS = LT.fromStrict . fromBS
 
 instance FromBS LB.ByteString where
-  fromBS = LB.fromStrict . toBytes
+  fromBS = LB.fromStrict
 
 instance FromBS ByteString where
-  fromBS = toBytes
+  fromBS = id
