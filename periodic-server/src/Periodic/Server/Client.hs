@@ -82,9 +82,4 @@ handleAgent sched agent = do
     Right (RemoveJob job) -> unsafeLiftIO $ do
       removeJob sched job
       send agent Success
-    Right Dump -> unsafeLiftIO $ do
-      jobs <- dumpJob sched
-      mapM_ (send_ agent . toBytes) jobs
-      send_ agent "EOF"
-    Right (Load job) -> unsafeLiftIO $ pushJob sched job
     Right Shutdown -> unsafeLiftIO $ shutdown sched
