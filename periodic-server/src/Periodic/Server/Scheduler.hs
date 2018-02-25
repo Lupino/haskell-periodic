@@ -23,6 +23,7 @@ module Periodic.Server.Scheduler
 
 import           Control.Exception            (SomeException, try)
 import           Control.Monad                (unless, void, when)
+import           Data.Binary                  (decodeFile, encodeFile)
 import qualified Data.ByteString              as B (readFile, writeFile)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
@@ -43,7 +44,6 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           Periodic.Utils               (getEpochTime)
 
-import qualified Data.Store                   as DS
 import           System.Directory             (createDirectoryIfMissing,
                                                doesFileExist)
 import           System.FilePath              ((</>))
@@ -231,10 +231,10 @@ dumpJob Scheduler{..} = do
 
 saveJob :: Scheduler -> IO ()
 saveJob sched@Scheduler{..} =
-  dumpJob sched >>= B.writeFile sStorePath . DS.encode
+  dumpJob sched >>= encodeFile sStorePath
 
 loadJob :: Scheduler -> IO [Job]
-loadJob Scheduler{..} = DS.decodeIO =<< B.readFile sStorePath
+loadJob Scheduler{..} = decodeFile sStorePath
 
 addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched n = broadcastFunc sched n False
