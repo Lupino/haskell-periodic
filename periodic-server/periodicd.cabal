@@ -30,13 +30,13 @@ library
                      , unordered-containers
                      , psqueues
                      , unix
-                     , store
                      , directory
                      , filepath
                      , hslogger
                      , byteable
                      , stm
                      , async
+                     , binary
   default-language:    Haskell2010
 
 executable periodicd

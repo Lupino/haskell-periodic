@@ -5,11 +5,12 @@ module Periodic.Types.ServerCommand
   ) where
 
 import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (concat, take)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job, JobHandle)
-import           Periodic.Utils          (breakBS2)
 import           Prelude                 hiding (concat, take)
+
+import           Data.Binary
+import           Data.ByteString.Lazy    (toStrict)
 
 data ServerCommand =
     Noop
@@ -22,23 +23,32 @@ data ServerCommand =
   deriving (Show)
 
 instance Byteable ServerCommand where
-  toBytes Noop               = "\00"
-  toBytes (JobAssign jh job) = concat ["\05", nullChar, toBytes jh, nullChar, toBytes job]
-  toBytes NoJob              = "\06"
-  toBytes Pong               = "\10"
-  toBytes Unknown            = "\12"
-  toBytes Success            = "\16"
+  toBytes = toStrict . encode
 
 instance Parser ServerCommand where
-  runParser bs = case take 1 bs of
-                   "\00" -> Right Noop
-                   "\05" -> do
-                        let (jh, pl) = breakBS2 $ dropCmd bs
-                        job <- runParser pl
-                        jh' <- runParser jh
-                        return (JobAssign jh' job)
-                   "\06" -> Right NoJob
-                   "\10" -> Right Pong
-                   "\12" -> Right Unknown
-                   "\16" -> Right Success
-                   _ -> Left "Error ServerCommand"
+  runParser = parseBinary
+
+instance Binary ServerCommand where
+  get = do
+    tp <- getWord8
+    case tp of
+      0 -> pure Noop
+      5 -> do
+        jh <- get
+        job <- get
+        pure (JobAssign jh job)
+      6 -> pure NoJob
+      10 -> pure Pong
+      12 -> pure Unknown
+      16 -> pure Success
+      _ -> error $ "Error ServerCommand " ++ show tp
+
+  put Noop               = putWord8 0
+  put (JobAssign jh job) = do
+    putWord8 5
+    put jh
+    put job
+  put NoJob              = putWord8 6
+  put Pong               = putWord8 10
+  put Unknown            = putWord8 12
+  put Success            = putWord8 16

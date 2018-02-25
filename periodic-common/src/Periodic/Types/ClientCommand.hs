@@ -4,8 +4,9 @@ module Periodic.Types.ClientCommand
     ClientCommand (..)
   ) where
 
+import           Data.Binary
 import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (ByteString, append, take)
+import           Data.ByteString.Lazy    (toStrict)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (FuncName, Job)
 import           Prelude                 hiding (take)
@@ -16,36 +17,43 @@ data ClientCommand =
   | Ping
   | DropFunc FuncName
   | RemoveJob Job
-  | Dump
-  | Load ByteString
   | Shutdown
 
   deriving (Show)
 
 instance Byteable ClientCommand where
-  toBytes (SubmitJob job) = "\13" `append` nullChar `append` toBytes job
-  toBytes Status          = "\14"
-  toBytes Ping            = "\9"
-  toBytes (DropFunc func) = "\15" `append` nullChar `append` toBytes func
-  toBytes (RemoveJob job) = "\17" `append` nullChar `append` toBytes job
-  toBytes Dump            = "\18"
-  toBytes (Load bs)       = "\19" `append` nullChar `append` bs
-  toBytes Shutdown        = "\20"
+  toBytes = toStrict . encode
 
 instance Parser ClientCommand where
-  runParser bs = case take 1 bs of
-                   "\13" -> do
-                     job <- runParser $ dropCmd bs
-                     return (SubmitJob job)
-                   "\14" -> Right Status
-                   "\09" -> Right Ping
-                   "\15" -> do
-                     func <- runParser $ dropCmd bs
-                     return (DropFunc func)
-                   "\17" -> do
-                     job <- runParser $ dropCmd bs
-                     return (RemoveJob job)
-                   "\18" -> Right Dump
-                   "\19" -> Right (Load $ dropCmd bs)
-                   "\20" -> Right Shutdown
-                   _ -> Left "Error ClientCommand"
+  runParser = parseBinary
+
+instance Binary ClientCommand where
+  get = do
+    tp <- getWord8
+    case tp of
+      13 -> do
+        job <- get
+        pure (SubmitJob job)
+      14 -> pure Status
+      9 -> pure Ping
+      15 -> do
+        func <- get
+        pure (DropFunc func)
+      17 -> do
+        job <- get
+        pure (RemoveJob job)
+      20 -> pure Shutdown
+      _ -> error $ "Error ClientCommand" ++ show tp
+
+  put (SubmitJob job) = do
+    putWord8 13
+    put job
+  put Status          = putWord8 14
+  put Ping            = putWord8 9
+  put (DropFunc func) = do
+    putWord8 15
+    put func
+  put (RemoveJob job) = do
+    putWord8 17
+    put job
+  put Shutdown        = putWord8 20

@@ -8,11 +8,9 @@ module Periodic.Types.Job
     FuncName (..)
   , JobName (..)
   , Workload (..)
-  , JobHandle (..)
+  , JobHandle
   , Job (..)
   , newJob
-  , decodeJob
-  , encodeJob
   , hashJobName
   , jHandle
   , unHandle
@@ -20,31 +18,29 @@ module Periodic.Types.Job
 
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
-import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
-                                               empty, length, null, pack)
+import qualified Data.ByteString.Char8   as B (empty, length)
+import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
 
-import           Data.Maybe              (catMaybes)
-import           Data.Store              (Store)
 import           Data.String             (IsString (..))
 import           Periodic.Types.Internal
-import           Periodic.Utils          (breakBS, readBS)
-import           TH.Derive               (Deriving, derive)
+
+import           Data.Binary
+import           Data.Binary.Get
+import           Data.Binary.Put
 
 newtype FuncName  = FuncName {unFN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable FuncName
 
-$($(derive [d| instance Deriving (Store FuncName) |]))
-
 instance Byteable FuncName where
-  toBytes = unFN
+  toBytes = toStrict . encode
 
 instance Parser FuncName where
-  runParser bs = Right $ FuncName bs
+  runParser = parseBinary
 
 instance IsString FuncName where
   fromString = FuncName . fromString
@@ -52,18 +48,25 @@ instance IsString FuncName where
 instance FromBS FuncName where
   fromBS = FuncName . fromBS
 
+instance Binary FuncName where
+  get = do
+    size <- getWord8
+    dat <- getByteString $ fromIntegral size
+    return $ FuncName dat
+  put (FuncName dat) = do
+    putWord8 . fromIntegral $ B.length dat
+    putByteString dat
+
 newtype JobName   = JobName {unJN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable JobName
 
-$($(derive [d| instance Deriving (Store JobName) |]))
-
 instance Byteable JobName where
-  toBytes = unJN
+  toBytes = toStrict . encode
 
 instance Parser JobName where
-  runParser bs = Right $ JobName bs
+  runParser = parseBinary
 
 instance IsString JobName where
   fromString = JobName . fromString
@@ -71,37 +74,47 @@ instance IsString JobName where
 instance FromBS JobName where
   fromBS = JobName . fromBS
 
-newtype JobHandle = JobHandle {unJH :: ByteString}
+instance Binary JobName where
+  get = do
+    size <- getWord8
+    dat <- getByteString $ fromIntegral size
+    return $ JobName dat
+  put (JobName dat) = do
+    putWord8 . fromIntegral $ B.length dat
+    putByteString dat
+
+data JobHandle = JobHandle FuncName ByteString
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable JobHandle
 
-$($(derive [d| instance Deriving (Store JobHandle) |]))
-
 instance Byteable JobHandle where
-  toBytes = unJH
+  toBytes = toStrict . encode
 
 instance Parser JobHandle where
-  runParser bs = Right $ JobHandle bs
+  runParser = parseBinary
 
-instance IsString JobHandle where
-  fromString = JobHandle . fromString
-
-instance FromBS JobHandle where
-  fromBS = JobHandle . fromBS
+instance Binary JobHandle where
+  get = do
+    fn <- get
+    size <- getWord8
+    jn <- getByteString $ fromIntegral size
+    return $ JobHandle fn jn
+  put (JobHandle fn jn) = do
+    put fn
+    putWord8 . fromIntegral $ B.length jn
+    putByteString jn
 
 newtype Workload  = Workload {unWL :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable Workload
 
-$($(derive [d| instance Deriving (Store Workload) |]))
-
 instance Byteable Workload where
-  toBytes = unWL
+  toBytes = toStrict . encode
 
 instance Parser Workload where
-  runParser bs = Right $ Workload bs
+  runParser = parseBinary
 
 instance IsString Workload where
   fromString = Workload . fromString
@@ -109,23 +122,43 @@ instance IsString Workload where
 instance FromBS Workload where
   fromBS = Workload . fromBS
 
-data Job = Job { jSchedAt  :: Int64
-               , jFuncName :: FuncName
+instance Binary Workload where
+  get = do
+    size <- getWord32be
+    dat <- getByteString $ fromIntegral size
+    return $ Workload dat
+  put (Workload dat) = do
+    putWord32be . fromIntegral $ B.length dat
+    putByteString dat
+
+data Job = Job { jFuncName :: FuncName
                , jName     :: JobName
                , jWorkload :: Workload
+               , jSchedAt  :: Int64
                , jCount    :: Int
                }
   deriving (Show)
 
-$($(derive [d| instance Deriving (Store Job) |]))
-
 instance Byteable Job where
-  toBytes = encodeJob
+  toBytes = toStrict . encode
 
 instance Parser Job where
-  runParser bs = case decodeJob bs of
-                   Nothing  -> Left "InvalidJob"
-                   Just job -> Right job
+  runParser = parseBinary
+
+instance Binary Job where
+  get = do
+    jFuncName <- get
+    jName <- get
+    jWorkload <- get
+    jSchedAt <- getInt64be
+    jCount <- fromIntegral <$> getInt32be
+    return Job {..}
+  put Job {..} = do
+    put jFuncName
+    put jName
+    put jWorkload
+    putInt64be jSchedAt
+    putInt32be $ fromIntegral jCount
 
 newJob :: FuncName -> JobName -> Job
 newJob jFuncName jName = Job { jWorkload = Workload B.empty
@@ -134,70 +167,13 @@ newJob jFuncName jName = Job { jWorkload = Workload B.empty
                              , ..
                              }
 
-encodeJob :: Job -> ByteString
-encodeJob Job {..} = concatBS [ Just fn
-                              , Just jn
-                              , schedAt
-                              , counter
-                              , workload
-                              ]
-
- where join :: [ByteString] -> [ByteString]
-       join []     = []
-       join [x]    = [x]
-       join (x:xs) = x:nullChar:join xs
-
-       concatBS = B.concat . join . catMaybes
-
-       sched = B.pack $ show jSchedAt
-       count = B.pack $ show jCount
-       fn = unFN jFuncName
-       jn = unJN jName
-       jwl = unWL jWorkload
-
-       schedAt | not (B.null jwl) = Just sched
-               | jCount > 0       = Just sched
-               | jSchedAt > 0     = Just sched
-               | otherwise        = Nothing
-       counter | not (B.null jwl) = Just count
-               | jCount > 0       = Just count
-               | otherwise        = Nothing
-
-       workload | B.null jwl      = Nothing
-                | otherwise       = Just jwl
-
-decodeJob :: ByteString -> Maybe Job
-decodeJob = go . breakBS 5
-  where go :: [ByteString] -> Maybe Job
-        go []            = Nothing
-        go [_]           = Nothing
-        go [x, y]        = Just $ newJob (FuncName x) (JobName y)
-        go [x, y, z]     = Just $ (newJob (FuncName x) (JobName y))
-          { jSchedAt = readBS z }
-        go [x, y, z, a]  = Just $ (newJob (FuncName x) (JobName y))
-          { jSchedAt = readBS z
-          , jCount   = readBS a
-          }
-        go (x:y:z:a:b:_) = Just $ (newJob (FuncName x) (JobName y))
-          { jWorkload = Workload b
-          , jSchedAt  = readBS z
-          , jCount    = readBS a
-          }
-
-sep :: ByteString
-sep = "::"
-
-sepLength :: Int
-sepLength = B.length sep
-
 hashJobName :: JobName -> ByteString
-hashJobName = B.pack . show . hash
+hashJobName = toStrict . encode . hash
 
 jHandle :: Job -> JobHandle
-jHandle Job{ jFuncName = FuncName fn
+jHandle Job{ jFuncName = fn
            , jName = jn
-           } = JobHandle $ B.concat [ fn, sep, hashJobName jn ]
+           } = JobHandle fn $ hashJobName jn
 
 unHandle :: JobHandle -> (FuncName, ByteString)
-unHandle (JobHandle bs) = go $ B.breakSubstring sep bs
-  where go (fn, jn) = (FuncName fn, B.drop sepLength jn)
+unHandle (JobHandle fn  jn) = (fn, jn)

@@ -5,34 +5,28 @@ module Periodic.Types.ClientType
     ClientType (..)
   ) where
 
-import           Data.Byteable (Byteable (..))
-import           GHC.Enum      (boundedEnumFrom, boundedEnumFromThen)
+import           Data.Byteable           (Byteable (..))
+
+import           Data.Binary
+import           Data.ByteString.Lazy    (toStrict)
+import           Periodic.Types.Internal
 
 data ClientType = TypeClient | TypeWorker
   deriving (Eq, Show)
 
 instance Byteable ClientType where
-  toBytes TypeClient = "\01"
-  toBytes TypeWorker = "\02"
+  toBytes = toStrict . encode
 
-instance Bounded ClientType where
-  minBound = TypeClient
-  maxBound = TypeWorker
+instance Parser ClientType where
+  runParser = parseBinary
 
-instance Enum ClientType where
-  succ TypeClient = TypeWorker
-  succ TypeWorker = errorWithoutStackTrace "Types.ClientType.succ: bad argument"
+instance Binary ClientType where
+  get = do
+    tp <- getWord8
+    case tp of
+      1 -> pure TypeClient
+      2 -> pure TypeWorker
+      _ -> error $ "Error ClientType " ++ show tp
 
-  pred TypeWorker = TypeClient
-  pred TypeClient = errorWithoutStackTrace "Types.ClientType.pred: bad argument"
-
-  toEnum n | n == 1  = TypeClient
-           | n == 2  = TypeWorker
-  toEnum _ = errorWithoutStackTrace "Types.ClientType.toEnum: bad argument"
-
-  fromEnum TypeClient = 1
-  fromEnum TypeWorker = 2
-
-  -- Use defaults for the rest
-  enumFrom     = boundedEnumFrom
-  enumFromThen = boundedEnumFromThen
+  put TypeClient = putWord8 1
+  put TypeWorker = putWord8 2

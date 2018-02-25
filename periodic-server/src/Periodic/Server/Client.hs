@@ -17,7 +17,6 @@ module Periodic.Server.Client
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (intercalate)
-import           Data.Foldable                (forM_)
 import qualified Periodic.Connection          as Conn (Connection, connid)
 
 import           Periodic.Agent               (Agent, receive, send, send_)
@@ -25,7 +24,6 @@ import           Periodic.Server.Scheduler    (Scheduler, dropFunc, dumpJob,
                                                pushJob, removeJob, shutdown,
                                                status)
 import           Periodic.Types.ClientCommand
-import           Periodic.Types.Job           (decodeJob)
 import           Periodic.Types.ServerCommand
 
 import           Periodic.Monad
@@ -84,9 +82,4 @@ handleAgent sched agent = do
     Right (RemoveJob job) -> unsafeLiftIO $ do
       removeJob sched job
       send agent Success
-    Right Dump -> unsafeLiftIO $ do
-      jobs <- dumpJob sched
-      mapM_ (send_ agent . toBytes) jobs
-      send_ agent "EOF"
-    Right (Load dat) -> unsafeLiftIO $ forM_ (decodeJob dat) (pushJob sched)
     Right Shutdown -> unsafeLiftIO $ shutdown sched

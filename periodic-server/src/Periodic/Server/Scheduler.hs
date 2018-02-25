@@ -23,7 +23,7 @@ module Periodic.Server.Scheduler
 
 import           Control.Exception            (SomeException, try)
 import           Control.Monad                (unless, void, when)
-import qualified Data.ByteString              as B (readFile, writeFile)
+import           Data.Binary                  (decodeFile, encodeFile)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Periodic.Agent               (Agent, aAlive, send)
@@ -43,7 +43,6 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           Periodic.Utils               (getEpochTime)
 
-import qualified Data.Store                   as DS
 import           System.Directory             (createDirectoryIfMissing,
                                                doesFileExist)
 import           System.FilePath              ((</>))
@@ -106,11 +105,9 @@ pollJob sched@Scheduler{..} = do
   where checkJob :: Job -> IO ()
         checkJob job@Job{..} = do
           w <- FL.lookup sSchedJobQ (jHandle job)
-          case w of
-            Nothing -> reSchedJob sched job
-            Just w' -> do
-              r <- poll w'
-              unless (isJust r) $ reSchedJob sched job
+          unless (isJust w) $ do
+            now <- getEpochTime
+            when (jSchedAt > now) $ reSchedJob sched job
 
         checkPoll :: (JobHandle, Async ()) -> IO ()
         checkPoll (jh, w) = do
@@ -231,10 +228,10 @@ dumpJob Scheduler{..} = do
 
 saveJob :: Scheduler -> IO ()
 saveJob sched@Scheduler{..} =
-  dumpJob sched >>= B.writeFile sStorePath . DS.encode
+  dumpJob sched >>= encodeFile sStorePath
 
 loadJob :: Scheduler -> IO [Job]
-loadJob Scheduler{..} = DS.decodeIO =<< B.readFile sStorePath
+loadJob Scheduler{..} = decodeFile sStorePath
 
 addFunc :: Scheduler -> FuncName -> IO ()
 addFunc sched n = broadcastFunc sched n False

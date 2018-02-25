@@ -10,6 +10,7 @@ module Periodic.Agent
   , send_
   , agentid
   , msgid
+  , msgidLength
   , aAlive
   , feed
   , receive
@@ -17,7 +18,7 @@ module Periodic.Agent
   ) where
 
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as B (concat)
+import qualified Data.ByteString             as B (concat, drop, take)
 
 import           Periodic.Connection         (Connection, connected, connid)
 import qualified Periodic.Connection         as Conn (send)
@@ -28,7 +29,6 @@ import           Control.Monad.STM           (atomically, retry)
 import           Data.Byteable               (Byteable (..))
 import           Periodic.IOHashMap          (IOHashMap)
 import           Periodic.Types.Internal
-import           Periodic.Utils              (breakBS2)
 
 data Agent = Agent { aMsgid  :: ByteString
                    , aConn   :: Connection
@@ -39,9 +39,8 @@ type AgentList = IOHashMap ByteString Agent
 
 newAgent :: ByteString -> Connection -> IO Agent
 newAgent bs aConn = do
-  let (aMsgid, pl) = breakBS2 bs
-  aReader <- newTVarIO [pl]
-  return Agent {..}
+  aReader <- newTVarIO [B.drop msgidLength bs]
+  return Agent {aMsgid = B.take msgidLength bs, ..}
 
 newEmptyAgent :: ByteString -> Connection -> IO Agent
 newEmptyAgent aMsgid aConn = do
@@ -49,17 +48,20 @@ newEmptyAgent aMsgid aConn = do
   return Agent {..}
 
 agentid :: Agent -> ByteString
-agentid Agent {..} = B.concat [ aMsgid, nullChar, connid aConn ]
+agentid Agent {..} = B.concat [ aMsgid, connid aConn ]
 
 msgid :: Agent -> ByteString
 msgid = aMsgid
+
+msgidLength :: Int
+msgidLength = 4
 
 aAlive :: Agent -> IO Bool
 aAlive Agent {..} = connected aConn
 
 send_ :: Agent -> ByteString -> IO ()
 send_ Agent{..} pl =
-  Conn.send aConn $ B.concat [ aMsgid, nullChar, pl ]
+  Conn.send aConn $ B.concat [ aMsgid, pl ]
 
 send :: Byteable cmd => Agent -> cmd -> IO ()
 send ag cmd = send_ ag $ toBytes cmd

@@ -38,16 +38,16 @@ import           Control.Exception           (Exception (..), SomeException,
 import           Control.Monad               (forever, unless, void)
 import           Control.Monad.STM           (atomically)
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as B (empty, isInfixOf)
+import qualified Data.ByteString             as B (drop, empty, take)
 import           Data.Typeable               (Typeable)
-import           Periodic.Agent              (Agent, AgentList, feed, msgid)
+import           Periodic.Agent              (Agent, AgentList, feed, msgid,
+                                              msgidLength)
 import qualified Periodic.Agent              as Agent (newAgent, newEmptyAgent)
 import           Periodic.Connection         (Connection, close, receive)
 import           Periodic.IOHashMap          (newIOHashMap)
 import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
                                                     lookup, member)
 import           Periodic.Types
-import           Periodic.Utils              (breakBS2)
 import           System.Entropy              (getEntropy)
 import           System.Log.Logger           (errorM)
 
@@ -163,19 +163,13 @@ newEmptyAgent = GenPeriodic $ \env _ ref ->
 
 newEmptyAgent_ :: Env u -> AgentList -> IO Agent
 newEmptyAgent_ env ref = do
-  aid <- genMsgid
+  aid <- getEntropy msgidLength
   agent <- Agent.newEmptyAgent aid (conn env)
   has <- HM.member ref aid
   if has then newEmptyAgent_ env ref
          else do
           HM.insert ref aid agent
           return agent
-
-  where genMsgid :: IO ByteString
-        genMsgid = do
-          aid <- getEntropy 4
-          if B.isInfixOf nullChar aid then genMsgid
-                                      else return aid
 
 removeAgent :: AgentList -> Agent -> IO ()
 removeAgent ref a = HM.delete ref (msgid a)
@@ -207,10 +201,9 @@ mainLoop onClose env state ref = do
 
 doFeed :: Env u -> TVar Bool -> AgentList -> ByteString -> IO ()
 doFeed env state ref bs = do
-  let (pid, pl) = breakBS2 bs
-  v <- HM.lookup ref pid
+  v <- HM.lookup ref $ B.take msgidLength bs
   case v of
-    Just agent -> feed agent pl
+    Just agent -> feed agent $ B.drop msgidLength bs
     Nothing    -> do
       agent <- Agent.newAgent bs (conn env)
       void . forkIO $ do

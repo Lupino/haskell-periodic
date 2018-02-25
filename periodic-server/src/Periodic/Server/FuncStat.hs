@@ -9,7 +9,7 @@ module Periodic.Server.FuncStat
   ) where
 
 import           Data.Byteable
-import qualified Data.ByteString.Char8 as B (intercalate, pack)
+import qualified Data.ByteString.Char8 as B (drop, intercalate, pack)
 import           Data.Int              (Int64)
 import           Periodic.IOHashMap    (IOHashMap)
 import           Periodic.Types        (FuncName)
@@ -24,7 +24,7 @@ data FuncStat = FuncStat { sSchedAt   :: Int64
 
 instance Byteable FuncStat where
   toBytes FuncStat{..} = B.intercalate ","
-    [ toBytes sFuncName
+    [ B.drop 1 $ toBytes sFuncName
     , B.pack $ show sWorker
     , B.pack $ show sJob
     , B.pack $ show sProcess
