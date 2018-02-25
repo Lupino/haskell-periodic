@@ -21,7 +21,6 @@ import           Periodic.Transport.XOR (makeXORTransport)
 import           Periodic.Types         (FuncName (..), JobName (..))
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
-import           System.IO              (IOMode (ReadMode, WriteMode), openFile)
 import           Text.Read              (readMaybe)
 
 import           Data.UnixTime
@@ -30,8 +29,6 @@ import qualified Text.PrettyPrint.Boxes as T
 
 
 data Command = Status
-             | Dump
-             | Load
              | Submit
              | Remove
              | Drop
@@ -42,8 +39,6 @@ data Command = Status
 
 parseCommand :: String -> Command
 parseCommand "status"   = Status
-parseCommand "dump"     = Dump
-parseCommand "load"     = Load
 parseCommand "submit"   = Submit
 parseCommand "remove"   = Remove
 parseCommand "drop"     = Drop
@@ -92,8 +87,6 @@ printHelp = do
   putStrLn "     submit   Submit job"
   putStrLn "     remove   Remove job"
   putStrLn "     drop     Drop function"
-  putStrLn "     dump     Dump database to file"
-  putStrLn "     load     Load file to database"
   putStrLn "     shutdown Shutdown periodicd"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
@@ -174,8 +167,6 @@ makeTransport' p transport  = do
 processCommand :: Command -> [String] -> Client ()
 processCommand Help _     = unsafeLiftIO printHelp
 processCommand Status _   = doStatus
-processCommand Load   _   = doLoad
-processCommand Dump   _   = doDump
 processCommand Submit xs  = doSubmitJob xs
 processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
@@ -193,10 +184,6 @@ doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack 
                   []              -> 0
                   ("--later":l:_) -> fromMaybe 0 (readMaybe l)
                   _               -> 0
-
-doDump = unsafeLiftIO (openFile "dump.db" WriteMode) >>= dump
-
-doLoad = unsafeLiftIO (openFile "dump.db" ReadMode) >>= load
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status

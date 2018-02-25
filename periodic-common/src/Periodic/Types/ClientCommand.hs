@@ -17,8 +17,6 @@ data ClientCommand =
   | Ping
   | DropFunc FuncName
   | RemoveJob Job
-  | Dump
-  | Load Job
   | Shutdown
 
   deriving (Show)
@@ -44,10 +42,6 @@ instance Binary ClientCommand where
       17 -> do
         job <- get
         pure (RemoveJob job)
-      18 -> pure Dump
-      19 -> do
-        job <- get
-        pure (Load job)
       20 -> pure Shutdown
       _ -> error $ "Error ClientCommand" ++ show tp
 
@@ -61,9 +55,5 @@ instance Binary ClientCommand where
     put func
   put (RemoveJob job) = do
     putWord8 17
-    put job
-  put Dump            = putWord8 18
-  put (Load job)      = do
-    putWord8 19
     put job
   put Shutdown        = putWord8 20

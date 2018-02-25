@@ -17,8 +17,6 @@ module Periodic.Client
   , removeJob_
   , removeJob
   , dropFunc
-  , dump
-  , load
   , status
   , shutdown
   ) where
@@ -26,7 +24,6 @@ module Periodic.Client
 import           Control.Concurrent           (forkIO)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as B (empty, hGet, hPut, length)
 import qualified Data.ByteString.Char8        as B (lines, split)
 import           Periodic.Agent               (Agent, receive, receive_, send)
 import           Periodic.Connection          (newClientConn)
@@ -34,20 +31,15 @@ import qualified Periodic.Connection          as Conn (receive, send)
 import           Periodic.Socket              (connect)
 import           Periodic.Timer
 import           Periodic.Transport           (Transport, makeSocketTransport)
-import           Periodic.Types               (ClientType (TypeClient),
-                                               runParser)
+import           Periodic.Types               (ClientType (TypeClient))
 import           Periodic.Types.ClientCommand
-import           Periodic.Types.Error
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 
 import           Data.Int                     (Int64)
 
-import           Control.Exception            (catch, throwIO)
-import           Control.Monad                (forever, unless, void)
-import           GHC.IO.Handle                (Handle, hClose)
-import           Periodic.Utils               (getEpochTime, makeHeader,
-                                               parseHeader)
+import           Control.Monad                (unless, void)
+import           Periodic.Utils               (getEpochTime)
 
 import           Periodic.Monad               hiding (catch)
 import           System.Timeout               (timeout)
@@ -117,41 +109,6 @@ isSuccess agent = do
     Left _        -> return False
     Right Success -> return True
     Right _       -> return False
-
-dump :: Handle -> Client ()
-dump h = withAgent $ \agent -> do
-  send agent Dump
-  catch (forever $ go agent) $ \(_ :: Error) -> return ()
-  hClose h
-
-  where go :: Agent -> IO ()
-        go agent = do
-          ret <- receive_ agent
-          if ret == "EOF" then throwIO EmptyError
-                          else putData ret
-
-        putData :: ByteString -> IO ()
-        putData dat = do
-          B.hPut h . makeHeader $ B.length dat
-          B.hPut h dat
-
-load :: Handle -> Client ()
-load h = withAgent $ \agent -> do
-  catch (forever $ go agent) $ \(_ :: Error) -> return ()
-  hClose h
-
-  where go :: Agent -> IO ()
-        go agent = do
-          header <- B.hGet h 4
-          if header == B.empty then throwIO EmptyError
-                               else pushData agent $ parseHeader header
-
-        pushData :: Agent -> Int -> IO ()
-        pushData agent len = do
-          dat <- B.hGet h len
-          case runParser dat of
-            Left _    -> pure ()
-            Right job -> send agent (Load job)
 
 status :: Client [[ByteString]]
 status = withAgent $ \agent -> do
