@@ -8,7 +8,7 @@ module Periodic.Types.Job
     FuncName (..)
   , JobName (..)
   , Workload (..)
-  , JobHandle (..)
+  , JobHandle
   , Job (..)
   , newJob
   , hashJobName
@@ -20,7 +20,7 @@ import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (concat, drop, empty, head,
                                                length, take)
-import           Data.ByteString.Lazy    (toStrict)
+import           Data.ByteString.Lazy    (fromStrict, toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
@@ -84,7 +84,7 @@ instance Binary JobName where
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
 
-newtype JobHandle = JobHandle {unJH :: ByteString}
+data JobHandle = JobHandle FuncName ByteString
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable JobHandle
@@ -95,20 +95,16 @@ instance Byteable JobHandle where
 instance Parser JobHandle where
   runParser = parseBinary
 
-instance IsString JobHandle where
-  fromString = JobHandle . fromString
-
-instance FromBS JobHandle where
-  fromBS = JobHandle . fromBS
-
 instance Binary JobHandle where
   get = do
-    size <- getWord16be
-    dat <- getByteString $ fromIntegral size
-    return $ JobHandle dat
-  put (JobHandle dat) = do
-    putWord16be . fromIntegral $ B.length dat
-    putByteString dat
+    fn <- get
+    size <- getWord8
+    jn <- getByteString $ fromIntegral size
+    return $ JobHandle fn jn
+  put (JobHandle fn jn) = do
+    put fn
+    putWord8 . fromIntegral $ B.length jn
+    putByteString jn
 
 newtype Workload  = Workload {unWL :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -176,12 +172,9 @@ hashJobName :: JobName -> ByteString
 hashJobName = toStrict . encode . hash
 
 jHandle :: Job -> JobHandle
-jHandle Job{ jFuncName = FuncName fn
+jHandle Job{ jFuncName = fn
            , jName = jn
-           } = JobHandle $ B.concat [ toStrict $ encode fn, hashJobName jn ]
+           } = JobHandle fn $ hashJobName jn
 
 unHandle :: JobHandle -> (FuncName, ByteString)
-unHandle (JobHandle bs) = (fn, jn)
-  where fnLen = fromEnum $ B.head bs
-        fn = FuncName . B.take fnLen $ B.drop 1 bs
-        jn = B.drop (fnLen + 1) bs
+unHandle (JobHandle fn  jn) = (fn, jn)
