@@ -9,7 +9,6 @@ module Periodic.Types.Internal
   ) where
 
 import           Data.Binary              (Binary, decodeOrFail)
-import           Data.Byteable
 import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
 import           Data.Text                (Text)

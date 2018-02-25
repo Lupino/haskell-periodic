@@ -18,9 +18,8 @@ module Periodic.Types.Job
 
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
-import qualified Data.ByteString.Char8   as B (concat, drop, empty, head,
-                                               length, take)
-import           Data.ByteString.Lazy    (fromStrict, toStrict)
+import qualified Data.ByteString.Char8   as B (empty, length)
+import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
