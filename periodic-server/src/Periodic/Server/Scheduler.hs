@@ -105,11 +105,9 @@ pollJob sched@Scheduler{..} = do
   where checkJob :: Job -> IO ()
         checkJob job@Job{..} = do
           w <- FL.lookup sSchedJobQ (jHandle job)
-          case w of
-            Nothing -> reSchedJob sched job
-            Just w' -> do
-              r <- poll w'
-              unless (isJust r) $ reSchedJob sched job
+          unless (isJust w) $ do
+            now <- getEpochTime
+            when (jSchedAt > now) $ reSchedJob sched job
 
         checkPoll :: (JobHandle, Async ()) -> IO ()
         checkPoll (jh, w) = do
