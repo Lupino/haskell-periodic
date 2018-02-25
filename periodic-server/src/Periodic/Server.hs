@@ -19,7 +19,6 @@ import           System.Posix.Signals      (Handler (Catch), installHandler,
 -- server
 import           Control.Exception         (SomeException, try)
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString           as B (head, null)
 import           Data.Int                  (Int64)
 import           Periodic.Connection       (Connection, close, connid,
                                             newServerConn, receive, send)
@@ -31,7 +30,7 @@ import           Periodic.Server.Scheduler
 import           Periodic.Server.Worker    (newWorker, runWorker, startWorker)
 import qualified Periodic.Server.Worker    as Worker
 import           Periodic.Transport        (Transport)
-import           Periodic.Types            (ClientType (..))
+import           Periodic.Types            (ClientType (..), runParser)
 import           Periodic.Utils            (getEpochTime, tryIO)
 import           System.Log.Logger         (errorM)
 
@@ -80,25 +79,18 @@ handleConnection sched clientList workerList transport = do
   conn <- newServerConn transport
   receiveThen conn $ \pl ->
     sendThen conn $
-      case tp pl of
-        Nothing         -> close conn
-        Just TypeClient -> do
+      case runParser pl of
+        Left _           -> close conn
+        Right TypeClient -> do
           client <- newClient conn sched
           HM.insert clientList (connid conn) client
           startClient client $ HM.delete clientList (connid conn)
-        Just TypeWorker -> do
+        Right TypeWorker -> do
           worker <- newWorker conn sched
           HM.insert workerList (connid conn) worker
           startWorker worker $ HM.delete workerList (connid conn)
 
-  where tp :: ByteString -> Maybe ClientType
-        tp bs | B.null bs = Nothing
-              | v == 1    = Just TypeClient
-              | v == 2    = Just TypeWorker
-              | otherwise = Nothing
-          where v = fromEnum $ B.head bs
-
-        receiveThen :: Connection -> (ByteString -> IO ()) -> IO ()
+  where receiveThen :: Connection -> (ByteString -> IO ()) -> IO ()
         receiveThen conn next = do
           e <- try $ receive conn
           case e of

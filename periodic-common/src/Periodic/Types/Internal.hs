@@ -1,35 +1,31 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Periodic.Types.Internal
   (
-    nullChar
-  , nullCharLength
-  , dropCmd
-  , Parser (..)
+    Parser (..)
   , FromBS (..)
+  , parseBinary
   ) where
 
+import           Data.Binary              (Binary, decodeOrFail)
 import           Data.Byteable
-import           Data.ByteString          (ByteString, drop)
+import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
 import           Data.Text                (Text)
 import qualified Data.Text                as T (unpack)
 import           Data.Text.Encoding       (decodeUtf8With)
 import           Data.Text.Encoding.Error (ignore)
 import qualified Data.Text.Lazy           as LT (Text, fromStrict)
-import           Prelude                  hiding (drop)
-
-nullChar :: ByteString
-nullChar = "\00\01"
-
-nullCharLength :: Int
-nullCharLength = 2
-
-dropCmd :: ByteString -> ByteString
-dropCmd = drop (nullCharLength + 1)
 
 class Parser a where
   runParser :: ByteString -> Either String a
+
+
+parseBinary :: Binary a => ByteString -> Either String a
+parseBinary bs = case decodeOrFail (LB.fromStrict bs) of
+                   Left (_, _, e)  -> Left e
+                   Right (_, _, v) -> Right v
 
 class FromBS a where
   fromBS :: Byteable b => b -> a

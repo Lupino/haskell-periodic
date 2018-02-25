@@ -11,8 +11,6 @@ module Periodic.Types.Job
   , JobHandle (..)
   , Job (..)
   , newJob
-  , decodeJob
-  , encodeJob
   , hashJobName
   , jHandle
   , unHandle
@@ -20,16 +18,15 @@ module Periodic.Types.Job
 
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
-import qualified Data.ByteString.Char8   as B (breakSubstring, concat, drop,
-                                               empty, length, null, pack)
+import qualified Data.ByteString.Char8   as B (concat, drop, empty, head,
+                                               length, take)
+import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
 
-import           Data.Maybe              (catMaybes)
 import           Data.String             (IsString (..))
 import           Periodic.Types.Internal
-import           Periodic.Utils          (breakBS, readBS)
 
 import           Data.Binary
 import           Data.Binary.Get
@@ -41,10 +38,10 @@ newtype FuncName  = FuncName {unFN :: ByteString}
 instance Hashable FuncName
 
 instance Byteable FuncName where
-  toBytes = unFN
+  toBytes = toStrict . encode
 
 instance Parser FuncName where
-  runParser bs = Right $ FuncName bs
+  runParser = parseBinary
 
 instance IsString FuncName where
   fromString = FuncName . fromString
@@ -67,10 +64,10 @@ newtype JobName   = JobName {unJN :: ByteString}
 instance Hashable JobName
 
 instance Byteable JobName where
-  toBytes = unJN
+  toBytes = toStrict . encode
 
 instance Parser JobName where
-  runParser bs = Right $ JobName bs
+  runParser = parseBinary
 
 instance IsString JobName where
   fromString = JobName . fromString
@@ -93,10 +90,10 @@ newtype JobHandle = JobHandle {unJH :: ByteString}
 instance Hashable JobHandle
 
 instance Byteable JobHandle where
-  toBytes = unJH
+  toBytes = toStrict . encode
 
 instance Parser JobHandle where
-  runParser bs = Right $ JobHandle bs
+  runParser = parseBinary
 
 instance IsString JobHandle where
   fromString = JobHandle . fromString
@@ -119,10 +116,10 @@ newtype Workload  = Workload {unWL :: ByteString}
 instance Hashable Workload
 
 instance Byteable Workload where
-  toBytes = unWL
+  toBytes = toStrict . encode
 
 instance Parser Workload where
-  runParser bs = Right $ Workload bs
+  runParser = parseBinary
 
 instance IsString Workload where
   fromString = Workload . fromString
@@ -148,12 +145,10 @@ data Job = Job { jFuncName :: FuncName
   deriving (Show)
 
 instance Byteable Job where
-  toBytes = encodeJob
+  toBytes = toStrict . encode
 
 instance Parser Job where
-  runParser bs = case decodeJob bs of
-                   Nothing  -> Left "InvalidJob"
-                   Just job -> Right job
+  runParser = parseBinary
 
 instance Binary Job where
   get = do
@@ -177,70 +172,16 @@ newJob jFuncName jName = Job { jWorkload = Workload B.empty
                              , ..
                              }
 
-encodeJob :: Job -> ByteString
-encodeJob Job {..} = concatBS [ Just fn
-                              , Just jn
-                              , schedAt
-                              , counter
-                              , workload
-                              ]
-
- where join :: [ByteString] -> [ByteString]
-       join []     = []
-       join [x]    = [x]
-       join (x:xs) = x:nullChar:join xs
-
-       concatBS = B.concat . join . catMaybes
-
-       sched = B.pack $ show jSchedAt
-       count = B.pack $ show jCount
-       fn = unFN jFuncName
-       jn = unJN jName
-       jwl = unWL jWorkload
-
-       schedAt | not (B.null jwl) = Just sched
-               | jCount > 0       = Just sched
-               | jSchedAt > 0     = Just sched
-               | otherwise        = Nothing
-       counter | not (B.null jwl) = Just count
-               | jCount > 0       = Just count
-               | otherwise        = Nothing
-
-       workload | B.null jwl      = Nothing
-                | otherwise       = Just jwl
-
-decodeJob :: ByteString -> Maybe Job
-decodeJob = go . breakBS 5
-  where go :: [ByteString] -> Maybe Job
-        go []            = Nothing
-        go [_]           = Nothing
-        go [x, y]        = Just $ newJob (FuncName x) (JobName y)
-        go [x, y, z]     = Just $ (newJob (FuncName x) (JobName y))
-          { jSchedAt = readBS z }
-        go [x, y, z, a]  = Just $ (newJob (FuncName x) (JobName y))
-          { jSchedAt = readBS z
-          , jCount   = readBS a
-          }
-        go (x:y:z:a:b:_) = Just $ (newJob (FuncName x) (JobName y))
-          { jWorkload = Workload b
-          , jSchedAt  = readBS z
-          , jCount    = readBS a
-          }
-
-sep :: ByteString
-sep = "::"
-
-sepLength :: Int
-sepLength = B.length sep
-
 hashJobName :: JobName -> ByteString
-hashJobName = B.pack . show . hash
+hashJobName = toStrict . encode . hash
 
 jHandle :: Job -> JobHandle
 jHandle Job{ jFuncName = FuncName fn
            , jName = jn
-           } = JobHandle $ B.concat [ fn, sep, hashJobName jn ]
+           } = JobHandle $ B.concat [ toStrict $ encode fn, hashJobName jn ]
 
 unHandle :: JobHandle -> (FuncName, ByteString)
-unHandle (JobHandle bs) = go $ B.breakSubstring sep bs
-  where go (fn, jn) = (FuncName fn, B.drop sepLength jn)
+unHandle (JobHandle bs) = (fn, jn)
+  where fnLen = fromEnum $ B.head bs
+        fn = FuncName . B.take fnLen $ B.drop 1 bs
+        jn = B.drop (fnLen + 1) bs

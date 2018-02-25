@@ -24,7 +24,6 @@ module Periodic.Server.Scheduler
 import           Control.Exception            (SomeException, try)
 import           Control.Monad                (unless, void, when)
 import           Data.Binary                  (decodeFile, encodeFile)
-import qualified Data.ByteString              as B (readFile, writeFile)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Periodic.Agent               (Agent, aAlive, send)

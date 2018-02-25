@@ -34,7 +34,8 @@ import qualified Periodic.Connection          as Conn (receive, send)
 import           Periodic.Socket              (connect)
 import           Periodic.Timer
 import           Periodic.Transport           (Transport, makeSocketTransport)
-import           Periodic.Types               (ClientType (TypeClient))
+import           Periodic.Types               (ClientType (TypeClient),
+                                               runParser)
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Error
 import           Periodic.Types.Job
@@ -148,7 +149,9 @@ load h = withAgent $ \agent -> do
         pushData :: Agent -> Int -> IO ()
         pushData agent len = do
           dat <- B.hGet h len
-          send agent (Load dat)
+          case runParser dat of
+            Left _    -> pure ()
+            Right job -> send agent (Load job)
 
 status :: Client [[ByteString]]
 status = withAgent $ \agent -> do
