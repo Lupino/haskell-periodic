@@ -15,6 +15,7 @@ module Periodic.Agent
   , feed
   , receive
   , receive_
+  , readerSize
   ) where
 
 import           Data.ByteString             (ByteString)
@@ -78,3 +79,6 @@ receive_ Agent{..} = atomically $ do
   when (null v) retry
   writeTVar aReader $ tail v
   pure $ head v
+
+readerSize :: Agent -> IO Int
+readerSize Agent{..} = length <$> readTVarIO aReader

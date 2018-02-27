@@ -15,7 +15,7 @@ module Periodic.Worker
 
 import           Control.Concurrent           (forkIO)
 import           Data.Byteable                (toBytes)
-import           Periodic.Agent               (Agent, receive, send)
+import           Periodic.Agent               (Agent, readerSize, receive, send)
 import           Periodic.Job                 (Job, JobEnv (..), func_,
                                                initJobEnv, name, workFail)
 import           Periodic.Socket              (connect)
@@ -70,7 +70,8 @@ ping = withAgent $ \agent -> do
 
 grabJob :: Agent -> Worker (Maybe JobEnv)
 grabJob agent = do
-  unsafeLiftIO $ send agent GrabJob
+  size <- unsafeLiftIO $ readerSize agent
+  when (size == 0) . unsafeLiftIO $ send agent GrabJob
   pl <- unsafeLiftIO . timeout 10000000 $ receive agent
 
   case pl of
