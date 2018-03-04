@@ -2,10 +2,15 @@
 
 module Periodic.Agent
   (
-    Agent
+    AgentState
+  , AgentConfig
   , AgentList
-  , newAgent
-  , newEmptyAgent
+  , Agent
+  , Msgid
+  , AgentT
+  , runAgentT
+  , initAgentConfig
+  , initAgentState
   , send
   , send_
   , agentid
@@ -21,64 +26,104 @@ module Periodic.Agent
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B (concat, drop, take)
 
-import           Periodic.Connection         (Connection, connected, connid)
+import           Periodic.Connection         (ConnectionConfig, ConnectionState,
+                                              ConnectionT, connected, connid,
+                                              connid', runConnectionT)
 import qualified Periodic.Connection         as Conn (send)
 
 import           Control.Concurrent.STM.TVar
 import           Control.Monad               (when)
+import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.STM           (atomically, retry)
+import           Control.Monad.Trans.Class   (lift)
+import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.State   (StateT, evalStateT, get)
 import           Data.Byteable               (Byteable (..))
 import           Periodic.IOHashMap          (IOHashMap)
 import           Periodic.Types.Internal
 
-data Agent = Agent { aMsgid  :: ByteString
-                   , aConn   :: Connection
-                   , aReader :: TVar [ByteString]
-                   }
+type AgentReader = TVar [ByteString]
+type Msgid = ByteString
 
-type AgentList = IOHashMap ByteString Agent
+data AgentState = AgentState
+  { aReader         :: AgentReader
+  , connectionState :: ConnectionState
+  }
 
-newAgent :: ByteString -> Connection -> IO Agent
-newAgent bs aConn = do
-  aReader <- newTVarIO [B.drop msgidLength bs]
-  return Agent {aMsgid = B.take msgidLength bs, ..}
+data AgentConfig = AgentConfig
+  { aMsgid           :: Msgid
+  , connectionConfig :: ConnectionConfig
+  }
 
-newEmptyAgent :: ByteString -> Connection -> IO Agent
-newEmptyAgent aMsgid aConn = do
+type Agent = (AgentState, AgentConfig)
+type AgentList = IOHashMap Msgid Agent
+
+msgid' :: Agent -> Msgid
+msgid' (_, config) = aMsgid config
+
+agentid' :: Agent -> ByteString
+agentid' (_, config) = B.concat [aMsgid config, connid' $ connectionConfig config]
+
+type AgentT m = StateT AgentReader (ReaderT Msgid (ConnectionT m))
+
+runAgentT
+  :: Monad m
+  => AgentState
+  -> AgentConfig
+  -> AgentT m a
+  -> m a
+runAgentT state config =
+  runConnectionT (connectionState state) (connectionConfig config)
+    . flip runReaderT (aMsgid config)
+    . flip evalStateT (aReader state)
+
+initAgentState :: ConnectionState -> IO AgentState
+initAgentState connectionState = do
   aReader <- newTVarIO []
-  return Agent {..}
+  return AgentState{..}
 
-agentid :: Agent -> ByteString
-agentid Agent {..} = B.concat [ aMsgid, connid aConn ]
+initAgentConfig :: Msgid -> ConnectionConfig -> AgentConfig
+initAgentConfig = AgentConfig
 
-msgid :: Agent -> ByteString
-msgid = aMsgid
+msgid :: Monad m => AgentT m Msgid
+msgid = lift $ ask
+
+agentid :: Monad m => AgentT m ByteString
+agentid = do
+  mid <- msgid
+  cid <- lift . lift $ connid
+  pure $ B.concat [mid, cid]
 
 msgidLength :: Int
 msgidLength = 4
 
-aAlive :: Agent -> IO Bool
-aAlive Agent {..} = connected aConn
+aAlive :: MonadIO m => AgentT m Bool
+aAlive = lift . lift $ connected
 
-send_ :: Agent -> ByteString -> IO ()
-send_ Agent{..} pl =
-  Conn.send aConn $ B.concat [ aMsgid, pl ]
+send_ :: MonadIO m => ByteString -> AgentT m ()
+send_ pl = do
+  mid <- msgid
+  lift . lift $ Conn.send $ B.concat [mid, pl]
 
-send :: Byteable cmd => Agent -> cmd -> IO ()
-send ag cmd = send_ ag $ toBytes cmd
+send :: (Byteable cmd, MonadIO m) => cmd -> AgentT m ()
+send = send_ . toBytes
 
-feed :: Agent -> ByteString -> IO ()
-feed Agent{..} dat = atomically . modifyTVar' aReader $ \v -> v ++ [dat]
+feed :: (MonadIO m) => ByteString -> AgentT m ()
+feed dat = do
+  state <- get
+  liftIO $ atomically . modifyTVar' state $ \v -> v ++ [dat]
 
-receive :: Parser cmd => Agent -> IO (Either String cmd)
-receive agent = runParser <$> receive_ agent
+receive_ :: MonadIO m => AgentT m ByteString
+receive_ = do
+  state <- get
+  liftIO . atomically $ do
+    v <- readTVar state
+    when (null v) retry
+    writeTVar state $ tail v
+    pure $ head v
 
-receive_ :: Agent -> IO ByteString
-receive_ Agent{..} = atomically $ do
-  v <- readTVar aReader
-  when (null v) retry
-  writeTVar aReader $ tail v
-  pure $ head v
+receive :: (Parser cmd, MonadIO m) => AgentT m (Either String cmd)
+receive = runParser <$> receive_
 
-readerSize :: Agent -> IO Int
-readerSize Agent{..} = length <$> readTVarIO aReader
+readerSize :: MonadIO m => AgentT m Int
+readerSize = fmap length $ liftIO . readTVarIO =<< get
