@@ -1,25 +1,25 @@
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Server.Worker
   (
-    Worker
-  , Connection
-  , newWorker
+    WorkerT
+  , WorkerEnv
+  , initWorkerEnv
   , close
-  , isAlive
-  , startWorker
-  , runWorker
+  , startWorkerT
+  , runWorkerT
   , getLastVist
-  , workerId
   ) where
 
 import           Control.Monad                (unless, when)
-import           Data.ByteString              (ByteString)
 import           Data.Int                     (Int64)
-import qualified Periodic.Connection          as Conn (Connection, connid)
+import qualified Periodic.Connection          as Conn
 
-import           Periodic.Agent               (Agent, receive, send)
+import           Periodic.Agent               (AgentT, agent, receive, send)
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
 import           Periodic.Server.Scheduler
@@ -32,84 +32,96 @@ import           Periodic.Types.WorkerCommand
 import           Periodic.Utils               (getEpochTime)
 
 import           Control.Concurrent.STM.TVar
+import           Control.Monad.Catch          (MonadCatch)
+import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.STM            (atomically)
+import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Control  (MonadBaseControl)
 
-data WorkerEnv = WorkerEnv
+data WorkerConfig = WorkerConfig
   { wSched    :: Scheduler
   , wFuncList :: IOList FuncName
   , wJobQueue :: IOList JobHandle
   , wLastVist :: TVar Int64
   }
 
-type Worker = GenPeriodic WorkerEnv
-type Connection = SpecEnv WorkerEnv
+type WorkerT m = PeriodicT m WorkerConfig
 
+data WorkerEnv m = WorkerEnv
+  { periodicEnv   :: Env m WorkerConfig
+  , periodicState :: PeriodicState
+  }
 
-newWorker :: Conn.Connection -> Scheduler -> IO Connection
-newWorker conn0 wSched = do
-  wFuncList <- newIOList
-  wJobQueue <- newIOList
-  wLastVist <- newTVarIO =<< getEpochTime
+runWorkerT :: Monad m => WorkerEnv m -> WorkerT m a -> m a
+runWorkerT WorkerEnv {..} = runPeriodicT periodicState periodicEnv
 
-  let wEnv = WorkerEnv {..}
+initWorkerEnv
+  :: (MonadIO m)
+  => Conn.ConnectionState
+  -> Conn.ConnectionConfig
+  -> Scheduler
+  -> m (WorkerEnv m)
+initWorkerEnv connectionState connectionConfig wSched = do
+  wFuncList <- liftIO $ newIOList
+  wJobQueue <- liftIO $ newIOList
+  wLastVist <- liftIO $ newTVarIO =<< getEpochTime
 
-  env0 <- initEnv_ handleAgent conn0 wEnv
-  runPeriodic env0 specEnv
+  let workerConfig = WorkerConfig {..}
 
-runWorker :: Connection -> Worker a -> IO a
-runWorker = runPeriodicWithSpecEnv
+  let env0 = initEnv_ workerConfig connectionConfig $ handleAgentT workerConfig
+  state0 <- liftIO $ initPeriodicState connectionState
+  return $ WorkerEnv env0 state0
 
-startWorker :: Connection -> IO () -> IO ()
-startWorker env0 io = runPeriodicWithSpecEnv env0 $ do
-  WorkerEnv {..} <- userEnv
-  startMainLoop $ do
-    mapM_ (failJob wSched) =<< toList wJobQueue
-    mapM_ (removeFunc wSched) =<< toList wFuncList
-    io
+startWorkerT
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  => WorkerEnv m -> m ()
+startWorkerT env0 = runWorkerT env0 $ do
+  startMainLoop
+  WorkerConfig {..} <- env
+  liftIO $ mapM_ (failJob wSched) =<< toList wJobQueue
+  liftIO $ mapM_ (removeFunc wSched) =<< toList wFuncList
 
-close :: Worker ()
-close = stopPeriodic
+close :: MonadIO m => WorkerT m ()
+close = stopPeriodicT
 
-getLastVist :: Worker Int64
+getLastVist :: MonadIO m => WorkerT m Int64
 getLastVist = do
-  WorkerEnv {..} <- userEnv
-  unsafeLiftIO $ readTVarIO wLastVist
+  WorkerConfig {..} <- env
+  liftIO $ readTVarIO wLastVist
 
-workerId :: Worker ByteString
-workerId = Conn.connid . conn <$> env
-
-handleAgent :: Agent -> Worker ()
-handleAgent agent = do
-  WorkerEnv {..} <- userEnv
-  unsafeLiftIO $ do
+handleAgentT :: MonadIO m => WorkerConfig -> AgentT m ()
+handleAgentT WorkerConfig {..} = do
+  liftIO $ do
     t <- getEpochTime
     atomically $ writeTVar wLastVist t
-  cmd <- unsafeLiftIO $ receive agent :: Worker (Either String WorkerCommand)
+  cmd <- receive
   case cmd of
-    Left _     -> close -- close worker
-    Right GrabJob -> unsafeLiftIO $ pushGrab wSched wFuncList wJobQueue agent
-    Right (WorkDone jh) -> unsafeLiftIO $ do
+    Left _     -> lift . lift $ Conn.close -- close worker
+    Right GrabJob -> do
+      ag <- agent
+      liftIO $ pushGrab wSched wFuncList wJobQueue ag
+    Right (WorkDone jh) -> liftIO $ do
       doneJob wSched jh
       delete wJobQueue jh
-    Right (WorkFail jh) -> unsafeLiftIO $ do
+    Right (WorkFail jh) -> liftIO $ do
       failJob wSched jh
       delete wJobQueue jh
-    Right (SchedLater jh l s) -> unsafeLiftIO $ do
+    Right (SchedLater jh l s) -> liftIO $ do
       schedLaterJob wSched jh l s
       delete wJobQueue jh
-    Right Sleep -> unsafeLiftIO $ send agent Noop
-    Right Ping -> unsafeLiftIO $ send agent Pong
-    Right (CanDo fn) -> unsafeLiftIO $ do
+    Right Sleep -> send Noop
+    Right Ping -> send Pong
+    Right (CanDo fn) -> liftIO $ do
       has <- elem wFuncList fn
       unless has $ do
         addFunc wSched fn
         insert wFuncList fn
-    Right (CantDo fn) -> unsafeLiftIO $ do
+    Right (CantDo fn) -> liftIO $ do
       has <- elem wFuncList fn
       when has $ do
         removeFunc wSched fn
         delete wFuncList fn
-    Right (Broadcast fn) -> unsafeLiftIO $ do
+    Right (Broadcast fn) -> liftIO $ do
       has <- elem wFuncList fn
       unless has $ do
         broadcastFunc wSched fn True

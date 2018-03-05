@@ -1,8 +1,8 @@
 module Periodic.Job
   (
-    Job
-  , JobEnv
-  , initJobEnv
+    JobT
+  , JobConfig
+  , initJobConfig
   , name
   , func
   , workload
@@ -17,61 +17,69 @@ module Periodic.Job
   , schedLater'
   ) where
 
+import           Control.Monad.Catch          (MonadMask)
+import           Control.Monad.IO.Class       (MonadIO (..))
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
-import           Periodic.Monad               (GenPeriodic, userEnv, withAgent)
+import           Periodic.Monad
 import           Periodic.Types               (FromBS (..), FuncName (..),
                                                JobHandle, JobName (..),
                                                Workload (..))
 import qualified Periodic.Types.Job           as J
 import           Periodic.Types.WorkerCommand
 
-data JobEnv = JobEnv { job :: J.Job, handle :: JobHandle }
+data JobConfig = JobConfig { job :: J.Job, handle :: JobHandle }
 
-type Job = GenPeriodic JobEnv
+type JobT m = PeriodicT m JobConfig
 
-name :: (FromBS a, Show a) => Job a
+name :: (FromBS a, Show a, Monad m) => JobT m a
 name = fromBS . unJN <$> name_
 
-name_ :: Job JobName
-name_ = J.jName . job <$> userEnv
+name_ :: Monad m => JobT m JobName
+name_ = J.jName . job <$> env
 
-func :: (FromBS a, Show a) => Job a
+func :: (FromBS a, Show a, Monad m) => JobT m a
 func = fromBS . unFN <$> func_
 
-func_ :: Job FuncName
-func_ = J.jFuncName . job <$> userEnv
+func_ :: Monad m => JobT m FuncName
+func_ = J.jFuncName . job <$> env
 
-workload :: (FromBS a, Show a) => Job a
+workload :: (FromBS a, Show a, Monad m) => JobT m a
 workload = fromBS . unWL <$> workload_
 
-workload_ :: Job Workload
-workload_ = J.jWorkload . job <$> userEnv
+workload_ :: Monad m => JobT m Workload
+workload_ = J.jWorkload . job <$> env
 
-counter :: Job Int
-counter = J.jCount . job <$> userEnv
+counter :: Monad m => JobT m Int
+counter = J.jCount . job <$> env
 
-initJobEnv :: J.Job -> JobHandle -> JobEnv
-initJobEnv = JobEnv
+initJobConfig :: J.Job -> JobHandle -> JobConfig
+initJobConfig = JobConfig
 
-workDone :: Job ()
+workDone
+  :: (MonadIO m, MonadMask m)
+  =>  JobT m ()
 workDone = do
-  h <- handle <$> userEnv
-  withAgent $ \agent -> send agent (WorkDone h)
+  h <- handle <$> env
+  withAgentT $ send (WorkDone h)
 
-workFail :: Job ()
+workFail
+  :: (MonadIO m, MonadMask m)
+  =>  JobT m ()
 workFail = do
-  h <- handle <$> userEnv
-  withAgent $ \agent -> send agent (WorkFail h)
+  h <- handle <$> env
+  withAgentT $ send (WorkFail h)
 
-schedLater :: Int64 -> Job ()
+schedLater
+  :: (MonadIO m, MonadMask m)
+  =>  Int64 -> JobT m ()
 schedLater later = do
-  h <- handle <$> userEnv
-  withAgent $ \agent ->
-    send agent (SchedLater h later 0)
+  h <- handle <$> env
+  withAgentT $ send (SchedLater h later 0)
 
-schedLater' :: Int64 -> Int -> Job ()
+schedLater'
+  :: (MonadIO m, MonadMask m)
+  =>  Int64 -> Int -> JobT m ()
 schedLater' later step = do
-  h <- handle <$> userEnv
-  withAgent $ \agent ->
-    send agent (SchedLater h later step)
+  h <- handle <$> env
+  withAgentT $ send (SchedLater h later step)

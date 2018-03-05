@@ -1,240 +1,211 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Monad
   (
-    Result (..)
-  , GenPeriodic
-  , runPeriodic
-  , startMainLoop
-  , Env (conn)
+    Env
+  , PeriodicState
+  , PeriodicT
   , initEnv
   , initEnv_
-  , cloneEnv
-  , cloneEnv_
   , withEnv
-  , env
-  , userEnv
-  , unsafeLiftIO
-  , withAgent
-  , newEmptyAgent
-
-  , SpecEnv
-  , specEnv
-  , runPeriodicWithSpecEnv
-
+  , initPeriodicState
+  , runPeriodicT
+  , startMainLoop
+  , withAgentT
+  , newAgent
+  , liftPeriodicT
   , isAlive
-  , stopPeriodic
-
-  , catch
-  , wapperIO
+  , stopPeriodicT
+  , env
   ) where
 
-import           Control.Concurrent          (forkIO, killThread, myThreadId)
+import           Control.Concurrent          (forkIO)
 import           Control.Concurrent.STM.TVar
-import           Control.Exception           (Exception (..), SomeException,
-                                              bracket, throw, try)
-import           Control.Monad               (forever, unless, void)
+import           Control.Exception           (SomeException)
+import           Control.Monad               (forever, mzero, void)
+import           Control.Monad.Catch         (MonadCatch, MonadMask, bracket,
+                                              try)
+import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.STM           (atomically)
+import           Control.Monad.Trans.Class   (lift)
+import           Control.Monad.Trans.Control (MonadBaseControl, liftBaseDiscard)
+import           Control.Monad.Trans.Maybe   (runMaybeT)
+import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.State   (StateT (..), evalStateT, get,
+                                              gets)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B (drop, empty, take)
-import           Data.Typeable               (Typeable)
-import           Periodic.Agent              (Agent, AgentList, feed, msgid,
-                                              msgidLength)
-import qualified Periodic.Agent              as Agent (newAgent, newEmptyAgent)
-import           Periodic.Connection         (Connection, close, receive)
+import           Periodic.Agent              hiding (receive)
+import           Periodic.Connection         (ConnectionConfig, ConnectionState,
+                                              ConnectionT, close, receive,
+                                              runConnectionT)
 import           Periodic.IOHashMap          (newIOHashMap)
 import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
                                                     lookup, member)
-import           Periodic.Types
 import           System.Entropy              (getEntropy)
 import           System.Log.Logger           (errorM)
 
-newtype MonadFail = MonadFail String
-  deriving (Typeable, Show)
 
-instance Exception MonadFail
+data Env m u = Env
+  { uEnv             :: u
+  , connectionConfig :: ConnectionConfig
+  , agentHandler     :: AgentT m ()
+  }
 
-data Env u = Env { uEnv :: u, conn :: Connection, agentHandler :: Agent -> GenPeriodic u () }
+data PeriodicState = PeriodicState
+  { status          :: TVar Bool
+  , agentList       :: AgentList
+  , connectionState :: ConnectionState
+  }
 
-data SpecEnv u = SpecEnv { sEnv :: Env u, sState :: TVar Bool, sRef :: AgentList }
+type PeriodicT m u = StateT PeriodicState (ReaderT (Env m u) (ConnectionT m))
 
-newtype GenPeriodic u a = GenPeriodic { unPeriodic :: Env u -> TVar Bool -> AgentList -> IO (Result a) }
+runPeriodicT
+  :: Monad m
+  => PeriodicState
+  -> Env m u
+  -> PeriodicT m u a
+  -> m a
+runPeriodicT state config =
+  runConnectionT (connectionState state) (connectionConfig config)
+    . flip runReaderT config
+    . flip evalStateT state
 
-data Result a = Done a
-              | Throw SomeException
+initEnv :: MonadIO m => u -> ConnectionConfig -> Env m u
+initEnv u c = Env u c defaultAgentHandler
 
-instance Monad (GenPeriodic u) where
-  return a = GenPeriodic $ \_ _ _ -> return (Done a)
-  GenPeriodic m >>= k = GenPeriodic $ \env state ref -> do
-    e <- m env state ref
-    case e of
-      Done a  -> unPeriodic (k a) env state ref
-      Throw e -> return (Throw e)
+initEnv_ :: u -> ConnectionConfig -> AgentT m () -> Env m u
+initEnv_ = Env
 
-  fail msg = GenPeriodic $ \_ _ _ -> return $ Throw $ toException $ MonadFail msg
+defaultAgentHandler :: MonadIO m => AgentT m ()
+defaultAgentHandler = do
+  pid <- msgid
+  liftIO $ errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
 
-  (>>) = (*>)
+withEnv :: (Monad m) =>  u1 -> PeriodicT m u1 a -> PeriodicT m u a
+withEnv u m = do
+  state0 <- get
+  env0 <- lift $ ask
+  liftPeriodicT $ runPeriodicT state0 (env0 {uEnv=u}) m
 
-instance Functor (GenPeriodic u) where
-  fmap f (GenPeriodic m) = GenPeriodic $ \env state ref -> do
-    e <- m env state ref
-    case e of
-      Done a  -> return (Done (f a))
-      Throw e -> return (Throw e)
+initPeriodicState :: ConnectionState -> IO PeriodicState
+initPeriodicState connectionState = do
+  status <- newTVarIO True
+  agentList <- newIOHashMap
+  pure $ PeriodicState{..}
 
-instance Applicative (GenPeriodic u) where
-  pure = return
-  GenPeriodic f <*> GenPeriodic a = GenPeriodic $ \env state ref -> do
-    r <- f env state ref
-    case r of
-      Throw e -> return (Throw e)
-      Done f' -> do
-        ra <- a env state ref
-        case ra of
-          Done a' -> return (Done (f' a'))
-          Throw e -> return (Throw e)
+withAgentT :: (MonadIO m, Monad m, MonadMask m) => AgentT m a -> PeriodicT m u a
+withAgentT agentT = do
+  PeriodicState{..} <- get
+  Env {..} <- lift $ ask
+  bracket newMsgid removeMsgid $ \mid -> do
+    let agentConfig = initAgentConfig mid connectionConfig
+    agentState <- liftIO $ initAgentState connectionState
+    liftIO $ HM.insert agentList mid (agentState, agentConfig)
+    liftPeriodicT $ runAgentT agentState agentConfig agentT
 
-runPeriodic :: Env u -> GenPeriodic u a -> IO a
-runPeriodic env (GenPeriodic m) = do
-  ref <- newIOHashMap
-  state <- newTVarIO True
-  e <- m env state ref
-  case e of
-    Done a  -> return a
-    Throw e -> throw e
+newAgent :: (Monad m, MonadIO m) => PeriodicT m u Agent
+newAgent = do
+  PeriodicState{..} <- get
+  Env {..} <- lift $ ask
+  mid <- newMsgid
+  let agentConfig = initAgentConfig mid connectionConfig
+  agentState <- liftIO $ initAgentState connectionState
+  liftIO $ HM.insert agentList mid (agentState, agentConfig)
+  return (agentState, agentConfig)
 
-runPeriodicWithSpecEnv :: SpecEnv u -> GenPeriodic u a -> IO a
-runPeriodicWithSpecEnv (SpecEnv env state ref) (GenPeriodic m) = do
-  e <- m env state ref
-  case e of
-    Done a  -> return a
-    Throw e -> throw e
 
-initEnv :: Connection -> u -> IO (Env u)
-initEnv = initEnv_ defaultHandler
+liftPeriodicT :: (Functor m, Applicative m, Monad m) => m a -> PeriodicT m u a
+liftPeriodicT m =
+  StateT $ \s0 ->
+    ReaderT $ \_ -> do
+      a0 <- StateT $ \s1 ->
+        ReaderT $ \_ -> do
+          a1 <- m
+          pure (a1, s1)
+      pure (a0, s0)
 
-defaultHandler :: Agent -> GenPeriodic u ()
-defaultHandler agent =
-  unsafeLiftIO $ errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
-  where pid = msgid agent
+newMsgid :: MonadIO m => PeriodicT m u Msgid
+newMsgid = do
+  ref <- gets agentList
+  aid <- liftIO $ getEntropy msgidLength
+  has <- liftIO $ HM.member ref aid
+  if has then newMsgid
+         else pure aid
 
-initEnv_ :: (Agent -> GenPeriodic u ()) -> Connection -> u -> IO (Env u)
-initEnv_ agentHandler conn uEnv =
-  return Env {..}
+removeMsgid :: MonadIO m => Msgid -> PeriodicT m u ()
+removeMsgid mid = do
+  ref <- gets agentList
+  liftIO $ HM.delete ref mid
 
-cloneEnv :: u1 -> GenPeriodic u (Env u1)
-cloneEnv u = cloneEnv_ u defaultHandler
-
-cloneEnv_ :: u1 -> (Agent -> GenPeriodic u1 ()) -> GenPeriodic u (Env u1)
-cloneEnv_ u h = GenPeriodic $ \env _ _ -> return . Done $ env { uEnv = u, agentHandler = h }
-
-withEnv :: Env u1 -> GenPeriodic u1 a -> GenPeriodic u a
-withEnv newEnv (GenPeriodic m) = GenPeriodic $ \_ state ref -> do
-  r <- m newEnv state ref
+tryMainLoop :: (MonadIO m, MonadBaseControl IO m, MonadCatch m) => PeriodicT m u ()
+tryMainLoop = do
+  r <- try mainLoop
   case r of
-    Done a  -> return (Done a)
-    Throw e -> return (Throw e)
+    Left (_::SomeException) -> stopPeriodicT
+    Right _                 -> pure ()
 
-env :: GenPeriodic u (Env u)
-env = GenPeriodic $ \env _ _ -> return (Done env)
+mainLoop
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  => PeriodicT m u ()
+mainLoop = do
+  PeriodicState{..} <- get
+  Env{..} <- lift $ ask
+  bs <- lift . lift $ receive
+  void . liftBaseDiscard forkIO $ tryDoFeed bs
 
-userEnv :: GenPeriodic u u
-userEnv = GenPeriodic $ \env _ _ -> return (Done $ uEnv env)
+tryDoFeed :: (MonadIO m, MonadCatch m) => ByteString -> PeriodicT m u ()
+tryDoFeed bs = do
+  r <- try $ doFeed bs
+  case r of
+    Left (_::SomeException) -> stopPeriodicT
+    Right _                 -> pure ()
 
-specEnv :: GenPeriodic u (SpecEnv u)
-specEnv = GenPeriodic $ \env state ref -> return (Done $ SpecEnv env state ref)
-
--- Unsafe operations
-
--- | Under ordinary circumstances this is unnecessary; users of the Periodic
--- monad should generally /not/ perform arbitrary IO.
-unsafeLiftIO :: IO a -> GenPeriodic u a
-unsafeLiftIO m = GenPeriodic $ \_ _ _ -> Done <$> m
-
-withAgent :: (Agent -> IO a) -> GenPeriodic u a
-withAgent f = GenPeriodic $ \env _ ref ->
-  Done <$> bracket (newEmptyAgent_ env ref) (removeAgent ref) f
-
-newEmptyAgent :: GenPeriodic u Agent
-newEmptyAgent = GenPeriodic $ \env _ ref ->
-  Done <$> newEmptyAgent_ env ref
-
-newEmptyAgent_ :: Env u -> AgentList -> IO Agent
-newEmptyAgent_ env ref = do
-  aid <- getEntropy msgidLength
-  agent <- Agent.newEmptyAgent aid (conn env)
-  has <- HM.member ref aid
-  if has then newEmptyAgent_ env ref
-         else do
-          HM.insert ref aid agent
-          return agent
-
-removeAgent :: AgentList -> Agent -> IO ()
-removeAgent ref a = HM.delete ref (msgid a)
-
-doFeedError :: AgentList -> IO ()
-doFeedError ref = HM.elems ref >>= mapM_ (`feed` B.empty)
-
-startMainLoop :: IO () -> GenPeriodic u ()
-startMainLoop onClose = GenPeriodic $ \env state ref ->
-  Done <$> forever (mainLoop onClose env state ref)
-
-mainLoop :: IO () -> Env u -> TVar Bool -> AgentList -> IO ()
-mainLoop onClose env state ref = do
-  alive <- readTVarIO state
-  unless alive $ do
-    onClose
-    doFeedError ref
-    close (conn env)
-    killThread =<< myThreadId
-  e <- try $ receive (conn env)
-  case e of
-    Left TransportClosed -> setClose state
-    Left MagicNotMatch   -> setClose state
-    Left _               -> return ()
-    Right pl             -> doFeed env state ref pl
-
- where setClose :: TVar Bool -> IO ()
-       setClose state = atomically $ writeTVar state False
-
-doFeed :: Env u -> TVar Bool -> AgentList -> ByteString -> IO ()
-doFeed env state ref bs = do
-  v <- HM.lookup ref $ B.take msgidLength bs
+doFeed :: MonadIO m => ByteString -> PeriodicT m u ()
+doFeed bs = do
+  PeriodicState{..} <- get
+  Env{..} <- lift $ ask
+  v <- liftIO . HM.lookup agentList $ B.take msgidLength bs
   case v of
-    Just agent -> feed agent $ B.drop msgidLength bs
+    Just (agentState, agentConfig) ->
+      liftPeriodicT . runAgentT agentState agentConfig . feed $ B.drop msgidLength bs
     Nothing    -> do
-      agent <- Agent.newAgent bs (conn env)
-      void . forkIO $ do
-        ret <- try $ unPeriodic (agentHandler env agent) env state ref
-        case ret of
-          Right _                 -> pure ()
-          Left (_::SomeException) -> atomically $ writeTVar state False
+      let agentConfig = initAgentConfig (B.take msgidLength bs) connectionConfig
+      agentState <- liftIO $ initAgentState connectionState
+      liftPeriodicT . runAgentT agentState agentConfig $ do
+        feed $ B.drop msgidLength bs
+        agentHandler
 
+startMainLoop
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  => PeriodicT m u ()
+startMainLoop = do
+  void . runMaybeT . forever $ do
+    alive <- lift isAlive
+    if alive then lift tryMainLoop
+             else mzero
 
--- | Catch an exception in the Haxl monad
-catch :: Exception e => GenPeriodic u a -> (e -> GenPeriodic u a) -> GenPeriodic u a
-catch (GenPeriodic m) h = GenPeriodic $ \env state ref -> do
-  r <- m env state ref
-  case r of
-    Done a    -> return (Done a)
-    Throw e | Just e' <- fromException e -> unPeriodic (h e') env state ref
-            | otherwise -> return (Throw e)
+  doFeedError
+  lift $ lift close
 
-wapperIO :: (IO a -> IO b) -> GenPeriodic u a -> GenPeriodic u b
-wapperIO f (GenPeriodic m) = GenPeriodic $ \env state ref -> do
-  e <- try $ f $ do r <- m env state ref
-                    case r of
-                      Done a  -> return a
-                      Throw e -> throw e
-  case e of
-    Left e  -> return $ Throw e
-    Right a -> return $ Done a
+isAlive :: MonadIO m => PeriodicT m u Bool
+isAlive = liftIO . readTVarIO =<< gets status
 
-isAlive :: GenPeriodic u Bool
-isAlive = GenPeriodic $ \_ state _ -> Done <$> readTVarIO state
+doFeedError :: MonadIO m => PeriodicT m u ()
+doFeedError = do
+  gets agentList >>= liftIO . HM.elems >>= mapM_ go
+  where go :: MonadIO m => (AgentState, AgentConfig) -> PeriodicT m u ()
+        go (agentState, agentConfig) =
+          liftPeriodicT $ runAgentT agentState agentConfig $ feed B.empty
 
-stopPeriodic :: GenPeriodic u ()
-stopPeriodic = GenPeriodic $ \_ state _ ->
-  Done <$> atomically (writeTVar state False)
+stopPeriodicT :: MonadIO m => PeriodicT m u ()
+stopPeriodicT = do
+  st <- gets status
+  liftIO . atomically $ writeTVar st False
+
+env :: Monad m => PeriodicT m u u
+env = lift $ asks uEnv

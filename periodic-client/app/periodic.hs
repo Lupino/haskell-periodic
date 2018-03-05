@@ -7,13 +7,13 @@ module Main
   ) where
 
 import           Control.Monad          (void, when)
+import           Control.Monad.IO.Class (liftIO)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString.Char8  as B (pack, unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.List              (isPrefixOf, transpose)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
-import           Periodic.Monad         (unsafeLiftIO)
 import           Periodic.Socket        (getService)
 import           Periodic.Transport     (Transport)
 import           Periodic.Transport.TLS
@@ -149,7 +149,8 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  runClient (makeTransport opts) host $ processCommand cmd argv
+  clientEnv <- open (makeTransport opts) host
+  runClientT clientEnv $ processCommand cmd argv
 
 makeTransport :: Options -> Transport -> IO Transport
 makeTransport Options{..} transport =
@@ -164,8 +165,8 @@ makeTransport' p transport  = do
   key <- LB.readFile p
   makeXORTransport key transport
 
-processCommand :: Command -> [String] -> Client ()
-processCommand Help _     = unsafeLiftIO printHelp
+processCommand :: Command -> [String] -> ClientT IO ()
+processCommand Help _     = liftIO $ printHelp
 processCommand Status _   = doStatus
 processCommand Submit xs  = doSubmitJob xs
 processCommand Remove xs  = doRemoveJob xs
@@ -173,12 +174,12 @@ processCommand Drop xs    = doDropFunc xs
 processCommand Shutdown _ = shutdown
 
 doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
-doRemoveJob []     = unsafeLiftIO printRemoveHelp
+doRemoveJob []     = liftIO $ printRemoveHelp
 
 doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
 
-doSubmitJob []       = unsafeLiftIO printSubmitHelp
-doSubmitJob [_]      = unsafeLiftIO printSubmitHelp
+doSubmitJob []       = liftIO $ printSubmitHelp
+doSubmitJob [_]      = liftIO $ printSubmitHelp
 doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack y) later
   where later = case xs of
                   []              -> 0
@@ -187,7 +188,7 @@ doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack 
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status
-  unsafeLiftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
+  liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]
 unpackBS = map (map B.unpack)
