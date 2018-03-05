@@ -50,12 +50,12 @@ import           System.Timeout.Lifted        (timeout)
 type ClientT m     = PeriodicT m ()
 
 data ClientEnv m = ClientEnv
-  { connectionEnv :: Env m ()
+  { periodicEnv   :: Env m ()
   , periodicState :: PeriodicState
   }
 
 runClientT :: Monad m => ClientEnv m -> ClientT m a -> m a
-runClientT ClientEnv {..} = runPeriodicT periodicState connectionEnv
+runClientT ClientEnv {..} = runPeriodicT periodicState periodicEnv
 
 open
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadMask m)

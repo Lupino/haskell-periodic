@@ -17,25 +17,28 @@ import           System.Posix.Signals      (Handler (Catch), installHandler,
                                             sigINT, sigTERM)
 
 -- server
-import           Control.Exception         (SomeException, try)
+import           Control.Exception         (SomeException)
+import           Control.Monad.Catch       (try)
+import           Control.Monad.IO.Class    (liftIO)
+import           Control.Monad.Trans.Class (lift)
 import           Data.ByteString           (ByteString)
 import           Data.Int                  (Int64)
-import           Periodic.Connection       (Connection, close, connid,
-                                            newServerConn, receive, send)
+import           Periodic.Connection       hiding (close)
+import qualified Periodic.Connection       as Conn
 import           Periodic.IOHashMap        (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap        as HM
-import           Periodic.Server.Client    (newClient, runClient, startClient)
+import           Periodic.Server.Client    hiding (close, getLastVist)
 import qualified Periodic.Server.Client    as Client
 import           Periodic.Server.Scheduler
-import           Periodic.Server.Worker    (newWorker, runWorker, startWorker)
+import           Periodic.Server.Worker    hiding (close, getLastVist)
 import qualified Periodic.Server.Worker    as Worker
 import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..), runParser)
 import           Periodic.Utils            (getEpochTime, tryIO)
 import           System.Log.Logger         (errorM)
 
-type ClientList = IOHashMap ByteString Client.Connection
-type WorkerList = IOHashMap ByteString Worker.Connection
+type ClientList = IOHashMap ByteString (ClientEnv IO)
+type WorkerList = IOHashMap ByteString (WorkerEnv IO)
 
 handleExit :: MVar () -> IO ()
 handleExit mv = void $ tryPutMVar mv ()
@@ -76,57 +79,66 @@ mainLoop makeTransport sock sched clientList workerList = do
 
 handleConnection :: Scheduler -> ClientList -> WorkerList -> Transport -> IO ()
 handleConnection sched clientList workerList transport = do
-  conn <- newServerConn transport
-  receiveThen conn $ \pl ->
-    sendThen conn $
-      case runParser pl of
-        Left _           -> close conn
-        Right TypeClient -> do
-          client <- newClient conn sched
-          HM.insert clientList (connid conn) client
-          startClient client $ HM.delete clientList (connid conn)
-        Right TypeWorker -> do
-          worker <- newWorker conn sched
-          HM.insert workerList (connid conn) worker
-          startWorker worker $ HM.delete workerList (connid conn)
+  connectionConfig <- initServerConnectionConfig transport
+  connectionState <- initConnectionState
 
-  where receiveThen :: Connection -> (ByteString -> IO ()) -> IO ()
-        receiveThen conn next = do
-          e <- try $ receive conn
+  runConnectionT connectionState connectionConfig $
+   receiveThen $ \pl ->
+     sendThen $
+       case runParser pl of
+         Left _           -> Conn.close
+         Right TypeClient -> do
+           cid <- connid
+           liftIO $ do
+             clientEnv <- initClientEnv connectionState connectionConfig sched
+             HM.insert clientList cid clientEnv
+             startClientT clientEnv
+             HM.delete clientList cid
+         Right TypeWorker -> do
+           cid <- connid
+           liftIO $ do
+             workerEnv <- initWorkerEnv connectionState connectionConfig sched
+             HM.insert workerList cid workerEnv
+             startWorkerT workerEnv
+             HM.delete workerList cid
+
+  where receiveThen :: (ByteString -> ConnectionT IO ()) -> ConnectionT IO ()
+        receiveThen next = do
+          e <- try receive
           case e of
-            Left (_ :: SomeException) -> close conn
+            Left (_ :: SomeException) -> Conn.close
             Right pl                  -> next pl
 
-        sendThen :: Connection -> IO () -> IO ()
-        sendThen conn next = do
-          e <- try $ send conn (connid conn)
+        sendThen :: ConnectionT IO () -> ConnectionT IO ()
+        sendThen next = do
+          e <- try $ send =<< connid
           case e of
-            Left (_ :: SomeException) -> close conn
+            Left (_ :: SomeException) -> Conn.close
             Right _                   -> next
 
 runCheckWorkerState :: WorkerList -> Int64 -> IO ()
 runCheckWorkerState ref alive = runCheckState "Worker" ref (checkWorkerState ref alive) alive
 
-checkWorkerState :: WorkerList -> Int64 -> Worker.Connection -> IO ()
-checkWorkerState ref alive w = do
-  expiredAt <- (alive +) <$> runWorker w Worker.getLastVist
-  now <- getEpochTime
+checkWorkerState :: WorkerList -> Int64 -> WorkerEnv IO -> IO ()
+checkWorkerState ref alive env0 = runWorkerT env0 $ do
+  expiredAt <- (alive +) <$> Worker.getLastVist
+  now <- liftIO $ getEpochTime
   when (now > expiredAt) $ do
-    runWorker w Worker.close
-    wid <- runWorker w Worker.workerId
-    HM.delete ref wid
+    Worker.close
+    wid <- lift $ lift connid
+    liftIO $ HM.delete ref wid
 
 runCheckClientState :: ClientList -> Int64 -> IO ()
 runCheckClientState ref alive = runCheckState "Client" ref (checkClientState ref alive) alive
 
-checkClientState :: ClientList -> Int64 -> Client.Connection -> IO ()
-checkClientState ref alive c = do
-  expiredAt <- (alive +) <$> runClient c Client.getLastVist
-  now <- getEpochTime
+checkClientState :: ClientList -> Int64 -> ClientEnv IO -> IO ()
+checkClientState ref alive env0 = runClientT env0 $ do
+  expiredAt <- (alive +) <$> Client.getLastVist
+  now <- liftIO $ getEpochTime
   when (now > expiredAt) $ do
-    runClient c Client.close
-    cid <- runClient c Client.clientId
-    HM.delete ref cid
+    Client.close
+    cid <- lift $ lift connid
+    liftIO $ HM.delete ref cid
 
 runCheckState :: String -> IOHashMap a b -> (b -> IO ()) -> Int64 -> IO ()
 runCheckState var ref checkAlive alive = void . forkIO . forever $ do

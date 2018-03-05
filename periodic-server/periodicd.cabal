@@ -37,6 +37,9 @@ library
                      , stm
                      , async
                      , binary
+                     , transformers
+                     , exceptions
+                     , monad-control
   default-language:    Haskell2010
 
 executable periodicd

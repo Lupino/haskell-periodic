@@ -22,14 +22,15 @@ module Periodic.Agent
   , receive
   , receive_
   , readerSize
+  , agent
   ) where
 
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B (concat)
 
 import           Periodic.Connection         (ConnectionConfig, ConnectionState,
-                                              ConnectionT, connected, connid,
-                                              connid', runConnectionT)
+                                              ConnectionT, connected, connid',
+                                              runConnectionT)
 import qualified Periodic.Connection         as Conn (send)
 
 import           Control.Concurrent.STM.TVar
@@ -122,3 +123,11 @@ receive = runParser <$> receive_
 
 readerSize :: MonadIO m => AgentT m Int
 readerSize = fmap length $ liftIO . readTVarIO =<< get
+
+agent :: Monad m => AgentT m Agent
+agent = do
+  aReader <- get
+  aMsgid <- lift $ ask
+  connectionState <- lift $ lift get
+  connectionConfig <- lift . lift $ lift ask
+  pure (AgentState {..}, AgentConfig {..})
