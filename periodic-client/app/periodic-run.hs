@@ -7,6 +7,7 @@ module Main
   ) where
 
 import           Control.Monad                  (unless, when)
+import           Control.Monad.IO.Class         (liftIO)
 import qualified Data.ByteString.Char8          as B (ByteString, pack)
 import qualified Data.ByteString.Lazy           as LB (fromStrict, null,
                                                        readFile, toStrict)
@@ -16,16 +17,15 @@ import           Data.Maybe                     (fromMaybe)
 import qualified Data.Text                      as T (unpack)
 import           Data.Text.Encoding             (decodeUtf8With)
 import           Data.Text.Encoding.Error       (ignore)
-import           Periodic.Job                   (Job, name, schedLater,
+import           Periodic.Job                   (JobT, name, schedLater,
                                                  workDone, workFail, workload)
-import           Periodic.Monad                 (unsafeLiftIO)
 import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR         (makeXORTransport)
 import           Periodic.Types.Job             (FuncName (..), JobName (..),
                                                  Workload (..))
-import           Periodic.Worker                (addFunc, broadcast, runWorker,
+import           Periodic.Worker                (addFunc, broadcast, runWorkerT,
                                                  work)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (ExitCode (..), exitSuccess)
@@ -110,10 +110,10 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  runWorker (makeTransport opts) host $ do
+  runWorkerT (makeTransport opts) host $ do
     let proc = if notify then broadcast else addFunc
     proc (FuncName $ B.pack func) $ processWorker cmd argv
-    unsafeLiftIO $ putStrLn "Worker started."
+    liftIO $ putStrLn "Worker started."
     work thread
 
 makeTransport :: Options -> Transport -> IO Transport
@@ -129,13 +129,13 @@ makeTransport' p transport  = do
   key <- LB.readFile p
   makeXORTransport key transport
 
-processWorker :: String -> [String] -> Job ()
+processWorker :: String -> [String] -> JobT IO ()
 processWorker cmd argv = do
   n <- name
   rb <- LB.fromStrict . unWL <$> workload
-  (code, out, err) <- unsafeLiftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
-  unless (LB.null out) $ unsafeLiftIO $ LB.putStr out
-  unless (LB.null err) $ unsafeLiftIO $ LB.hPut stderr err
+  (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
+  unless (LB.null out) $ liftIO $ LB.putStr out
+  unless (LB.null err) $ liftIO $ LB.hPut stderr err
   case code of
     ExitFailure _ -> workFail
     ExitSuccess   ->

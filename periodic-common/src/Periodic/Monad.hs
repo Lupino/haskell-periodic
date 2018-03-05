@@ -11,13 +11,16 @@ module Periodic.Monad
   , PeriodicT
   , initEnv
   , initEnv_
+  , withEnv
   , initPeriodicState
   , runPeriodicT
   , startMainLoop
   , withAgentT
+  , newAgent
   , liftPeriodicT
   , isAlive
   , stopPeriodicT
+  , env
   ) where
 
 import           Control.Concurrent          (forkIO)
@@ -83,6 +86,12 @@ defaultAgentHandler = do
   pid <- msgid
   liftIO $ errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
 
+withEnv :: (Monad m) =>  u1 -> PeriodicT m u1 a -> PeriodicT m u a
+withEnv u m = do
+  state0 <- get
+  env0 <- lift $ ask
+  liftPeriodicT $ runPeriodicT state0 (env0 {uEnv=u}) m
+
 initPeriodicState :: ConnectionState -> IO PeriodicState
 initPeriodicState connectionState = do
   status <- newTVarIO True
@@ -98,6 +107,17 @@ withAgentT agentT = do
     agentState <- liftIO $ initAgentState connectionState
     liftIO $ HM.insert agentList mid (agentState, agentConfig)
     liftPeriodicT $ runAgentT agentState agentConfig agentT
+
+newAgent :: (Monad m, MonadIO m) => PeriodicT m u Agent
+newAgent = do
+  PeriodicState{..} <- get
+  Env {..} <- lift $ ask
+  mid <- newMsgid
+  let agentConfig = initAgentConfig mid connectionConfig
+  agentState <- liftIO $ initAgentState connectionState
+  liftIO $ HM.insert agentList mid (agentState, agentConfig)
+  return (agentState, agentConfig)
+
 
 liftPeriodicT :: (Functor m, Applicative m, Monad m) => m a -> PeriodicT m u a
 liftPeriodicT m =

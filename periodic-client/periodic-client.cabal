@@ -29,6 +29,7 @@ library
                      , monad-control
                      , exceptions
                      , lifted-base
+                     , lifted-async
   default-language:    Haskell2010
 
 executable periodic
