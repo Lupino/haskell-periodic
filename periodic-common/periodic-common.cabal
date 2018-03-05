@@ -23,6 +23,7 @@ library
                      , Periodic.Types.WorkerCommand
                      , Periodic.Types.Internal
                      , Periodic.Types.ClientType
+                     , Periodic.Types.Packet
                      , Periodic.Types.Error
                      , Periodic.Types.Job
                      , Periodic.Monad

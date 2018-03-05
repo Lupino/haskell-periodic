@@ -16,8 +16,8 @@ module Periodic.Connection
   , connid
   ) where
 
+import           Data.Byteable               (toBytes)
 import qualified Data.ByteString             as B
-import           Data.ByteString.Lazy        (fromStrict, toStrict)
 import qualified Periodic.Lock               as L (Lock, new, with)
 import           Periodic.Transport          (Transport (recvData, sendData))
 import qualified Periodic.Transport          as T (Transport (close))
@@ -26,10 +26,8 @@ import           Control.Concurrent.STM.TVar
 import           Control.Exception           (throwIO)
 import           Control.Monad               (when)
 import           Control.Monad.STM           (atomically)
-import           Data.Binary
-import           Data.Binary.Get
-import           Data.Binary.Put
-import           Periodic.Types              (Error (..))
+import           Periodic.Types              (Error (..), runParser)
+import           Periodic.Types.Packet
 import           Periodic.Utils              (maxLength)
 import           System.Entropy              (getEntropy)
 import           System.Timeout              (timeout)
@@ -43,19 +41,6 @@ data Connection = Connection { transport     :: Transport
                              , connid        :: B.ByteString
                              , buffer        :: TVar B.ByteString
                              }
-
-data Header = Header { _magic :: B.ByteString
-                     , _size  :: Int
-                     }
-
-instance Binary Header where
-  get = do
-    _magic <- getByteString 4
-    _size <- fromIntegral <$> getWord32be
-    return Header{..}
-  put Header{..} = do
-    putByteString _magic
-    putWord32be $ fromIntegral _size
 
 magicREQ :: B.ByteString
 magicREQ = "\x00REQ"
@@ -81,15 +66,17 @@ newClientConn transport = newConn transport magicRES magicREQ
 receive :: Connection -> IO B.ByteString
 receive c@Connection{..} =
   L.with readLock $ do
-    header <- recv' c 8
-    when (B.null header || B.length header < 8) $ throwIO TransportClosed
-    let Header {..} = decode $ fromStrict header
-    if _magic == requestMagic then do
-      ret <- timeout 100000000 $ recv' c _size
-      case ret of
-        Nothing -> throwIO TransportTimeout
-        Just bs -> return bs
-    else throwIO MagicNotMatch
+    hdr <- recv' c 8
+    when (B.null hdr || B.length hdr < 8) $ throwIO TransportClosed
+    case runParser hdr of
+      Left _ -> throwIO MagicNotMatch
+      Right PacketHdr{..} -> do
+        if packetMagic == requestMagic then do
+          ret <- timeout 100000000 $ recv' c packetSize
+          case ret of
+            Nothing -> throwIO TransportTimeout
+            Just bs -> return bs
+        else throwIO MagicNotMatch
 
 recv' :: Connection -> Int -> IO B.ByteString
 recv' Connection{..} nbytes = do
@@ -120,7 +107,13 @@ send :: Connection -> B.ByteString -> IO ()
 send Connection{..} dat =
   L.with writeLock $ do
     when (B.length dat > maxLength) $ throwIO DataTooLarge
-    sendData transport $ B.concat [ toStrict . encode . Header responseMagic $ B.length dat, dat ]
+    sendData transport $ toBytes Packet
+      { packetHdr = PacketHdr
+        { packetMagic = responseMagic
+        , packetSize = B.length dat
+        }
+      , packetData = dat
+      }
 
 connected :: Connection -> IO Bool
 connected Connection{..} = readTVarIO status
