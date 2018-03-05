@@ -15,6 +15,7 @@ module Periodic.Agent
   , send_
   , agentid
   , msgid
+  , msgid'
   , msgidLength
   , aAlive
   , feed
@@ -58,11 +59,11 @@ data AgentConfig = AgentConfig
 type Agent = (AgentState, AgentConfig)
 type AgentList = IOHashMap Msgid Agent
 
-msgid' :: Agent -> Msgid
-msgid' (_, config) = aMsgid config
+msgid' :: AgentConfig -> Msgid
+msgid' = aMsgid
 
-agentid' :: Agent -> ByteString
-agentid' (_, config) = B.concat [aMsgid config, connid' $ connectionConfig config]
+agentid :: AgentConfig -> ByteString
+agentid config = B.concat [aMsgid config, connid' $ connectionConfig config]
 
 type AgentT m = StateT AgentReader (ReaderT Msgid (ConnectionT m))
 
@@ -87,12 +88,6 @@ initAgentConfig = AgentConfig
 
 msgid :: Monad m => AgentT m Msgid
 msgid = lift $ ask
-
-agentid :: Monad m => AgentT m ByteString
-agentid = do
-  mid <- msgid
-  cid <- lift . lift $ connid
-  pure $ B.concat [mid, cid]
 
 msgidLength :: Int
 msgidLength = 4

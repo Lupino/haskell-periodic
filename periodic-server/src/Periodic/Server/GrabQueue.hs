@@ -29,7 +29,7 @@ instance Eq GrabItem where
     (==) = eqGrabItem
 
 key :: GrabItem -> ByteString
-key GrabItem{gAgent = a} = agentid a
+key GrabItem{gAgent = (_, a)} = agentid a
 
 eqGrabItem :: GrabItem -> GrabItem -> Bool
 eqGrabItem a b = key a == key b

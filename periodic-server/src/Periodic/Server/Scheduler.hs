@@ -26,7 +26,7 @@ import           Control.Monad                (unless, void, when)
 import           Data.Binary                  (decodeFile, encodeFile)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
-import           Periodic.Agent               (Agent, aAlive, send)
+import           Periodic.Agent               (Agent, aAlive, runAgentT, send)
 import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as FL
 import           Periodic.IOList              (IOList)
@@ -156,11 +156,11 @@ schedJob sched@Scheduler{..} job@Job{..} = async $ do
 
   where popAgentThen :: (Agent -> IO ()) -> IO ()
         popAgentThen done = do
-          (jq, agent) <- atomically $ popAgentSTM sGrabQueue jFuncName
-          alive <- aAlive agent
+          (jq, (agentState, agentConfig)) <- atomically $ popAgentSTM sGrabQueue jFuncName
+          alive <- runAgentT agentState agentConfig aAlive
           when alive $ do
             IL.insert jq (jHandle job)
-            done agent
+            done (agentState, agentConfig)
 
         popAgentListThen :: (Agent -> IO ()) -> IO ()
         popAgentListThen done = do
@@ -264,7 +264,8 @@ pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
 pushGrab Scheduler{..} = pushAgent sGrabQueue
 
 assignJob :: Agent -> Job -> IO ()
-assignJob agent job = send agent (JobAssign (jHandle job) job)
+assignJob (agentState, agentConfig) job =
+  runAgentT agentState agentConfig $ send (JobAssign (jHandle job) job)
 
 failJob :: Scheduler -> JobHandle -> IO ()
 failJob sched@Scheduler{..} jh = do
