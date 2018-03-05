@@ -83,7 +83,7 @@ runConnectionT connectionState connectionConfig =
 
 initConnectionConfig :: Transport -> B.ByteString -> B.ByteString -> IO ConnectionConfig
 initConnectionConfig transport requestMagic responseMagic = do
-  connid <- getEntropy 4
+  connectionid <- getEntropy 4
   readLock <- L.new
   writeLock <- L.new
   return ConnectionConfig{..}

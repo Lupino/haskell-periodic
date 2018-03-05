@@ -1,15 +1,16 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Client
   (
-    Client
-  , Connection
+    ClientT
+  , ClientEnv
   , open
   , close
-  , runClient_
-  , runClient
+  , runClientT
 
   , ping
   , submitJob_
@@ -21,15 +22,17 @@ module Periodic.Client
   , shutdown
   ) where
 
-import           Control.Concurrent           (forkIO)
+import           Control.Concurrent           (forkIO, threadDelay)
+import           Control.Monad.Catch          (MonadCatch, MonadMask)
+import           Control.Monad.IO.Class       (MonadIO (..))
+import           Control.Monad.Trans.Control  (MonadBaseControl,
+                                               liftBaseDiscard)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (lines, split)
-import           Periodic.Agent               (Agent, receive, receive_, send)
-import           Periodic.Connection          (newClientConn)
-import qualified Periodic.Connection          as Conn (receive, send)
+import           Periodic.Agent               (AgentT, receive, receive_, send)
+import qualified Periodic.Connection          as Conn
 import           Periodic.Socket              (connect)
-import           Periodic.Timer
 import           Periodic.Transport           (Transport, makeSocketTransport)
 import           Periodic.Types               (ClientType (TypeClient))
 import           Periodic.Types.ClientCommand
@@ -38,92 +41,117 @@ import           Periodic.Types.ServerCommand
 
 import           Data.Int                     (Int64)
 
-import           Control.Monad                (unless, void)
+import           Control.Monad                (forever, unless, void)
 import           Periodic.Utils               (getEpochTime)
 
 import           Periodic.Monad               hiding (catch)
-import           System.Timeout               (timeout)
+import           System.Timeout.Lifted        (timeout)
 
-type Client     = GenPeriodic ()
-type Connection = SpecEnv ()
+type ClientT m     = PeriodicT m ()
 
-open :: (Transport -> IO Transport) -> String -> IO Connection
-open f h = runClient f h specEnv
+data ClientEnv m = ClientEnv
+  { connectionEnv :: Env m ()
+  , periodicState :: PeriodicState
+  }
 
-close :: Client ()
-close = stopPeriodic
+runClientT :: Monad m => ClientEnv m -> ClientT m a -> m a
+runClientT ClientEnv {..} = runPeriodicT periodicState connectionEnv
 
-runClient :: (Transport -> IO Transport) -> String -> Client a -> IO a
-runClient f h m = do
-  timer <- newTimer
-  transport <- f =<< makeSocketTransport =<< connect h
-  c <- newClientConn transport
-  Conn.send c $ toBytes TypeClient
-  void $ Conn.receive c
-  env0 <- initEnv c ()
-  runPeriodic env0 $ do
-    wapperIO (repeatTimer' timer 100) checkHealth
-    void . wapperIO forkIO . startMainLoop $ pure ()
-    m
+open
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadMask m)
+  => (Transport -> IO Transport) -> String -> m (ClientEnv m)
+open f h = do
+  connectionConfig <- liftIO $
+    Conn.initClientConnectionConfig
+      =<< f
+      =<< makeSocketTransport
+      =<< connect h
+  connectionState <- liftIO Conn.initConnectionState
+  Conn.runConnectionT connectionState connectionConfig $ do
+    Conn.send $ toBytes TypeClient
+    void $ Conn.receive
 
-runClient_ :: Connection -> Client a -> IO a
-runClient_ = runPeriodicWithSpecEnv
+  let env0 = initEnv () connectionConfig
+  state0 <- liftIO $ initPeriodicState connectionState
+  let clientEnv = ClientEnv env0 state0
 
-ping :: Client Bool
-ping = withAgent $ \agent -> do
-  send agent Ping
-  ret <- receive agent
+  runClientT clientEnv $ do
+    void . liftBaseDiscard forkIO $ forever $ do
+      liftIO $ threadDelay $ 100 * 1000 * 1000
+      checkHealth
+
+    void $ liftBaseDiscard forkIO startMainLoop
+  return clientEnv
+
+close :: MonadIO m => ClientT m ()
+close = stopPeriodicT
+
+ping :: (MonadIO m, MonadMask m) => ClientT m Bool
+ping = withAgentT $ do
+  send Ping
+  ret <- receive
   case ret of
     Left _     -> return False
     Right Pong -> return True
     Right _    -> return False
 
-submitJob_ :: Job -> Client Bool
-submitJob_ j = withAgent $ \agent -> do
-  send agent (SubmitJob j)
-  isSuccess agent
+submitJob_ :: (MonadIO m, MonadMask m) => Job -> ClientT m Bool
+submitJob_ j = withAgentT $ do
+  send (SubmitJob j)
+  isSuccess
 
-submitJob :: FuncName -> JobName -> Int64 -> Client Bool
+submitJob
+  :: (MonadIO m, MonadMask m)
+  => FuncName -> JobName -> Int64 -> ClientT m Bool
 submitJob jFuncName jName later = do
-
-  jSchedAt <- (+later) <$> unsafeLiftIO getEpochTime
+  jSchedAt <- (+later) <$> liftIO getEpochTime
   submitJob_ Job{jWorkload = "", jCount = 0, ..}
 
-dropFunc :: FuncName -> Client Bool
-dropFunc func = withAgent $ \agent -> do
-  send agent (DropFunc func)
-  isSuccess agent
+dropFunc
+  :: (MonadIO m, MonadMask m)
+  => FuncName -> ClientT m Bool
+dropFunc func = withAgentT $ do
+  send (DropFunc func)
+  isSuccess
 
-removeJob_ :: Job -> Client Bool
-removeJob_ j = withAgent $ \agent -> do
-  send agent (RemoveJob j)
-  isSuccess agent
+removeJob_
+  :: (MonadIO m, MonadMask m)
+  => Job -> ClientT m Bool
+removeJob_ j = withAgentT $ do
+  send (RemoveJob j)
+  isSuccess
 
-removeJob :: FuncName -> JobName -> Client Bool
+removeJob
+  :: (MonadIO m, MonadMask m)
+  => FuncName -> JobName -> ClientT m Bool
 removeJob f n = removeJob_ $ newJob f n
 
-isSuccess :: Agent -> IO Bool
-isSuccess agent = do
-  ret <- receive agent
+isSuccess :: MonadIO m => AgentT m Bool
+isSuccess = do
+  ret <- receive
   case ret of
     Left _        -> return False
     Right Success -> return True
     Right _       -> return False
 
-status :: Client [[ByteString]]
-status = withAgent $ \agent -> do
-  send agent Status
-  ret <- receive_ agent
+status
+  :: (MonadIO m, MonadMask m)
+  => ClientT m [[ByteString]]
+status = withAgentT $ do
+  send Status
+  ret <- receive_
   return . map (B.split ',') $ B.lines ret
 
-shutdown :: Client ()
-shutdown = withAgent $ \agent ->
-  send agent Shutdown
+shutdown
+  :: (MonadIO m, MonadMask m)
+  => ClientT m ()
+shutdown = withAgentT $ send Shutdown
 
-checkHealth :: Client ()
+checkHealth
+  :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+  => ClientT m ()
 checkHealth = do
-  ret <- wapperIO (timeout 10000000) ping
+  ret <- timeout 10000000 ping
   case ret of
     Nothing -> close
-    Just r ->
-      unless r close
+    Just r  -> unless r close

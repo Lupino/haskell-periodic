@@ -10,6 +10,7 @@ module Periodic.Monad
   , PeriodicState
   , PeriodicT
   , initEnv
+  , initEnv_
   , initPeriodicState
   , runPeriodicT
   , startMainLoop
@@ -22,7 +23,7 @@ module Periodic.Monad
 import           Control.Concurrent          (forkIO)
 import           Control.Concurrent.STM.TVar
 import           Control.Exception           (SomeException)
-import           Control.Monad               (forever, mzero, unless, void)
+import           Control.Monad               (forever, mzero, void)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, bracket,
                                               try)
 import           Control.Monad.IO.Class      (MonadIO (..))
@@ -35,15 +36,13 @@ import           Control.Monad.Trans.State   (StateT (..), evalStateT, get,
                                               gets)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B (drop, empty, take)
-import           Data.Typeable               (Typeable)
 import           Periodic.Agent              hiding (receive)
 import           Periodic.Connection         (ConnectionConfig, ConnectionState,
                                               ConnectionT, close, receive,
                                               runConnectionT)
-import           Periodic.IOHashMap          (IOHashMap, newIOHashMap)
+import           Periodic.IOHashMap          (newIOHashMap)
 import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
                                                     lookup, member)
-import           Periodic.Types
 import           System.Entropy              (getEntropy)
 import           System.Log.Logger           (errorM)
 
@@ -73,8 +72,16 @@ runPeriodicT state config =
     . flip runReaderT config
     . flip evalStateT state
 
-initEnv :: u -> ConnectionConfig -> AgentT m () -> Env m u
-initEnv = Env
+initEnv :: MonadIO m => u -> ConnectionConfig -> Env m u
+initEnv u c = Env u c defaultAgentHandler
+
+initEnv_ :: u -> ConnectionConfig -> AgentT m () -> Env m u
+initEnv_ = Env
+
+defaultAgentHandler :: MonadIO m => AgentT m ()
+defaultAgentHandler = do
+  pid <- msgid
+  liftIO $ errorM "Periodic.Monad" $ "Agent [" ++ show pid ++ "] not found."
 
 initPeriodicState :: ConnectionState -> IO PeriodicState
 initPeriodicState connectionState = do
@@ -155,8 +162,8 @@ doFeed bs = do
 
 startMainLoop
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
-  => IO () -> PeriodicT m u ()
-startMainLoop onClose = do
+  => PeriodicT m u ()
+startMainLoop = do
   void . runMaybeT . forever $ do
     alive <- lift isAlive
     if alive then lift tryMainLoop
@@ -164,7 +171,6 @@ startMainLoop onClose = do
 
   doFeedError
   lift $ lift close
-  liftIO $ onClose
 
 isAlive :: MonadIO m => PeriodicT m u Bool
 isAlive = liftIO . readTVarIO =<< gets status

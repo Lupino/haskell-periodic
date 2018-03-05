@@ -24,7 +24,7 @@ module Periodic.Agent
   ) where
 
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as B (concat, drop, take)
+import qualified Data.ByteString             as B (concat)
 
 import           Periodic.Connection         (ConnectionConfig, ConnectionState,
                                               ConnectionT, connected, connid,
