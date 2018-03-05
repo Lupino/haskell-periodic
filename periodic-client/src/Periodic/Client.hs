@@ -44,7 +44,7 @@ import           Data.Int                     (Int64)
 import           Control.Monad                (forever, unless, void)
 import           Periodic.Utils               (getEpochTime)
 
-import           Periodic.Monad               hiding (catch)
+import           Periodic.Monad
 import           System.Timeout.Lifted        (timeout)
 
 type ClientT m     = PeriodicT m ()
@@ -69,7 +69,7 @@ open f h = do
   connectionState <- liftIO Conn.initConnectionState
   Conn.runConnectionT connectionState connectionConfig $ do
     Conn.send $ toBytes TypeClient
-    void $ Conn.receive
+    void Conn.receive
 
   let env0 = initEnv () connectionConfig
   state0 <- liftIO $ initPeriodicState connectionState

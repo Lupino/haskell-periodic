@@ -166,7 +166,7 @@ makeTransport' p transport  = do
   makeXORTransport key transport
 
 processCommand :: Command -> [String] -> ClientT IO ()
-processCommand Help _     = liftIO $ printHelp
+processCommand Help _     = liftIO printHelp
 processCommand Status _   = doStatus
 processCommand Submit xs  = doSubmitJob xs
 processCommand Remove xs  = doRemoveJob xs
@@ -174,12 +174,12 @@ processCommand Drop xs    = doDropFunc xs
 processCommand Shutdown _ = shutdown
 
 doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
-doRemoveJob []     = liftIO $ printRemoveHelp
+doRemoveJob []     = liftIO printRemoveHelp
 
 doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
 
-doSubmitJob []       = liftIO $ printSubmitHelp
-doSubmitJob [_]      = liftIO $ printSubmitHelp
+doSubmitJob []       = liftIO printSubmitHelp
+doSubmitJob [_]      = liftIO printSubmitHelp
 doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack y) later
   where later = case xs of
                   []              -> 0

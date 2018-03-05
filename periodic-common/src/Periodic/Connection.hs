@@ -86,13 +86,13 @@ initClientConnectionConfig transport = initConnectionConfig transport magicRES m
 receive :: MonadIO m => ConnectionT m B.ByteString
 receive = do
   state <- get
-  config <- lift $ ask
+  config <- lift ask
   liftIO $ L.with (readLock config) $ do
     hdr <- recv' state config 8
     when (B.null hdr || B.length hdr < 8) $ throwIO TransportClosed
     case runParser hdr of
       Left _ -> throwIO MagicNotMatch
-      Right PacketHdr{..} -> do
+      Right PacketHdr{..} ->
         if packetMagic == requestMagic config then do
           ret <- timeout 100000000 $ recv' state config packetSize
           case ret of
@@ -125,7 +125,7 @@ recv' ConnectionState{..} ConnectionConfig{..} nbytes = do
 
 send :: MonadIO m => B.ByteString -> ConnectionT m ()
 send dat = do
-  ConnectionConfig{..} <- lift $ ask
+  ConnectionConfig{..} <- lift ask
   liftIO $ L.with writeLock $ do
     when (B.length dat > maxLength) $ throwIO DataTooLarge
     sendData transport $ toBytes Packet

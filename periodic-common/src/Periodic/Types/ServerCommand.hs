@@ -7,7 +7,6 @@ module Periodic.Types.ServerCommand
 import           Data.Byteable           (Byteable (..))
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job, JobHandle)
-import           Prelude                 hiding (concat, take)
 
 import           Data.Binary
 import           Data.ByteString.Lazy    (toStrict)

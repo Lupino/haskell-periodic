@@ -88,7 +88,7 @@ initAgentConfig :: Msgid -> ConnectionConfig -> AgentConfig
 initAgentConfig = AgentConfig
 
 msgid :: Monad m => AgentT m Msgid
-msgid = lift $ ask
+msgid = lift ask
 
 msgidLength :: Int
 msgidLength = 4
@@ -127,7 +127,7 @@ readerSize = fmap length $ liftIO . readTVarIO =<< get
 agent :: Monad m => AgentT m Agent
 agent = do
   aReader <- get
-  aMsgid <- lift $ ask
+  aMsgid <- lift ask
   connectionState <- lift $ lift get
   connectionConfig <- lift . lift $ lift ask
   pure (AgentState {..}, AgentConfig {..})

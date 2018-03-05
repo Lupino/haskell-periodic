@@ -89,34 +89,32 @@ defaultAgentHandler = do
 withEnv :: (Monad m) =>  u1 -> PeriodicT m u1 a -> PeriodicT m u a
 withEnv u m = do
   state0 <- get
-  env0 <- lift $ ask
+  env0 <- lift ask
   liftPeriodicT $ runPeriodicT state0 (env0 {uEnv=u}) m
 
 initPeriodicState :: ConnectionState -> IO PeriodicState
 initPeriodicState connectionState = do
   status <- newTVarIO True
   agentList <- newIOHashMap
-  pure $ PeriodicState{..}
+  pure PeriodicState{..}
 
 withAgentT :: (MonadIO m, Monad m, MonadMask m) => AgentT m a -> PeriodicT m u a
-withAgentT agentT = do
-  PeriodicState{..} <- get
-  Env {..} <- lift $ ask
+withAgentT agentT =
   bracket newMsgid removeMsgid $ \mid -> do
-    let agentConfig = initAgentConfig mid connectionConfig
-    agentState <- liftIO $ initAgentState connectionState
-    liftIO $ HM.insert agentList mid (agentState, agentConfig)
+    (agentState, agentConfig) <- newAgentEnv mid
     liftPeriodicT $ runAgentT agentState agentConfig agentT
 
-newAgent :: (Monad m, MonadIO m) => PeriodicT m u Agent
-newAgent = do
+newAgentEnv :: (Monad m, MonadIO m) => Msgid -> PeriodicT m u Agent
+newAgentEnv mid = do
   PeriodicState{..} <- get
-  Env {..} <- lift $ ask
-  mid <- newMsgid
+  Env {..} <- lift ask
   let agentConfig = initAgentConfig mid connectionConfig
   agentState <- liftIO $ initAgentState connectionState
   liftIO $ HM.insert agentList mid (agentState, agentConfig)
   return (agentState, agentConfig)
+
+newAgent :: (MonadIO m, Monad m) => PeriodicT m u Agent
+newAgent = newAgentEnv =<< newMsgid
 
 
 liftPeriodicT :: (Functor m, Applicative m, Monad m) => m a -> PeriodicT m u a
@@ -154,7 +152,7 @@ mainLoop
   => PeriodicT m u ()
 mainLoop = do
   PeriodicState{..} <- get
-  Env{..} <- lift $ ask
+  Env{..} <- lift ask
   bs <- lift . lift $ receive
   void . liftBaseDiscard forkIO $ tryDoFeed bs
 
@@ -168,7 +166,7 @@ tryDoFeed bs = do
 doFeed :: MonadIO m => ByteString -> PeriodicT m u ()
 doFeed bs = do
   PeriodicState{..} <- get
-  Env{..} <- lift $ ask
+  Env{..} <- lift ask
   v <- liftIO . HM.lookup agentList $ B.take msgidLength bs
   case v of
     Just (agentState, agentConfig) ->
@@ -196,7 +194,7 @@ isAlive :: MonadIO m => PeriodicT m u Bool
 isAlive = liftIO . readTVarIO =<< gets status
 
 doFeedError :: MonadIO m => PeriodicT m u ()
-doFeedError = do
+doFeedError =
   gets agentList >>= liftIO . HM.elems >>= mapM_ go
   where go :: MonadIO m => (AgentState, AgentConfig) -> PeriodicT m u ()
         go (agentState, agentConfig) =

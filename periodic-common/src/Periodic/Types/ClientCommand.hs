@@ -9,7 +9,6 @@ import           Data.Byteable           (Byteable (..))
 import           Data.ByteString.Lazy    (toStrict)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (FuncName, Job)
-import           Prelude                 hiding (take)
 
 data ClientCommand =
     SubmitJob Job

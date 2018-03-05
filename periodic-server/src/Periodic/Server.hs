@@ -23,14 +23,14 @@ import           Control.Monad.IO.Class    (liftIO)
 import           Control.Monad.Trans.Class (lift)
 import           Data.ByteString           (ByteString)
 import           Data.Int                  (Int64)
-import           Periodic.Connection       hiding (close)
+import           Periodic.Connection
 import qualified Periodic.Connection       as Conn
 import           Periodic.IOHashMap        (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap        as HM
-import           Periodic.Server.Client    hiding (close, getLastVist)
+import           Periodic.Server.Client
 import qualified Periodic.Server.Client    as Client
 import           Periodic.Server.Scheduler
-import           Periodic.Server.Worker    hiding (close, getLastVist)
+import           Periodic.Server.Worker
 import qualified Periodic.Server.Worker    as Worker
 import           Periodic.Transport        (Transport)
 import           Periodic.Types            (ClientType (..), runParser)
@@ -122,7 +122,7 @@ runCheckWorkerState ref alive = runCheckState "Worker" ref (checkWorkerState ref
 checkWorkerState :: WorkerList -> Int64 -> WorkerEnv IO -> IO ()
 checkWorkerState ref alive env0 = runWorkerT env0 $ do
   expiredAt <- (alive +) <$> Worker.getLastVist
-  now <- liftIO $ getEpochTime
+  now <- liftIO getEpochTime
   when (now > expiredAt) $ do
     Worker.close
     wid <- lift $ lift connid
@@ -134,7 +134,7 @@ runCheckClientState ref alive = runCheckState "Client" ref (checkClientState ref
 checkClientState :: ClientList -> Int64 -> ClientEnv IO -> IO ()
 checkClientState ref alive env0 = runClientT env0 $ do
   expiredAt <- (alive +) <$> Client.getLastVist
-  now <- liftIO $ getEpochTime
+  now <- liftIO getEpochTime
   when (now > expiredAt) $ do
     Client.close
     cid <- lift $ lift connid

@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
@@ -62,8 +61,8 @@ initWorkerEnv
   -> Scheduler
   -> m (WorkerEnv m)
 initWorkerEnv connectionState connectionConfig wSched = do
-  wFuncList <- liftIO $ newIOList
-  wJobQueue <- liftIO $ newIOList
+  wFuncList <- liftIO newIOList
+  wJobQueue <- liftIO newIOList
   wLastVist <- liftIO $ newTVarIO =<< getEpochTime
 
   let workerConfig = WorkerConfig {..}

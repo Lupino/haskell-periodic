@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Worker
@@ -22,7 +21,7 @@ import           Control.Monad.Trans.Control     (MonadBaseControl)
 import           Data.Byteable                   (toBytes)
 import           Periodic.Agent                  (Agent, readerSize, receive,
                                                   runAgentT, send)
-import           Periodic.Job                    (JobConfig (..), JobT, func_,
+import           Periodic.Job                    (JobConfig, JobT, func_,
                                                   initJobConfig, name, workFail)
 import           Periodic.Socket                 (connect)
 import           Periodic.Transport              (Transport,
@@ -63,9 +62,9 @@ runWorkerT f h m = do
   connectionState <- liftIO Conn.initConnectionState
   Conn.runConnectionT connectionState connectionConfig $ do
     Conn.send $ toBytes TypeWorker
-    void $ Conn.receive
+    void Conn.receive
 
-  taskList <- liftIO $ newIOHashMap
+  taskList <- liftIO newIOHashMap
   let env0 = initEnv taskList connectionConfig
   state0 <- liftIO $ initPeriodicState connectionState
 
@@ -116,7 +115,7 @@ grabJob (agentState, agentConfig) = do
   pl <- liftPeriodicT . runAgentT agentState agentConfig $ do
     size <- readerSize
     when (size == 0) $ send GrabJob
-    timeout 10000000 $ receive
+    timeout 10000000 receive
 
   case pl of
     Nothing                         -> pure Nothing
@@ -139,7 +138,7 @@ work_ = do
   agent <- newAgent
   forever $ do
     j <- grabJob agent
-    when (isJust j) $ do
+    when (isJust j) $
       withEnv (fromJust j) $ do
         f <- func_
         task <- liftIO $ HM.lookup taskList f
