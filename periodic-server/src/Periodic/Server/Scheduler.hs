@@ -119,7 +119,7 @@ startSchedT = do
   mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
 
 runTask :: (MonadIO m, MonadBaseControl IO m) => Int -> SchedT m () -> SchedT m ()
-runTask delay m = do
+runTask delay m = void . async $ do
   SchedState{..} <- get
   void . runMaybeT . forever $ do
     liftIO $ threadDelay $ delay * 1000 * 1000
