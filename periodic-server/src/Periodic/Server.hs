@@ -50,7 +50,10 @@ startServer makeTransport storePath sock = do
   void $ installHandler sigTERM (Catch $ handleExit bye) Nothing
   void $ installHandler sigINT (Catch $ handleExit bye) Nothing
 
-  sched <- newScheduler storePath $ handleExit bye
+  schedConfig <- initSchedConfig storePath $ handleExit bye
+  schedState <- initSchedState
+
+  runSchedT schedState schedConfig startSchedT
 
   clientList <- newIOHashMap
   workerList <- newIOHashMap
@@ -60,7 +63,7 @@ startServer makeTransport storePath sock = do
 
   thread <- forkIO $ forever $ do
     -- if accept failed exit
-    e <- tryIO $ mainLoop makeTransport sock sched clientList workerList
+    e <- tryIO $ mainLoop makeTransport sock schedState schedConfig clientList workerList
     case e of
       Right _ -> return ()
       Left e'  -> do
@@ -69,16 +72,22 @@ startServer makeTransport storePath sock = do
 
   takeMVar bye
   killThread thread
-  shutdown sched
+  runSchedT schedState schedConfig shutdown
   Socket.close sock
 
-mainLoop :: (Socket -> IO Transport) -> Socket -> Scheduler -> ClientList -> WorkerList -> IO ()
-mainLoop makeTransport sock sched clientList workerList = do
+mainLoop
+  :: (Socket -> IO Transport)
+  -> Socket
+  -> SchedState IO -> SchedConfig
+  -> ClientList -> WorkerList -> IO ()
+mainLoop makeTransport sock schedState schedConfig clientList workerList = do
   (sock', _) <- accept sock
-  void $ forkIO $ handleConnection sched clientList workerList =<< makeTransport sock'
+  void $ forkIO $ handleConnection schedState schedConfig clientList workerList =<< makeTransport sock'
 
-handleConnection :: Scheduler -> ClientList -> WorkerList -> Transport -> IO ()
-handleConnection sched clientList workerList transport = do
+handleConnection
+  :: SchedState IO -> SchedConfig
+  -> ClientList -> WorkerList -> Transport -> IO ()
+handleConnection schedState schedConfig clientList workerList transport = do
   connectionConfig <- initServerConnectionConfig transport
   connectionState <- initConnectionState
 
@@ -90,14 +99,14 @@ handleConnection sched clientList workerList transport = do
          Right TypeClient -> do
            cid <- connid
            liftIO $ do
-             clientEnv <- initClientEnv connectionState connectionConfig sched
+             clientEnv <- initClientEnv connectionState connectionConfig schedState schedConfig
              HM.insert clientList cid clientEnv
              startClientT clientEnv
              HM.delete clientList cid
          Right TypeWorker -> do
            cid <- connid
            liftIO $ do
-             workerEnv <- initWorkerEnv connectionState connectionConfig sched
+             workerEnv <- initWorkerEnv connectionState connectionConfig schedState schedConfig
              HM.insert workerList cid workerEnv
              startWorkerT workerEnv
              HM.delete workerList cid

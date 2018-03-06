@@ -24,8 +24,6 @@ library
                      , bytestring
                      , hslogger
                      , byteable
-                     , async
-                     , transformers
                      , monad-control
                      , exceptions
                      , lifted-base

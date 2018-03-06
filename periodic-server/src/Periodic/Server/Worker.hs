@@ -18,7 +18,8 @@ import           Control.Monad                (unless, when)
 import           Data.Int                     (Int64)
 import qualified Periodic.Connection          as Conn
 
-import           Periodic.Agent               (AgentT, agent, receive, send)
+import           Periodic.Agent               (AgentT, agent, liftAgentT,
+                                               receive, send)
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
 import           Periodic.Server.Scheduler
@@ -38,38 +39,41 @@ import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Control  (MonadBaseControl)
 
 data WorkerConfig = WorkerConfig
-  { wSched    :: Scheduler
-  , wFuncList :: IOList FuncName
+  { wFuncList :: IOList FuncName
   , wJobQueue :: IOList JobHandle
   , wLastVist :: TVar Int64
   }
 
-type WorkerT m = PeriodicT m WorkerConfig
+type WorkerT m = PeriodicT (SchedT m) WorkerConfig
 
 data WorkerEnv m = WorkerEnv
-  { periodicEnv   :: Env m WorkerConfig
+  { periodicEnv   :: Env (SchedT m) WorkerConfig
   , periodicState :: PeriodicState
+  , schedState    :: SchedState m
+  , schedConfig   :: SchedConfig
   }
 
 runWorkerT :: Monad m => WorkerEnv m -> WorkerT m a -> m a
-runWorkerT WorkerEnv {..} = runPeriodicT periodicState periodicEnv
+runWorkerT WorkerEnv {..} =
+  runSchedT schedState schedConfig . runPeriodicT periodicState periodicEnv
 
 initWorkerEnv
-  :: (MonadIO m)
+  :: (MonadIO m, MonadBaseControl IO m)
   => Conn.ConnectionState
   -> Conn.ConnectionConfig
-  -> Scheduler
+  -> SchedState m
+  -> SchedConfig
   -> m (WorkerEnv m)
-initWorkerEnv connectionState connectionConfig wSched = do
+initWorkerEnv connectionState connectionConfig schedState schedConfig = do
   wFuncList <- liftIO newIOList
   wJobQueue <- liftIO newIOList
   wLastVist <- liftIO $ newTVarIO =<< getEpochTime
 
   let workerConfig = WorkerConfig {..}
 
-  let env0 = initEnv_ workerConfig connectionConfig $ handleAgentT workerConfig
-  state0 <- liftIO $ initPeriodicState connectionState
-  return $ WorkerEnv env0 state0
+  let periodicEnv = initEnv_ workerConfig connectionConfig $ handleAgentT workerConfig
+  periodicState <- liftIO $ initPeriodicState connectionState
+  return $ WorkerEnv{..}
 
 startWorkerT
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
@@ -77,8 +81,8 @@ startWorkerT
 startWorkerT env0 = runWorkerT env0 $ do
   startMainLoop
   WorkerConfig {..} <- env
-  liftIO $ mapM_ (failJob wSched) =<< toList wJobQueue
-  liftIO $ mapM_ (removeFunc wSched) =<< toList wFuncList
+  mapM_ (liftPeriodicT . failJob) =<< liftIO (toList wJobQueue)
+  mapM_ (liftPeriodicT . removeFunc) =<< liftIO (toList wFuncList)
 
 close :: MonadIO m => WorkerT m ()
 close = stopPeriodicT
@@ -88,7 +92,7 @@ getLastVist = do
   WorkerConfig {..} <- env
   liftIO $ readTVarIO wLastVist
 
-handleAgentT :: MonadIO m => WorkerConfig -> AgentT m ()
+handleAgentT :: (MonadIO m, MonadBaseControl IO m) => WorkerConfig -> AgentT (SchedT m) ()
 handleAgentT WorkerConfig {..} = do
   liftIO $ do
     t <- getEpochTime
@@ -98,30 +102,30 @@ handleAgentT WorkerConfig {..} = do
     Left _     -> lift . lift $ Conn.close -- close worker
     Right GrabJob -> do
       ag <- agent
-      liftIO $ pushGrab wSched wFuncList wJobQueue ag
-    Right (WorkDone jh) -> liftIO $ do
-      doneJob wSched jh
-      delete wJobQueue jh
-    Right (WorkFail jh) -> liftIO $ do
-      failJob wSched jh
-      delete wJobQueue jh
-    Right (SchedLater jh l s) -> liftIO $ do
-      schedLaterJob wSched jh l s
-      delete wJobQueue jh
+      liftAgentT $ pushGrab wFuncList wJobQueue ag
+    Right (WorkDone jh) -> do
+      liftAgentT $ doneJob jh
+      liftIO $ delete wJobQueue jh
+    Right (WorkFail jh) -> do
+      liftAgentT $ failJob jh
+      liftIO $ delete wJobQueue jh
+    Right (SchedLater jh l s) -> do
+      liftAgentT $ schedLaterJob jh l s
+      liftIO $ delete wJobQueue jh
     Right Sleep -> send Noop
     Right Ping -> send Pong
-    Right (CanDo fn) -> liftIO $ do
-      has <- elem wFuncList fn
+    Right (CanDo fn) -> do
+      has <- liftIO $ elem wFuncList fn
       unless has $ do
-        addFunc wSched fn
-        insert wFuncList fn
-    Right (CantDo fn) -> liftIO $ do
-      has <- elem wFuncList fn
+        liftAgentT $ addFunc fn
+        liftIO $ insert wFuncList fn
+    Right (CantDo fn) -> do
+      has <- liftIO $ elem wFuncList fn
       when has $ do
-        removeFunc wSched fn
-        delete wFuncList fn
-    Right (Broadcast fn) -> liftIO $ do
-      has <- elem wFuncList fn
+        liftAgentT $ removeFunc fn
+        liftIO $ delete wFuncList fn
+    Right (Broadcast fn) -> do
+      has <- liftIO $ elem wFuncList fn
       unless has $ do
-        broadcastFunc wSched fn True
-        insert wFuncList fn
+        liftAgentT $ broadcastFunc fn True
+        liftIO $ insert wFuncList fn

@@ -1,11 +1,18 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Server.Scheduler
   (
-    Scheduler
-  , newScheduler
+    SchedT
+  , runSchedT
+  , SchedState
+  , SchedConfig
+  , initSchedState
+  , initSchedConfig
+  , startSchedT
   , pushJob
   , pushGrab
   , failJob
@@ -21,131 +28,177 @@ module Periodic.Server.Scheduler
   , shutdown
   ) where
 
-import           Control.Exception            (SomeException, try)
-import           Control.Monad                (unless, void, when)
-import           Data.Binary                  (decodeFile, encodeFile)
-import           Data.Int                     (Int64)
-import           Data.Maybe                   (fromJust, fromMaybe, isJust)
-import           Periodic.Agent               (Agent, aAlive, runAgentT, send)
-import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap           as FL
-import           Periodic.IOList              (IOList)
-import qualified Periodic.IOList              as IL
-import qualified Periodic.Lock                as L (Lock, new, with)
+import           Control.Exception               (SomeException, try)
+import           Control.Monad                   (forever, mzero, unless, void,
+                                                  when)
+import           Data.Binary                     (decodeFile, encodeFile)
+import           Data.Int                        (Int64)
+import           Data.Maybe                      (fromJust, fromMaybe, isJust)
+import           Periodic.Agent                  (Agent, aAlive, runAgentT,
+                                                  send)
+import           Periodic.IOHashMap              (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap              as FL
+import           Periodic.IOList                 (IOList)
+import qualified Periodic.IOList                 as IL
+import qualified Periodic.Lock                   as L (Lock, new, with)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
-import           Periodic.Server.JobQueue     (JobQueue)
-import qualified Periodic.Server.JobQueue     as JQ
-import           Periodic.Server.ProcessQueue (ProcessQueue)
-import qualified Periodic.Server.ProcessQueue as PQ
-import           Periodic.Timer
+import           Periodic.Server.JobQueue        (JobQueue)
+import qualified Periodic.Server.JobQueue        as JQ
+import           Periodic.Server.ProcessQueue    (ProcessQueue)
+import qualified Periodic.Server.ProcessQueue    as PQ
 import           Periodic.Types.Job
-import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
-import           Periodic.Utils               (getEpochTime)
+import           Periodic.Types.ServerCommand    (ServerCommand (JobAssign))
+import           Periodic.Utils                  (getEpochTime)
 
-import           System.Directory             (createDirectoryIfMissing,
-                                               doesFileExist)
-import           System.FilePath              ((</>))
+import           System.Directory                (createDirectoryIfMissing,
+                                                  doesFileExist)
+import           System.FilePath                 ((</>))
 
-import           Control.Concurrent           (forkIO, threadDelay)
-import           Control.Concurrent.Async     (Async, async, cancel, poll)
+import           Control.Concurrent              (threadDelay)
+import           Control.Concurrent.Async.Lifted (Async, async, cancel, poll)
 import           Control.Concurrent.STM.TVar
-import           Control.Monad.STM            (atomically, retry)
+import           Control.Monad.STM               (atomically, retry)
 
+import           Control.Monad.IO.Class          (MonadIO (..))
+import           Control.Monad.Trans.Class       (lift)
+import           Control.Monad.Trans.Control     (MonadBaseControl, StM)
+import           Control.Monad.Trans.Maybe       (runMaybeT)
+import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.State       (StateT, evalStateT, get, gets)
 
-data Scheduler = Scheduler { sFuncStatList :: FuncStatList
-                           , sLocker       :: L.Lock
-                           , sGrabQueue    :: GrabQueue
-                           , sJobQueue     :: JobQueue
-                           , sProcessJob   :: ProcessQueue
-                           , sRevertTimer  :: Timer
-                           , sStoreTimer   :: Timer
-                           , sPollTimer    :: Timer
-                           , sStorePath    :: FilePath
-                           , sCleanup      :: IO ()
-                           , sAlive        :: TVar Bool
-                           , sSchedJobQ    :: IOHashMap JobHandle (Async ())
-                           , sSchedDelay   :: Int64
-                           }
+data SchedConfig = SchedConfig
+  { sSchedDelay :: Int64
+  , sStorePath  :: FilePath
+  , sCleanup    :: IO ()
+  }
 
-newScheduler :: FilePath -> IO () -> IO Scheduler
-newScheduler path sCleanup = do
+data SchedState m = SchedState
+  { sFuncStatList :: FuncStatList
+  , sLocker       :: L.Lock
+  , sGrabQueue    :: GrabQueue
+  , sJobQueue     :: JobQueue
+  , sProcessJob   :: ProcessQueue
+  , sAlive        :: TVar Bool
+  , sSchedJobQ    :: IOHashMap JobHandle (Async (StM (SchedT m) ()))
+  }
+
+type SchedT m = StateT (SchedState m) (ReaderT SchedConfig m)
+
+runSchedT :: Monad m => SchedState m -> SchedConfig -> SchedT m a -> m a
+runSchedT schedState schedConfig =
+  flip runReaderT schedConfig . flip evalStateT schedState
+
+initSchedConfig :: FilePath -> IO () -> IO SchedConfig
+initSchedConfig path sCleanup = do
+  createDirectoryIfMissing True path
+  pure SchedConfig{..}
+  where sSchedDelay = 10
+        sStorePath = path </> "dump.db"
+
+initSchedState :: IO (SchedState m)
+initSchedState = do
   sFuncStatList <- newIOHashMap
   sLocker       <- L.new
   sGrabQueue    <- newGrabQueue
   sJobQueue     <- newIOHashMap
   sProcessJob   <- newIOHashMap
   sSchedJobQ    <- newIOHashMap
-  sRevertTimer  <- newTimer
-  sStoreTimer   <- newTimer
-  sPollTimer    <- newTimer
   sAlive        <- newTVarIO True
-  let sStorePath = path </> "dump.db"
-      sSchedDelay = 10
-      sched = Scheduler {..}
+  pure SchedState {..}
 
-  createDirectoryIfMissing True path
-  exists <- doesFileExist sStorePath
-  when exists $ mapM_ (pushJob sched) =<< loadJob sched
-  mapM_ (adjustFuncStat sched) =<< FL.keys sJobQueue
+startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+startSchedT = do
+  SchedConfig{..} <- lift ask
+  SchedState{..} <- get
+  runTask 300 revertProcessQueue
+  runTask 300 saveJob
+  runTask (fromIntegral sSchedDelay) pollJob
+  exists <- liftIO $ doesFileExist sStorePath
+  when exists $ mapM_ pushJob =<< loadJob
+  mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
 
-  repeatTimer' sRevertTimer 300 $ revertProcessQueue sched
-  repeatTimer' sStoreTimer  300 $ saveJob sched
-  repeatTimer' sPollTimer   (fromIntegral sSchedDelay)  $ pollJob sched
+runTask :: (MonadIO m, MonadBaseControl IO m) => Int -> SchedT m () -> SchedT m ()
+runTask delay m = do
+  SchedState{..} <- get
+  void . runMaybeT . forever $ do
+    liftIO $ threadDelay $ delay * 1000 * 1000
+    alive <- liftIO $ readTVarIO sAlive
+    if alive then lift m
+             else mzero
 
-  return sched
+pollJob :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+pollJob = do
+  SchedState{..} <- get
+  SchedConfig{..} <- lift ask
+  mapM_ checkPoll =<< liftIO (FL.toList sSchedJobQ)
 
-pollJob :: Scheduler -> IO ()
-pollJob sched@Scheduler{..} = do
-  mapM_ checkPoll =<< FL.toList sSchedJobQ
+  next <- liftIO $ (+ sSchedDelay * 2) <$> getEpochTime
+  mapM_ checkJob =<< liftIO (JQ.findLessJob sJobQueue next)
 
-  next <- (+ sSchedDelay * 2) <$> getEpochTime
-  mapM_ checkJob =<< JQ.findLessJob sJobQueue next
-
-  where checkJob :: Job -> IO ()
+  where checkJob
+          :: (MonadIO m, MonadBaseControl IO m)
+          => Job -> SchedT m ()
         checkJob job@Job{..} = do
-          w <- FL.lookup sSchedJobQ (jHandle job)
+          SchedState{..} <- get
+          SchedConfig{..} <- lift ask
+          w <- liftIO $ FL.lookup sSchedJobQ (jHandle job)
           unless (isJust w) $ do
-            now <- getEpochTime
-            when (jSchedAt > now || jSchedAt + sSchedDelay < now) $ reSchedJob sched job
+            now <- liftIO $ getEpochTime
+            when (jSchedAt > now || jSchedAt + sSchedDelay < now) $ reSchedJob job
 
-        checkPoll :: (JobHandle, Async ()) -> IO ()
+        checkPoll
+          :: (MonadIO m, MonadBaseControl IO m)
+          => (JobHandle, Async (StM (SchedT m) ())) -> SchedT m ()
         checkPoll (jh, w) = do
+          SchedState{..} <- get
           r <- poll w
-          when (isJust r) $ FL.delete sSchedJobQ jh
+          case r of
+            Just (Right ()) -> liftIO $ FL.delete sSchedJobQ jh
+            _               -> pure ()
 
 
-pushJob :: Scheduler -> Job -> IO ()
-pushJob sched@Scheduler{..} job@Job{..} = do
-  exists <- JQ.memberJob sJobQueue jFuncName jName
-  isProc <- PQ.memberJob sProcessJob jFuncName (hashJobName jName)
+pushJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
+pushJob job@Job{..} = do
+  SchedState{..} <- get
+  exists <- liftIO $ JQ.memberJob sJobQueue jFuncName jName
+  isProc <- liftIO $ PQ.memberJob sProcessJob jFuncName (hashJobName jName)
   if exists then doPushJob
             else unless isProc doPushJob
 
-  adjustFuncStat sched jFuncName
+  adjustFuncStat jFuncName
 
-  where doPushJob :: IO ()
+  where doPushJob :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
         doPushJob = do
-          reSchedJob sched job
-          JQ.pushJob sJobQueue job
+          queue <- gets sJobQueue
+          reSchedJob job
+          liftIO $ JQ.pushJob queue job
 
-reSchedJob :: Scheduler -> Job -> IO ()
-reSchedJob sched@Scheduler{..} job = do
-  w <- FL.lookup sSchedJobQ (jHandle job)
+reSchedJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
+reSchedJob job = do
+  SchedState{..} <- get
+  SchedConfig{..} <- lift ask
+  w <- liftIO $ FL.lookup sSchedJobQ (jHandle job)
   when (isJust w) $ do
     cancel (fromJust w)
-    FL.delete sSchedJobQ (jHandle job)
+    liftIO $ FL.delete sSchedJobQ (jHandle job)
 
-  next <- (+ sSchedDelay * 2) <$> getEpochTime
+  next <- liftIO $ (+ sSchedDelay * 2) <$> getEpochTime
   when (jSchedAt job < next) $ do
-    w' <- schedJob sched job
-    FL.insert sSchedJobQ (jHandle job) w'
+    w' <- schedJob job
+    liftIO $ FL.insert sSchedJobQ (jHandle job) w'
 
-schedJob :: Scheduler -> Job -> IO (Async ())
-schedJob sched@Scheduler{..} job@Job{..} = async $ do
-  now <- getEpochTime
-  when (jSchedAt > now) . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
-  FuncStat{..} <- atomically $ do
+schedJob
+  :: (MonadIO m, MonadBaseControl IO m)
+  => Job -> SchedT m (Async (StM (SchedT m) ()))
+schedJob job = async $ schedJob_ job
+
+schedJob_ :: MonadIO m => Job -> SchedT m ()
+schedJob_ job@Job{..} = do
+  SchedState{..} <- get
+  now <- liftIO $ getEpochTime
+  when (jSchedAt > now) . liftIO . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
+  FuncStat{..} <- liftIO . atomically $ do
     st <- FL.lookupSTM sFuncStatList jFuncName
     case st of
       Nothing                  -> retry
@@ -154,50 +207,58 @@ schedJob sched@Scheduler{..} job@Job{..} = async $ do
   if sBroadcast then popAgentListThen $ doneSubmitJob True
                 else popAgentThen $ doneSubmitJob False
 
-  where popAgentThen :: (Agent -> IO ()) -> IO ()
+  where popAgentThen :: MonadIO m => (Agent -> SchedT m ()) -> SchedT m ()
         popAgentThen done = do
-          (jq, (agentState, agentConfig)) <- atomically $ popAgentSTM sGrabQueue jFuncName
-          alive <- runAgentT agentState agentConfig aAlive
+          SchedState{..} <- get
+          (jq, (agentState, agentConfig)) <- liftIO $
+            atomically $ popAgentSTM sGrabQueue jFuncName
+          alive <- liftIO $ runAgentT agentState agentConfig aAlive
           when alive $ do
-            IL.insert jq (jHandle job)
+            liftIO $ IL.insert jq (jHandle job)
             done (agentState, agentConfig)
 
-        popAgentListThen :: (Agent -> IO ()) -> IO ()
+        popAgentListThen :: MonadIO m => (Agent -> SchedT m ()) -> SchedT m ()
         popAgentListThen done = do
-          agents <- popAgentList sGrabQueue jFuncName
+          SchedState{..} <- get
+          agents <- liftIO $ popAgentList sGrabQueue jFuncName
           mapM_ (done . snd) agents
           unless (null agents) endSchedJob
 
-        doneSubmitJob :: Bool -> Agent -> IO ()
+        doneSubmitJob :: MonadIO m => Bool -> Agent -> SchedT m ()
         doneSubmitJob cast agent = do
-          unless cast $ do
+          SchedState{..} <- get
+          unless cast . liftIO $ do
             nextSchedAt <- getEpochTime
             PQ.insertJob sProcessJob job { jSchedAt = nextSchedAt }
 
-          e <- try $ assignJob agent job
+          e <- liftIO . try $ assignJob agent job
           case e of
             Left (_::SomeException) ->
-              unless cast $
+              unless cast $ liftIO $
                 PQ.removeJob sProcessJob jFuncName (hashJobName jName)
             Right _ -> do
-              adjustFuncStat sched jFuncName
+              adjustFuncStat jFuncName
               endSchedJob
 
-        endSchedJob :: IO ()
+        endSchedJob :: MonadIO m => SchedT m ()
         endSchedJob = do
-          JQ.removeJob sJobQueue jFuncName jName
-          FL.delete sSchedJobQ (jHandle job)
+          SchedState{..} <- get
+          liftIO $ do
+            JQ.removeJob sJobQueue jFuncName jName
+            FL.delete sSchedJobQ (jHandle job)
 
-adjustFuncStat :: Scheduler -> FuncName -> IO ()
-adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
-  size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
-  sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
-  schedAt <- do
-    minJob <- JQ.findMinJob sJobQueue fn
-    case minJob of
-      Nothing  -> getEpochTime
-      Just job -> return $ jSchedAt job
-  FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
+adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
+adjustFuncStat fn = do
+  SchedState{..} <- get
+  liftIO . L.with sLocker $ do
+    size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
+    sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
+    schedAt <- do
+      minJob <- JQ.findMinJob sJobQueue fn
+      case minJob of
+        Nothing  -> getEpochTime
+        Just job -> return $ jSchedAt job
+    FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
 
   where update :: Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
         update size sizePQ schedAt st =
@@ -206,127 +267,145 @@ adjustFuncStat Scheduler{..} fn = L.with sLocker $ do
                                              , sSchedAt = schedAt
                                              })
 
-removeJob :: Scheduler -> Job -> IO ()
-removeJob sched@Scheduler{..} job = do
-  has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
-  when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
+removeJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
+removeJob job = do
+  SchedState{..} <- get
+  liftIO $ do
+    has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
+    when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
 
-  isProc <- PQ.memberJob sProcessJob (jFuncName job) (hashJobName $ jName job)
-  when isProc $ PQ.removeJob sProcessJob (jFuncName job) (hashJobName $ jName job)
-  adjustFuncStat sched (jFuncName job)
+    isProc <- PQ.memberJob sProcessJob (jFuncName job) (hashJobName $ jName job)
+    when isProc $ PQ.removeJob sProcessJob (jFuncName job) (hashJobName $ jName job)
 
-  w <- FL.lookup sSchedJobQ (jHandle job)
+  adjustFuncStat (jFuncName job)
+
+  w <- liftIO $ FL.lookup sSchedJobQ (jHandle job)
   when (isJust w) $ do
     cancel (fromJust w)
-    FL.delete sSchedJobQ (jHandle job)
+    liftIO $ FL.delete sSchedJobQ (jHandle job)
 
-dumpJob :: Scheduler -> IO [Job]
-dumpJob Scheduler{..} = do
-  js <- JQ.dumpJob sJobQueue
-  js' <- PQ.dumpJob sProcessJob
+dumpJob :: MonadIO m => SchedT m [Job]
+dumpJob = do
+  js <- liftIO . JQ.dumpJob =<< gets sJobQueue
+  js' <- liftIO . PQ.dumpJob =<< gets sProcessJob
   return $ js ++ js'
 
-saveJob :: Scheduler -> IO ()
-saveJob sched@Scheduler{..} =
-  dumpJob sched >>= encodeFile sStorePath
+saveJob :: MonadIO m => SchedT m ()
+saveJob = do
+  path <- lift $ asks sStorePath
+  dumpJob >>= liftIO . encodeFile path
 
-loadJob :: Scheduler -> IO [Job]
-loadJob Scheduler{..} = decodeFile sStorePath
+loadJob :: MonadIO m => SchedT m [Job]
+loadJob = liftIO . decodeFile =<< lift (asks sStorePath)
 
-addFunc :: Scheduler -> FuncName -> IO ()
-addFunc sched n = broadcastFunc sched n False
+addFunc :: MonadIO m => FuncName -> SchedT m ()
+addFunc n = broadcastFunc n False
 
-broadcastFunc :: Scheduler -> FuncName -> Bool -> IO ()
-broadcastFunc Scheduler{..} n cast = L.with sLocker $
-  FL.alter sFuncStatList updateStat n
+broadcastFunc :: MonadIO m => FuncName -> Bool -> SchedT m ()
+broadcastFunc n cast = do
+  SchedState{..} <- get
+  liftIO . L.with sLocker $ FL.alter sFuncStatList updateStat n
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
-removeFunc :: Scheduler -> FuncName -> IO ()
-removeFunc Scheduler{..} n = L.with sLocker $
-  FL.alter sFuncStatList updateStat n
+removeFunc :: MonadIO m => FuncName -> SchedT m ()
+removeFunc n = do
+  SchedState{..} <- get
+  liftIO . L.with sLocker $ FL.alter sFuncStatList updateStat n
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
         updateStat (Just fs) = Just (fs { sWorker = max (sWorker fs - 1) 0 })
 
-dropFunc :: Scheduler -> FuncName -> IO ()
-dropFunc Scheduler{..} n = L.with sLocker $ do
-  st <- FL.lookup sFuncStatList n
-  when (isJust st) $
-    when (sWorker (fromJust st) == 0) $ do
-      FL.delete sFuncStatList n
-      FL.delete sJobQueue n
+dropFunc :: MonadIO m => FuncName -> SchedT m ()
+dropFunc n = do
+  SchedState{..} <- get
+  liftIO . L.with sLocker $ do
+    st <- FL.lookup sFuncStatList n
+    when (isJust st) $
+      when (sWorker (fromJust st) == 0) $ do
+        FL.delete sFuncStatList n
+        FL.delete sJobQueue n
 
-pushGrab :: Scheduler -> IOList FuncName -> IOList JobHandle -> Agent -> IO ()
-pushGrab Scheduler{..} = pushAgent sGrabQueue
+pushGrab :: MonadIO m => IOList FuncName -> IOList JobHandle -> Agent -> SchedT m ()
+pushGrab funcList handleList ag = do
+  queue <- gets sGrabQueue
+  liftIO $ pushAgent queue funcList handleList ag
 
 assignJob :: Agent -> Job -> IO ()
 assignJob (agentState, agentConfig) job =
   runAgentT agentState agentConfig $ send (JobAssign (jHandle job) job)
 
-failJob :: Scheduler -> JobHandle -> IO ()
-failJob sched@Scheduler{..} jh = do
-  job <- PQ.lookupJob sProcessJob fn jn
+failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
+failJob jh = do
+  SchedState{..} <- get
+  job <- liftIO $ PQ.lookupJob sProcessJob fn jn
   when (isJust job) $ do
-    nextSchedAt <- getEpochTime
-    retryJob sched ((fromJust job) {jSchedAt = nextSchedAt})
+    nextSchedAt <- liftIO $ getEpochTime
+    retryJob ((fromJust job) {jSchedAt = nextSchedAt})
 
   where (fn, jn) = unHandle jh
 
-retryJob :: Scheduler -> Job -> IO ()
-retryJob sched@Scheduler{..} job = do
-  JQ.pushJob sJobQueue job
-  PQ.removeJob sProcessJob fn (hashJobName jn)
-  adjustFuncStat sched fn
+retryJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
+retryJob job = do
+  SchedState{..} <- get
+  liftIO $ JQ.pushJob sJobQueue job
+  liftIO $ PQ.removeJob sProcessJob fn (hashJobName jn)
 
-  reSchedJob sched job
+  adjustFuncStat fn
+  reSchedJob job
 
   where  fn = jFuncName job
          jn = jName job
 
 
-doneJob :: Scheduler -> JobHandle -> IO ()
-doneJob sched@Scheduler{..} jh = do
-  job <- PQ.lookupJob sProcessJob fn jn
+doneJob :: MonadIO m => JobHandle -> SchedT m ()
+doneJob jh = do
+  SchedState{..} <- get
+  job <- liftIO $ PQ.lookupJob sProcessJob fn jn
   when (isJust job) $ do
-    PQ.removeJob sProcessJob fn jn
-    adjustFuncStat sched fn
+    liftIO $ PQ.removeJob sProcessJob fn jn
+    adjustFuncStat fn
 
   where (fn, jn) = unHandle jh
 
-schedLaterJob :: Scheduler -> JobHandle -> Int64 -> Int -> IO ()
-schedLaterJob sched@Scheduler{..} jh later step = do
-  job <- PQ.lookupJob sProcessJob fn jn
+schedLaterJob
+  :: (MonadIO m, MonadBaseControl IO m)
+  => JobHandle -> Int64 -> Int -> SchedT m ()
+schedLaterJob jh later step = do
+  SchedState{..} <- get
+  job <- liftIO $ PQ.lookupJob sProcessJob fn jn
   when (isJust job) $ do
     let job' = fromJust job
-    nextSchedAt <- (+) later <$> getEpochTime
-    retryJob sched job' {jSchedAt = nextSchedAt , jCount = jCount job' + step}
+
+    nextSchedAt <- liftIO $ (+) later <$> getEpochTime
+    retryJob job' {jSchedAt = nextSchedAt , jCount = jCount job' + step}
 
   where (fn, jn) = unHandle jh
 
-status :: Scheduler -> IO [FuncStat]
-status Scheduler{..} = FL.elems sFuncStatList
+status :: MonadIO m => SchedT m [FuncStat]
+status = liftIO . FL.elems =<< gets sFuncStatList
 
-revertProcessQueue :: Scheduler -> IO ()
-revertProcessQueue sched@Scheduler{..} = do
-  now <- getEpochTime
-  mapM_ (failJob sched . jHandle) =<< filter (isTimeout now) <$> PQ.dumpJob sProcessJob
+revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+revertProcessQueue = do
+  now <- liftIO $ getEpochTime
+  queue <- gets sProcessJob
+  mapM_ (failJob . jHandle)
+    =<< filter (isTimeout now) <$> liftIO (PQ.dumpJob queue)
   where isTimeout :: Int64 -> Job -> Bool
         isTimeout t1 Job{jSchedAt = t} = (t + 600) < t1
 
-shutdown :: Scheduler -> IO ()
-shutdown sched@Scheduler{..} = L.with sLocker $ do
-  alive <- atomically $ do
+shutdown :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+shutdown = do
+  SchedState{..} <- get
+  SchedConfig{..} <- lift ask
+  alive <- liftIO $ atomically $ do
     t <- readTVar sAlive
     writeTVar sAlive False
     return t
   when alive $ do
-    clearTimer sRevertTimer
-    clearTimer sStoreTimer
-    clearTimer sPollTimer
-    mapM_ cancel =<< FL.elems sSchedJobQ
-    saveJob sched
-    void $ forkIO sCleanup
+    mapM_ cancel =<< liftIO (FL.elems sSchedJobQ)
+    saveJob
+    void . async $ liftIO sCleanup

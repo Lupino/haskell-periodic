@@ -9,8 +9,7 @@ module Main
 import           Control.Monad                  (unless, when)
 import           Control.Monad.IO.Class         (liftIO)
 import qualified Data.ByteString.Char8          as B (ByteString, pack)
-import qualified Data.ByteString.Lazy           as LB (fromStrict, null,
-                                                       readFile, toStrict)
+import qualified Data.ByteString.Lazy           as LB (null, readFile, toStrict)
 import qualified Data.ByteString.Lazy.Char8     as LB (hPut, lines, putStr)
 import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
@@ -23,8 +22,7 @@ import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR         (makeXORTransport)
-import           Periodic.Types.Job             (FuncName (..), JobName (..),
-                                                 Workload (..))
+import           Periodic.Types.Job             (FuncName (..))
 import           Periodic.Worker                (addFunc, broadcast, runWorkerT,
                                                  work)
 import           System.Environment             (getArgs, lookupEnv)
@@ -132,7 +130,7 @@ makeTransport' p transport  = do
 processWorker :: String -> [String] -> JobT IO ()
 processWorker cmd argv = do
   n <- name
-  rb <- LB.fromStrict . unWL <$> workload
+  rb <- workload
   (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
   unless (LB.null out) $ liftIO $ LB.putStr out
   unless (LB.null err) $ liftIO $ LB.hPut stderr err

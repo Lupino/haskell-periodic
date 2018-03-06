@@ -23,6 +23,7 @@ module Periodic.Agent
   , receive_
   , readerSize
   , agent
+  , liftAgentT
   ) where
 
 import           Data.ByteString             (ByteString)
@@ -131,3 +132,6 @@ agent = do
   connectionState <- lift $ lift get
   connectionConfig <- lift . lift $ lift ask
   pure (AgentState {..}, AgentConfig {..})
+
+liftAgentT :: Monad m => m a -> AgentT m a
+liftAgentT = lift . lift . lift . lift
