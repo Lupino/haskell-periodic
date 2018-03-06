@@ -118,14 +118,7 @@ newAgent = newAgentEnv =<< newMsgid
 
 
 liftPeriodicT :: (Functor m, Applicative m, Monad m) => m a -> PeriodicT m u a
-liftPeriodicT m =
-  StateT $ \s0 ->
-    ReaderT $ \_ -> do
-      a0 <- StateT $ \s1 ->
-        ReaderT $ \_ -> do
-          a1 <- m
-          pure (a1, s1)
-      pure (a0, s0)
+liftPeriodicT = lift . lift . lift . lift
 
 newMsgid :: MonadIO m => PeriodicT m u Msgid
 newMsgid = do
