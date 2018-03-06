@@ -32,7 +32,6 @@ library
                      , Periodic.Transport.XOR
                      , Periodic.Transport.TLSSetting
                      , Periodic.Transport.TLS
-                     , Periodic.Timer
                      , Periodic.Lock
                      , Periodic.IOHashMap
                      , Periodic.IOList
