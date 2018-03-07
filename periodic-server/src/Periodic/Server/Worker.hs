@@ -73,7 +73,7 @@ initWorkerEnv connectionState connectionConfig schedState schedConfig = do
 
   let periodicEnv = initEnv_ workerConfig connectionConfig $ handleAgentT workerConfig
   periodicState <- liftIO $ initPeriodicState connectionState
-  return $ WorkerEnv{..}
+  return WorkerEnv{..}
 
 startWorkerT
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)

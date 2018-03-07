@@ -60,7 +60,7 @@ initClientEnv connectionState connectionConfig schedState schedConfig = do
   lastVist <- liftIO $ newTVarIO =<< getEpochTime
   let periodicEnv = initEnv_ lastVist connectionConfig $ handleAgentT lastVist
   periodicState <- liftIO $ initPeriodicState connectionState
-  return $ ClientEnv {..}
+  return ClientEnv{..}
 
 startClientT
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
@@ -97,4 +97,4 @@ handleAgentT lastVist = do
     Right (RemoveJob job) -> do
       liftAgentT $ removeJob job
       send Success
-    Right Shutdown -> liftAgentT $ shutdown
+    Right Shutdown -> liftAgentT shutdown

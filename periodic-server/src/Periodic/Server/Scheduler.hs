@@ -73,6 +73,8 @@ data SchedConfig = SchedConfig
   , sCleanup    :: IO ()
   }
 
+type Task m = Async (StM (SchedT m) ())
+
 data SchedState m = SchedState
   { sFuncStatList :: FuncStatList
   , sLocker       :: L.Lock
@@ -80,7 +82,7 @@ data SchedState m = SchedState
   , sJobQueue     :: JobQueue
   , sProcessJob   :: ProcessQueue
   , sAlive        :: TVar Bool
-  , sSchedJobQ    :: IOHashMap JobHandle (Async (StM (SchedT m) ()))
+  , sTaskList     :: IOHashMap JobHandle (Task m)
   }
 
 type SchedT m = StateT (SchedState m) (ReaderT SchedConfig m)
@@ -103,7 +105,7 @@ initSchedState = do
   sGrabQueue    <- newGrabQueue
   sJobQueue     <- newIOHashMap
   sProcessJob   <- newIOHashMap
-  sSchedJobQ    <- newIOHashMap
+  sTaskList    <- newIOHashMap
   sAlive        <- newTVarIO True
   pure SchedState {..}
 
@@ -131,7 +133,7 @@ pollJob :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 pollJob = do
   SchedState{..} <- get
   SchedConfig{..} <- lift ask
-  mapM_ checkPoll =<< liftIO (FL.toList sSchedJobQ)
+  mapM_ checkPoll =<< liftIO (FL.toList sTaskList)
 
   next <- liftIO $ (+ sSchedDelay * 2) <$> getEpochTime
   mapM_ checkJob =<< liftIO (JQ.findLessJob sJobQueue next)
@@ -140,21 +142,20 @@ pollJob = do
           :: (MonadIO m, MonadBaseControl IO m)
           => Job -> SchedT m ()
         checkJob job@Job{..} = do
-          SchedState{..} <- get
-          SchedConfig{..} <- lift ask
-          w <- liftIO $ FL.lookup sSchedJobQ (jHandle job)
+          w <- findTask job
+          schedDelay <- lift $ asks sSchedDelay
           unless (isJust w) $ do
-            now <- liftIO $ getEpochTime
-            when (jSchedAt > now || jSchedAt + sSchedDelay < now) $ reSchedJob job
+            now <- liftIO getEpochTime
+            when (jSchedAt > now || jSchedAt + schedDelay < now) $ reSchedJob job
 
         checkPoll
           :: (MonadIO m, MonadBaseControl IO m)
           => (JobHandle, Async (StM (SchedT m) ())) -> SchedT m ()
         checkPoll (jh, w) = do
-          SchedState{..} <- get
+          taskList <- gets sTaskList
           r <- poll w
           case r of
-            Just (Right ()) -> liftIO $ FL.delete sSchedJobQ jh
+            Just (Right ()) -> liftIO $ FL.delete taskList jh
             _               -> pure ()
 
 
@@ -176,27 +177,32 @@ pushJob job@Job{..} = do
 
 reSchedJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
 reSchedJob job = do
-  SchedState{..} <- get
-  SchedConfig{..} <- lift ask
-  w <- liftIO $ FL.lookup sSchedJobQ (jHandle job)
+  schedDelay <- lift $ asks sSchedDelay
+  taskList <- gets sTaskList
+  w <- findTask job
   when (isJust w) $ do
     cancel (fromJust w)
-    liftIO $ FL.delete sSchedJobQ (jHandle job)
+    liftIO $ FL.delete taskList (jHandle job)
 
-  next <- liftIO $ (+ sSchedDelay * 2) <$> getEpochTime
+  next <- liftIO $ (+ schedDelay * 2) <$> getEpochTime
   when (jSchedAt job < next) $ do
     w' <- schedJob job
-    liftIO $ FL.insert sSchedJobQ (jHandle job) w'
+    liftIO $ FL.insert taskList (jHandle job) w'
+
+findTask :: (MonadIO m) =>  Job -> SchedT m (Maybe (Task m))
+findTask job = do
+  taskList <- gets sTaskList
+  liftIO $ FL.lookup taskList (jHandle job)
 
 schedJob
   :: (MonadIO m, MonadBaseControl IO m)
-  => Job -> SchedT m (Async (StM (SchedT m) ()))
+  => Job -> SchedT m (Task m)
 schedJob job = async $ schedJob_ job
 
 schedJob_ :: MonadIO m => Job -> SchedT m ()
 schedJob_ job@Job{..} = do
   SchedState{..} <- get
-  now <- liftIO $ getEpochTime
+  now <- liftIO getEpochTime
   when (jSchedAt > now) . liftIO . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
   FuncStat{..} <- liftIO . atomically $ do
     st <- FL.lookupSTM sFuncStatList jFuncName
@@ -245,7 +251,7 @@ schedJob_ job@Job{..} = do
           SchedState{..} <- get
           liftIO $ do
             JQ.removeJob sJobQueue jFuncName jName
-            FL.delete sSchedJobQ (jHandle job)
+            FL.delete sTaskList (jHandle job)
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
@@ -279,10 +285,10 @@ removeJob job = do
 
   adjustFuncStat (jFuncName job)
 
-  w <- liftIO $ FL.lookup sSchedJobQ (jHandle job)
+  w <- findTask job
   when (isJust w) $ do
     cancel (fromJust w)
-    liftIO $ FL.delete sSchedJobQ (jHandle job)
+    liftIO $ FL.delete sTaskList (jHandle job)
 
 dumpJob :: MonadIO m => SchedT m [Job]
 dumpJob = do
@@ -343,7 +349,7 @@ failJob jh = do
   SchedState{..} <- get
   job <- liftIO $ PQ.lookupJob sProcessJob fn jn
   when (isJust job) $ do
-    nextSchedAt <- liftIO $ getEpochTime
+    nextSchedAt <- liftIO getEpochTime
     retryJob ((fromJust job) {jSchedAt = nextSchedAt})
 
   where (fn, jn) = unHandle jh
@@ -390,7 +396,7 @@ status = liftIO . FL.elems =<< gets sFuncStatList
 
 revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 revertProcessQueue = do
-  now <- liftIO $ getEpochTime
+  now <- liftIO getEpochTime
   queue <- gets sProcessJob
   mapM_ (failJob . jHandle)
     =<< filter (isTimeout now) <$> liftIO (PQ.dumpJob queue)
@@ -406,6 +412,6 @@ shutdown = do
     writeTVar sAlive False
     return t
   when alive $ do
-    mapM_ cancel =<< liftIO (FL.elems sSchedJobQ)
+    mapM_ cancel =<< liftIO (FL.elems sTaskList)
     saveJob
     void . async $ liftIO sCleanup

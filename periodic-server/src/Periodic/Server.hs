@@ -47,7 +47,7 @@ type WorkerList m = IOHashMap ByteString (WorkerEnv m)
 
 data ServerConfig = ServerConfig
   { schedConfig :: SchedConfig
-  , mkTransport :: (Socket -> IO Transport)
+  , mkTransport :: Socket -> IO Transport
   , serveSock   :: Socket
   }
 
@@ -91,7 +91,7 @@ serveForever = do
 
   void . runMaybeT . forever $ do
     e <- lift tryServeOnce
-    when (isLeft e) $ mzero
+    when (isLeft e) mzero
     alive <- liftIO $ readTVarIO state
     unless alive mzero
 
@@ -117,7 +117,7 @@ handleConnection
   => Transport -> ServerT m ()
 handleConnection transport = do
   connectionConfig <- liftIO $ initServerConnectionConfig transport
-  connectionState <- liftIO $ initConnectionState
+  connectionState <- liftIO initConnectionState
 
   ServerState{..} <- get
   ServerConfig{..} <- lift ask
