@@ -29,7 +29,6 @@ library
                      , network
                      , unordered-containers
                      , psqueues
-                     , unix
                      , directory
                      , filepath
                      , hslogger
