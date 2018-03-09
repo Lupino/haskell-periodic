@@ -26,6 +26,7 @@ library
                      , byteable
                      , monad-control
                      , exceptions
+                     , transformers
                      , lifted-base
                      , lifted-async
   default-language:    Haskell2010

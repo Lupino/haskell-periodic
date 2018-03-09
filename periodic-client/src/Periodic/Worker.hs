@@ -17,9 +17,11 @@ module Periodic.Worker
 
 import           Control.Monad.Catch             (MonadCatch, MonadMask, catch)
 import           Control.Monad.IO.Class          (MonadIO (..))
+import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Control     (MonadBaseControl)
 import           Data.Byteable                   (toBytes)
-import           Periodic.Agent                  (Agent, readerSize, receive,
+import           Periodic.Agent                  (AgentReader, Msgid,
+                                                  readerSize, receive,
                                                   runAgentT, send)
 import           Periodic.Job                    (JobConfig, JobT, func_,
                                                   initJobConfig, name, workFail)
@@ -64,13 +66,13 @@ runWorkerT f h m = do
     Conn.send $ toBytes TypeWorker
     void Conn.receive
 
-  taskList <- liftIO newIOHashMap
-  let env0 = initEnv taskList connectionConfig
-  state0 <- liftIO $ initPeriodicState connectionState
+    taskList <- liftIO newIOHashMap
+    let env0 = initEnv taskList
+    state0 <- liftIO initPeriodicState
 
-  runPeriodicT state0 env0 $ do
-    void $ async startMainLoop
-    m
+    runPeriodicT state0 env0 $ do
+      void $ async startMainLoop
+      m
 
 close :: MonadIO m => WorkerT m ()
 close = stopPeriodicT
@@ -110,9 +112,9 @@ removeFunc f = do
 
 grabJob
   :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
-  => Agent -> WorkerT m (Maybe JobConfig)
-grabJob (agentState, agentConfig) = do
-  pl <- liftPeriodicT . runAgentT agentState agentConfig $ do
+  => Msgid -> AgentReader -> WorkerT m (Maybe JobConfig)
+grabJob mid reader = do
+  pl <- lift . lift . runAgentT reader mid $ do
     size <- readerSize
     when (size == 0) $ send GrabJob
     timeout 10000000 receive
@@ -135,9 +137,9 @@ work_
   => WorkerT m ()
 work_ = do
   taskList <- env
-  agent <- newAgent
+  (mid, reader) <- newAgentEnv
   forever $ do
-    j <- grabJob agent
+    j <- grabJob mid reader
     when (isJust j) $
       withEnv (fromJust j) $ do
         f <- func_

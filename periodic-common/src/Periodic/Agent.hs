@@ -2,27 +2,24 @@
 
 module Periodic.Agent
   (
-    AgentState
-  , AgentConfig
-  , AgentList
-  , Agent
+    AgentReader
   , Msgid
+  , AgentEnv (..)
   , AgentT
   , runAgentT
-  , initAgentConfig
-  , initAgentState
+  , mkAgentReader
   , send
   , send_
   , agentid
   , msgid
-  , msgid'
   , msgidLength
   , aAlive
   , feed
   , receive
   , receive_
   , readerSize
-  , agent
+  , agentEnv
+  , runAgentTWithEnv
   , liftAgentT
   ) where
 
@@ -39,54 +36,43 @@ import           Control.Monad               (when)
 import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.STM           (atomically, retry)
 import           Control.Monad.Trans.Class   (lift)
-import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.Reader  (ReaderT, ask, runReaderT)
 import           Control.Monad.Trans.State   (StateT, evalStateT, get)
 import           Data.Byteable               (Byteable (..))
-import           Periodic.IOHashMap          (IOHashMap)
 import           Periodic.Types.Internal
 
 type AgentReader = TVar [ByteString]
 type Msgid = ByteString
 
-data AgentState = AgentState
-  { aReader         :: AgentReader
-  , connectionState :: ConnectionState
-  }
-
-data AgentConfig = AgentConfig
-  { aMsgid           :: Msgid
+data AgentEnv = AgentEnv
+  { agentReader      :: AgentReader
+  , agentMsgid       :: Msgid
+  , connectionState  :: ConnectionState
   , connectionConfig :: ConnectionConfig
   }
 
-type Agent = (AgentState, AgentConfig)
-type AgentList = IOHashMap Msgid Agent
-
-msgid' :: AgentConfig -> Msgid
-msgid' = aMsgid
-
-agentid :: AgentConfig -> ByteString
-agentid config = B.concat [aMsgid config, connid' $ connectionConfig config]
+agentid :: AgentEnv -> ByteString
+agentid AgentEnv{..} = B.concat [agentMsgid, connid' connectionConfig]
 
 type AgentT m = StateT AgentReader (ReaderT Msgid (ConnectionT m))
 
 runAgentT
   :: Monad m
-  => AgentState
-  -> AgentConfig
+  => AgentReader
+  -> Msgid
   -> AgentT m a
-  -> m a
-runAgentT state config =
-  runConnectionT (connectionState state) (connectionConfig config)
-    . flip runReaderT (aMsgid config)
-    . flip evalStateT (aReader state)
+  -> ConnectionT m a
+runAgentT reader mid =
+  flip runReaderT mid
+    . flip evalStateT reader
 
-initAgentState :: ConnectionState -> IO AgentState
-initAgentState connectionState = do
-  aReader <- newTVarIO []
-  return AgentState{..}
+runAgentTWithEnv :: Monad m => AgentEnv -> AgentT m a -> m a
+runAgentTWithEnv AgentEnv {..} =
+  runConnectionT connectionState connectionConfig
+    . runAgentT agentReader agentMsgid
 
-initAgentConfig :: Msgid -> ConnectionConfig -> AgentConfig
-initAgentConfig = AgentConfig
+mkAgentReader :: [ByteString] -> IO AgentReader
+mkAgentReader = newTVarIO
 
 msgid :: Monad m => AgentT m Msgid
 msgid = lift ask
@@ -125,13 +111,13 @@ receive = runParser <$> receive_
 readerSize :: MonadIO m => AgentT m Int
 readerSize = fmap length $ liftIO . readTVarIO =<< get
 
-agent :: Monad m => AgentT m Agent
-agent = do
-  aReader <- get
-  aMsgid <- lift ask
+agentEnv :: Monad m => AgentT m AgentEnv
+agentEnv = do
+  agentReader <- get
+  agentMsgid <- lift ask
   connectionState <- lift $ lift get
   connectionConfig <- lift . lift $ lift ask
-  pure (AgentState {..}, AgentConfig {..})
+  pure AgentEnv{..}
 
 liftAgentT :: Monad m => m a -> AgentT m a
 liftAgentT = lift . lift . lift . lift

@@ -50,12 +50,16 @@ import           System.Timeout.Lifted        (timeout)
 type ClientT m     = PeriodicT m ()
 
 data ClientEnv m = ClientEnv
-  { periodicEnv   :: Env m ()
-  , periodicState :: PeriodicState
+  { periodicEnv      :: Env m ()
+  , periodicState    :: PeriodicState
+  , connectionConfig :: Conn.ConnectionConfig
+  , connectionState  :: Conn.ConnectionState
   }
 
 runClientT :: Monad m => ClientEnv m -> ClientT m a -> m a
-runClientT ClientEnv {..} = runPeriodicT periodicState periodicEnv
+runClientT ClientEnv {..} =
+  Conn.runConnectionT connectionState connectionConfig
+    . runPeriodicT periodicState periodicEnv
 
 open
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadMask m)
@@ -71,9 +75,9 @@ open f h = do
     Conn.send $ toBytes TypeClient
     void Conn.receive
 
-  let env0 = initEnv () connectionConfig
-  state0 <- liftIO $ initPeriodicState connectionState
-  let clientEnv = ClientEnv env0 state0
+  let periodicEnv = initEnv ()
+  periodicState <- liftIO initPeriodicState
+  let clientEnv = ClientEnv{..}
 
   runClientT clientEnv $ do
     void . liftBaseDiscard forkIO $ forever $ do

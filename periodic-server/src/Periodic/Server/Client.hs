@@ -39,15 +39,19 @@ import           Data.Int                     (Int64)
 type ClientT m = PeriodicT (SchedT m) (TVar Int64)
 
 data ClientEnv m = ClientEnv
-  { periodicEnv   :: Env (SchedT m) (TVar Int64)
-  , periodicState :: PeriodicState
-  , schedState    :: SchedState m
-  , schedConfig   :: SchedConfig
+  { periodicEnv      :: Env (SchedT m) (TVar Int64)
+  , periodicState    :: PeriodicState
+  , schedState       :: SchedState m
+  , schedConfig      :: SchedConfig
+  , connectionConfig :: Conn.ConnectionConfig
+  , connectionState  :: Conn.ConnectionState
   }
 
 runClientT :: Monad m => ClientEnv m -> ClientT m a -> m a
 runClientT ClientEnv {..} =
-  runSchedT schedState schedConfig . runPeriodicT periodicState periodicEnv
+  runSchedT schedState schedConfig
+    . Conn.runConnectionT connectionState connectionConfig
+    . runPeriodicT periodicState periodicEnv
 
 initClientEnv
   :: (MonadIO m, MonadBaseControl IO m)
@@ -58,8 +62,8 @@ initClientEnv
   -> m (ClientEnv m)
 initClientEnv connectionState connectionConfig schedState schedConfig = do
   lastVist <- liftIO $ newTVarIO =<< getEpochTime
-  let periodicEnv = initEnv_ lastVist connectionConfig $ handleAgentT lastVist
-  periodicState <- liftIO $ initPeriodicState connectionState
+  let periodicEnv = initEnv_ lastVist $ handleAgentT lastVist
+  periodicState <- liftIO initPeriodicState
   return ClientEnv{..}
 
 startClientT

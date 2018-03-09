@@ -16,11 +16,11 @@ module Periodic.Monad
   , runPeriodicT
   , startMainLoop
   , withAgentT
-  , newAgent
   , liftPeriodicT
   , isAlive
   , stopPeriodicT
   , env
+  , newAgentEnv
   ) where
 
 import           Control.Concurrent          (forkIO)
@@ -34,16 +34,14 @@ import           Control.Monad.STM           (atomically)
 import           Control.Monad.Trans.Class   (lift)
 import           Control.Monad.Trans.Control (MonadBaseControl, liftBaseDiscard)
 import           Control.Monad.Trans.Maybe   (runMaybeT)
-import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.Reader  (ReaderT, ask, asks, runReaderT)
 import           Control.Monad.Trans.State   (StateT (..), evalStateT, get,
                                               gets)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B (drop, empty, take)
 import           Periodic.Agent              hiding (receive)
-import           Periodic.Connection         (ConnectionConfig, ConnectionState,
-                                              ConnectionT, close, receive,
-                                              runConnectionT)
-import           Periodic.IOHashMap          (newIOHashMap)
+import           Periodic.Connection         (ConnectionT, close, receive)
+import           Periodic.IOHashMap          (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap          as HM (delete, elems, insert,
                                                     lookup, member)
 import           System.Entropy              (getEntropy)
@@ -51,15 +49,13 @@ import           System.Log.Logger           (errorM)
 
 
 data Env m u = Env
-  { uEnv             :: u
-  , connectionConfig :: ConnectionConfig
-  , agentHandler     :: AgentT m ()
+  { uEnv         :: u
+  , agentHandler :: AgentT m ()
   }
 
 data PeriodicState = PeriodicState
-  { status          :: TVar Bool
-  , agentList       :: AgentList
-  , connectionState :: ConnectionState
+  { status    :: TVar Bool
+  , agentList :: IOHashMap Msgid (Msgid, AgentReader)
   }
 
 type PeriodicT m u = StateT PeriodicState (ReaderT (Env m u) (ConnectionT m))
@@ -69,16 +65,15 @@ runPeriodicT
   => PeriodicState
   -> Env m u
   -> PeriodicT m u a
-  -> m a
+  -> ConnectionT m a
 runPeriodicT state config =
-  runConnectionT (connectionState state) (connectionConfig config)
-    . flip runReaderT config
+  flip runReaderT config
     . flip evalStateT state
 
-initEnv :: MonadIO m => u -> ConnectionConfig -> Env m u
-initEnv u c = Env u c defaultAgentHandler
+initEnv :: MonadIO m => u -> Env m u
+initEnv u = Env u defaultAgentHandler
 
-initEnv_ :: u -> ConnectionConfig -> AgentT m () -> Env m u
+initEnv_ :: u -> AgentT m () -> Env m u
 initEnv_ = Env
 
 defaultAgentHandler :: MonadIO m => AgentT m ()
@@ -90,10 +85,10 @@ withEnv :: (Monad m) =>  u1 -> PeriodicT m u1 a -> PeriodicT m u a
 withEnv u m = do
   state0 <- get
   env0 <- lift ask
-  liftPeriodicT $ runPeriodicT state0 (env0 {uEnv=u}) m
+  lift . lift $ runPeriodicT state0 (env0 {uEnv=u}) m
 
-initPeriodicState :: ConnectionState -> IO PeriodicState
-initPeriodicState connectionState = do
+initPeriodicState :: IO PeriodicState
+initPeriodicState = do
   status <- newTVarIO True
   agentList <- newIOHashMap
   pure PeriodicState{..}
@@ -101,21 +96,18 @@ initPeriodicState connectionState = do
 withAgentT :: (MonadIO m, Monad m, MonadMask m) => AgentT m a -> PeriodicT m u a
 withAgentT agentT =
   bracket newMsgid removeMsgid $ \mid -> do
-    (agentState, agentConfig) <- newAgentEnv mid
-    liftPeriodicT $ runAgentT agentState agentConfig agentT
+    (_, reader) <- newAgentEnv_ mid
+    lift . lift $ runAgentT reader mid agentT
 
-newAgentEnv :: (Monad m, MonadIO m) => Msgid -> PeriodicT m u Agent
-newAgentEnv mid = do
+newAgentEnv_ :: (Monad m, MonadIO m) => Msgid -> PeriodicT m u (Msgid, AgentReader)
+newAgentEnv_ mid = do
   PeriodicState{..} <- get
-  Env {..} <- lift ask
-  let agentConfig = initAgentConfig mid connectionConfig
-  agentState <- liftIO $ initAgentState connectionState
-  liftIO $ HM.insert agentList mid (agentState, agentConfig)
-  return (agentState, agentConfig)
+  reader <- liftIO $ mkAgentReader []
+  liftIO $ HM.insert agentList mid (mid, reader)
+  return (mid, reader)
 
-newAgent :: (MonadIO m, Monad m) => PeriodicT m u Agent
-newAgent = newAgentEnv =<< newMsgid
-
+newAgentEnv :: (MonadIO m) => PeriodicT m u (Msgid, AgentReader)
+newAgentEnv = newAgentEnv_ =<< newMsgid
 
 liftPeriodicT :: (Functor m, Applicative m, Monad m) => m a -> PeriodicT m u a
 liftPeriodicT = lift . lift . lift . lift
@@ -162,14 +154,12 @@ doFeed bs = do
   Env{..} <- lift ask
   v <- liftIO . HM.lookup agentList $ B.take msgidLength bs
   case v of
-    Just (agentState, agentConfig) ->
-      liftPeriodicT . runAgentT agentState agentConfig . feed $ B.drop msgidLength bs
+    Just (mid, reader) ->
+      lift . lift . runAgentT reader mid . feed $ B.drop msgidLength bs
     Nothing    -> do
-      let agentConfig = initAgentConfig (B.take msgidLength bs) connectionConfig
-      agentState <- liftIO $ initAgentState connectionState
-      liftPeriodicT . runAgentT agentState agentConfig $ do
-        feed $ B.drop msgidLength bs
-        agentHandler
+      let mid = B.take msgidLength bs
+      reader <- liftIO $ mkAgentReader [B.drop msgidLength bs]
+      lift . lift $ runAgentT reader mid agentHandler
 
 startMainLoop
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
@@ -189,9 +179,9 @@ isAlive = liftIO . readTVarIO =<< gets status
 doFeedError :: MonadIO m => PeriodicT m u ()
 doFeedError =
   gets agentList >>= liftIO . HM.elems >>= mapM_ go
-  where go :: MonadIO m => (AgentState, AgentConfig) -> PeriodicT m u ()
-        go (agentState, agentConfig) =
-          liftPeriodicT $ runAgentT agentState agentConfig $ feed B.empty
+  where go :: MonadIO m => (Msgid, AgentReader) -> PeriodicT m u ()
+        go (mid, reader) =
+          lift . lift $ runAgentT reader mid $ feed B.empty
 
 stopPeriodicT :: MonadIO m => PeriodicT m u ()
 stopPeriodicT = do

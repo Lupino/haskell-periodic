@@ -34,8 +34,8 @@ import           Control.Monad                   (forever, mzero, unless, void,
 import           Data.Binary                     (decodeFile, encodeFile)
 import           Data.Int                        (Int64)
 import           Data.Maybe                      (fromJust, fromMaybe, isJust)
-import           Periodic.Agent                  (Agent, aAlive, runAgentT,
-                                                  send)
+import           Periodic.Agent                  (AgentEnv, aAlive,
+                                                  runAgentTWithEnv, send)
 import           Periodic.IOHashMap              (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap              as FL
 import           Periodic.IOList                 (IOList)
@@ -213,24 +213,23 @@ schedJob_ job@Job{..} = do
   if sBroadcast then popAgentListThen $ doneSubmitJob True
                 else popAgentThen $ doneSubmitJob False
 
-  where popAgentThen :: MonadIO m => (Agent -> SchedT m ()) -> SchedT m ()
+  where popAgentThen :: MonadIO m => (AgentEnv -> SchedT m ()) -> SchedT m ()
         popAgentThen done = do
           SchedState{..} <- get
-          (jq, (agentState, agentConfig)) <- liftIO $
-            atomically $ popAgentSTM sGrabQueue jFuncName
-          alive <- liftIO $ runAgentT agentState agentConfig aAlive
+          (jq, env0) <- liftIO $ atomically $ popAgentSTM sGrabQueue jFuncName
+          alive <- liftIO $ runAgentTWithEnv env0 aAlive
           when alive $ do
             liftIO $ IL.insert jq (jHandle job)
-            done (agentState, agentConfig)
+            done env0
 
-        popAgentListThen :: MonadIO m => (Agent -> SchedT m ()) -> SchedT m ()
+        popAgentListThen :: MonadIO m => (AgentEnv -> SchedT m ()) -> SchedT m ()
         popAgentListThen done = do
           SchedState{..} <- get
           agents <- liftIO $ popAgentList sGrabQueue jFuncName
           mapM_ (done . snd) agents
           unless (null agents) endSchedJob
 
-        doneSubmitJob :: MonadIO m => Bool -> Agent -> SchedT m ()
+        doneSubmitJob :: MonadIO m => Bool -> AgentEnv -> SchedT m ()
         doneSubmitJob cast agent = do
           SchedState{..} <- get
           unless cast . liftIO $ do
@@ -335,14 +334,14 @@ dropFunc n = do
         FL.delete sFuncStatList n
         FL.delete sJobQueue n
 
-pushGrab :: MonadIO m => IOList FuncName -> IOList JobHandle -> Agent -> SchedT m ()
+pushGrab :: MonadIO m => IOList FuncName -> IOList JobHandle -> AgentEnv -> SchedT m ()
 pushGrab funcList handleList ag = do
   queue <- gets sGrabQueue
   liftIO $ pushAgent queue funcList handleList ag
 
-assignJob :: Agent -> Job -> IO ()
-assignJob (agentState, agentConfig) job =
-  runAgentT agentState agentConfig $ send (JobAssign (jHandle job) job)
+assignJob :: AgentEnv -> Job -> IO ()
+assignJob env0 job =
+  runAgentTWithEnv env0 $ send (JobAssign (jHandle job) job)
 
 failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
 failJob jh = do

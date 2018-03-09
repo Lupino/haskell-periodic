@@ -18,7 +18,7 @@ import           Control.Monad                (unless, when)
 import           Data.Int                     (Int64)
 import qualified Periodic.Connection          as Conn
 
-import           Periodic.Agent               (AgentT, agent, liftAgentT,
+import           Periodic.Agent               (AgentT, agentEnv, liftAgentT,
                                                receive, send)
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
@@ -47,15 +47,19 @@ data WorkerConfig = WorkerConfig
 type WorkerT m = PeriodicT (SchedT m) WorkerConfig
 
 data WorkerEnv m = WorkerEnv
-  { periodicEnv   :: Env (SchedT m) WorkerConfig
-  , periodicState :: PeriodicState
-  , schedState    :: SchedState m
-  , schedConfig   :: SchedConfig
+  { periodicEnv      :: Env (SchedT m) WorkerConfig
+  , periodicState    :: PeriodicState
+  , schedState       :: SchedState m
+  , schedConfig      :: SchedConfig
+  , connectionConfig :: Conn.ConnectionConfig
+  , connectionState  :: Conn.ConnectionState
   }
 
 runWorkerT :: Monad m => WorkerEnv m -> WorkerT m a -> m a
 runWorkerT WorkerEnv {..} =
-  runSchedT schedState schedConfig . runPeriodicT periodicState periodicEnv
+  runSchedT schedState schedConfig
+    . Conn.runConnectionT connectionState connectionConfig
+    . runPeriodicT periodicState periodicEnv
 
 initWorkerEnv
   :: (MonadIO m, MonadBaseControl IO m)
@@ -71,8 +75,8 @@ initWorkerEnv connectionState connectionConfig schedState schedConfig = do
 
   let workerConfig = WorkerConfig {..}
 
-  let periodicEnv = initEnv_ workerConfig connectionConfig $ handleAgentT workerConfig
-  periodicState <- liftIO $ initPeriodicState connectionState
+  let periodicEnv = initEnv_ workerConfig $ handleAgentT workerConfig
+  periodicState <- liftIO initPeriodicState
   return WorkerEnv{..}
 
 startWorkerT
@@ -101,8 +105,8 @@ handleAgentT WorkerConfig {..} = do
   case cmd of
     Left _     -> lift . lift $ Conn.close -- close worker
     Right GrabJob -> do
-      ag <- agent
-      liftAgentT $ pushGrab wFuncList wJobQueue ag
+      env0 <- agentEnv
+      liftAgentT $ pushGrab wFuncList wJobQueue env0
     Right (WorkDone jh) -> do
       liftAgentT $ doneJob jh
       liftIO $ delete wJobQueue jh
