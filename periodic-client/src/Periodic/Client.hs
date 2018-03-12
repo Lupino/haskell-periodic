@@ -47,7 +47,7 @@ import           Periodic.Utils               (getEpochTime)
 import           Periodic.Monad
 import           System.Timeout.Lifted        (timeout)
 
-type ClientT m     = PeriodicT m ()
+type ClientT m = PeriodicT m ()
 
 data ClientEnv m = ClientEnv
   { periodicEnv      :: Env m ()
