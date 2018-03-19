@@ -19,25 +19,21 @@ Periodic provides client and worker APIs that your applications call to talk wit
 
 Internally, the periodic client and worker APIs communicate with the periodic server using TCP sockets.
 To explain how Periodic works in more detail, lets look at a simple application that will print a string on a random delay.
-The example is given in [Python3](http://python.org), although other APIs will look quite similar.
+The example is given in [Haskell](https://www.haskell.org), although other APIs will look quite similar.
 
 
 We start off by writing a client application that is responsible for sending off the job.
 It does this by using the Periodic client API to send some data associated with a function name, in this case the function `random_print`. The code for this is:
 
-    from aio_periodic import Client
-    from time import time
-    client = Client()
-    client.add_server("unix:///tmp/periodic.sock")
-    yield from client.connect()
-    job = {
-        "name": "Hello world!",
-        "func": "random_print",
-        "sched_at": int(time()),
-    }
-    yield from client.submitJob(job)
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
 
-This code initializes a client class, configures it to use a periodic server with `add_server`,
+import Periodic.Client
+clientEnv <- open return "unix:///tmp/periodic.sock"
+runClientT clientEnv $ submitJob "random_print" "Hello world!" 0
+```
+
+This code initializes a client class, configures it to use a periodic server with `open`,
 and then tells the client API to run the `random_print` function with the workload “Hello world!”.
 The function name and arguments are completely arbitrary as far as Periodic is concerned,
 so you could send any data structure that is appropriate for your application (text or binary).
@@ -45,25 +41,22 @@ At this point the Periodic client API will package up the job into a Periodic pr
 and send it to the periodic server to find an appropriate worker that can run the `random_print` function.
 Let’s now look at the worker code:
 
-    from aio_periodic import Worker
-    import random
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
+import Periodic.Worker
+import Periodic.Job
+import Control.Monad.IO.Class (liftIO)
 
-    worker = Worker()
-    worker.add_server("unix:///tmp/periodic.sock")
-    yield from worker.connect()
-    yield from worker.add_func("random_print")
-    count = 0
-    while True:
-        job = yield from worker.grabJob()
-        print(count, job.name)
-        count += 1
-        if count > 10:
-            yield from job.done()
-            break
+runWorkerT return "unix:///tmp/periodic/sock" $ do
+  addFunc "random_print" $ do
+    n <- name
+    liftIO $ putStrLn h
+    c <- counter
+    if c > 10 then workDone
+              else schedLater' 5 1
 
-        yield from job.sched_later(random.randint(5, 10))
-
-    print('Finish!')
+  work 1
+```
 
 This code defines a function `random_print` that takes a string and print the string on a random delay for 10 times.
 It is used by a worker object to register a function named `random_print`
@@ -105,18 +98,19 @@ module Main
     main
   ) where
 
-import           Periodic.Job       (Job, name, workDone)
-import           Periodic.Worker    (addFunc, runWorker, work)
+import Periodic.Job (JobT, name, workDone)
+import Periodic.Worker (addFunc, runWorkerT, work)
+import Control.Monad.IO.Class (liftIO)
 
 main :: IO ()
 main = do
-  runWorker (\t -> pure t) "unix:///tmp/periodic.sock" $ do
-    addFunc w "show_file" showFile
-    work w 10
+  runWorkerT (\t -> pure t) "unix:///tmp/periodic.sock" $ do
+    addFunc "show_file" showFile
+    work 10
 
-showFile :: Job ()
+showFile :: JobT IO ()
 showFile = do
-  print =<< name
+  liftIO . putStrLn =<< name
   workDone
 ```
 
