@@ -171,7 +171,6 @@ startMainLoop = do
              else mzero
 
   doFeedError
-  lift $ lift close
 
 isAlive :: MonadIO m => PeriodicT m u Bool
 isAlive = liftIO . readTVarIO =<< gets status
@@ -187,6 +186,7 @@ stopPeriodicT :: MonadIO m => PeriodicT m u ()
 stopPeriodicT = do
   st <- gets status
   liftIO . atomically $ writeTVar st False
+  lift $ lift close
 
 env :: Monad m => PeriodicT m u u
 env = lift $ asks uEnv
