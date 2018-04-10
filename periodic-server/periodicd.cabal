@@ -37,9 +37,11 @@ library
                      , async
                      , binary
                      , transformers
+                     , transformers-base
                      , exceptions
                      , monad-control
                      , lifted-async
+                     , mtl
   default-language:    Haskell2010
 
 executable periodicd

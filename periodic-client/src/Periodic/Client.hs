@@ -31,6 +31,8 @@ import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (lines, split)
 import           Periodic.Agent               (AgentT, receive, receive_, send)
+import           Periodic.Connection          (ConnEnv, initClientConnEnv,
+                                               runConnectionT)
 import qualified Periodic.Connection          as Conn
 import           Periodic.Socket              (connect)
 import           Periodic.Transport           (Transport, makeSocketTransport)
@@ -44,39 +46,34 @@ import           Data.Int                     (Int64)
 import           Control.Monad                (forever, unless, void)
 import           Periodic.Utils               (getEpochTime)
 
-import           Periodic.Monad
+import           Periodic.Node
 import           System.Timeout.Lifted        (timeout)
 
-type ClientT m = PeriodicT m ()
+type ClientT m = NodeT () m
 
-data ClientEnv m = ClientEnv
-  { periodicEnv      :: Env m ()
-  , periodicState    :: PeriodicState
-  , connectionConfig :: Conn.ConnectionConfig
-  , connectionState  :: Conn.ConnectionState
+data ClientEnv = ClientEnv
+  { nodeEnv :: NodeEnv ()
+  , connEnv :: ConnEnv
   }
 
-runClientT :: Monad m => ClientEnv m -> ClientT m a -> m a
-runClientT ClientEnv {..} =
-  Conn.runConnectionT connectionState connectionConfig
-    . runPeriodicT periodicState periodicEnv
+runClientT :: Monad m => ClientEnv -> ClientT m a -> m a
+runClientT ClientEnv{..} = runConnectionT connEnv . runNodeT nodeEnv
 
 open
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadMask m)
-  => (Transport -> IO Transport) -> String -> m (ClientEnv m)
+  => (Transport -> IO Transport) -> String -> m ClientEnv
 open f h = do
-  connectionConfig <- liftIO $
-    Conn.initClientConnectionConfig
+  connEnv <- liftIO $
+    initClientConnEnv
       =<< f
       =<< makeSocketTransport
       =<< connect h
-  connectionState <- liftIO Conn.initConnectionState
-  Conn.runConnectionT connectionState connectionConfig $ do
+  runConnectionT connEnv $ do
     Conn.send $ toBytes TypeClient
     void Conn.receive
 
-  let periodicEnv = initEnv ()
-  periodicState <- liftIO initPeriodicState
+  nodeEnv <- liftIO $ initEnv ()
+
   let clientEnv = ClientEnv{..}
 
   runClientT clientEnv $ do
@@ -88,7 +85,7 @@ open f h = do
   return clientEnv
 
 close :: MonadIO m => ClientT m ()
-close = stopPeriodicT
+close = stopNodeT
 
 ping :: (MonadIO m, MonadMask m) => ClientT m Bool
 ping = withAgentT $ do

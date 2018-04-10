@@ -20,8 +20,7 @@ import           Control.Monad.IO.Class          (MonadIO (..))
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Control     (MonadBaseControl)
 import           Data.Byteable                   (toBytes)
-import           Periodic.Agent                  (AgentReader, Msgid,
-                                                  readerSize, receive,
+import           Periodic.Agent                  (AgentEnv, readerSize, receive,
                                                   runAgentT, send)
 import           Periodic.Job                    (JobConfig, JobT, func_,
                                                   initJobConfig, name, workFail)
@@ -34,6 +33,7 @@ import           Periodic.Types.WorkerCommand
 import           Periodic.Types                  (ClientType (TypeWorker),
                                                   FuncName)
 
+import           Periodic.Connection             (initClientConnEnv)
 import qualified Periodic.Connection             as Conn
 import           Periodic.IOHashMap              (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap              as HM (delete, insert, lookup)
@@ -42,7 +42,7 @@ import           Control.Concurrent.Async.Lifted (async, waitAnyCancel)
 import           Control.Exception               (SomeException)
 import           Control.Monad                   (forever, replicateM, void,
                                                   when)
-import           Periodic.Monad
+import           Periodic.Node
 
 import           System.Log.Logger               (errorM)
 import           System.Timeout.Lifted           (timeout)
@@ -50,32 +50,30 @@ import           System.Timeout.Lifted           (timeout)
 import           Data.Maybe                      (fromJust, isJust)
 
 type TaskList m = IOHashMap FuncName (JobT m ())
-type WorkerT m = PeriodicT m (TaskList m)
+type WorkerT m = NodeT (TaskList m) m
 
 runWorkerT
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadMask m)
   => (Transport -> IO Transport) -> String -> WorkerT m a -> m a
 runWorkerT f h m = do
-  connectionConfig <- liftIO $
-    Conn.initClientConnectionConfig
+  connEnv <- liftIO $
+    initClientConnEnv
       =<< f
       =<< makeSocketTransport
       =<< connect h
-  connectionState <- liftIO Conn.initConnectionState
-  Conn.runConnectionT connectionState connectionConfig $ do
+  Conn.runConnectionT connEnv $ do
     Conn.send $ toBytes TypeWorker
     void Conn.receive
 
     taskList <- liftIO newIOHashMap
-    let env0 = initEnv taskList
-    state0 <- liftIO initPeriodicState
+    env0 <- liftIO $ initEnv taskList
 
-    runPeriodicT state0 env0 $ do
+    runNodeT env0 $ do
       void $ async startMainLoop
       m
 
 close :: MonadIO m => WorkerT m ()
-close = stopPeriodicT
+close = stopNodeT
 
 ping :: (MonadIO m, MonadMask m) => WorkerT m Bool
 ping = withAgentT $ do
@@ -112,9 +110,9 @@ removeFunc f = do
 
 grabJob
   :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
-  => Msgid -> AgentReader -> WorkerT m (Maybe JobConfig)
-grabJob mid reader = do
-  pl <- lift . lift . runAgentT reader mid $ do
+  => AgentEnv -> WorkerT m (Maybe JobConfig)
+grabJob agentEnv = do
+  pl <- liftC . runAgentT agentEnv $ do
     size <- readerSize
     when (size == 0) $ send GrabJob
     timeout 10000000 receive
@@ -137,9 +135,9 @@ work_
   => WorkerT m ()
 work_ = do
   taskList <- env
-  (mid, reader) <- newAgentEnv
+  agentEnv <- newAgentEnv
   forever $ do
-    j <- grabJob mid reader
+    j <- grabJob agentEnv
     when (isJust j) $
       withEnv (fromJust j) $ do
         f <- func_

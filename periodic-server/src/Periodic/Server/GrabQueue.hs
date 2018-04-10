@@ -14,14 +14,14 @@ import           Control.Arrow     ((&&&))
 import           Control.Monad     (unless)
 import           Control.Monad.STM (STM, retry)
 import           Data.ByteString   (ByteString)
-import           Periodic.Agent    (AgentEnv, agentid)
+import           Periodic.Agent    (AgentEnv', agentid)
 import           Periodic.IOList   (IOList, append, delete, deleteSTM, elem,
                                     elemSTM, newIOList, toList, toListSTM)
 import           Periodic.Types    (FuncName, JobHandle)
 import           Prelude           hiding (elem)
 
 data GrabItem = GrabItem { gFuncList :: IOList FuncName
-                         , gAgent    :: AgentEnv
+                         , gAgent    :: AgentEnv'
                          , gJobQueue :: IOList JobHandle
                          }
 
@@ -39,13 +39,13 @@ type GrabQueue = IOList GrabItem
 newGrabQueue :: IO GrabQueue
 newGrabQueue = newIOList
 
-pushAgent :: GrabQueue -> IOList FuncName -> IOList JobHandle -> AgentEnv -> IO ()
+pushAgent :: GrabQueue -> IOList FuncName -> IOList JobHandle -> AgentEnv' -> IO ()
 pushAgent q gFuncList gJobQueue gAgent = do
   has <- elem q i
   unless has $ append q i
   where i = GrabItem {..}
 
-popAgentSTM :: GrabQueue -> FuncName -> STM (IOList JobHandle, AgentEnv)
+popAgentSTM :: GrabQueue -> FuncName -> STM (IOList JobHandle, AgentEnv')
 popAgentSTM q n = do
   item <- go =<< toListSTM q
   deleteSTM q item
@@ -58,7 +58,7 @@ popAgentSTM q n = do
          if has then return x
                 else go xs
 
-popAgentList :: GrabQueue -> FuncName -> IO [(IOList JobHandle, AgentEnv)]
+popAgentList :: GrabQueue -> FuncName -> IO [(IOList JobHandle, AgentEnv')]
 popAgentList q n = do
   items <- go =<< toList q
   mapM_ (delete q) items

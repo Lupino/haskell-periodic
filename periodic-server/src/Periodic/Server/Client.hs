@@ -15,64 +15,57 @@ module Periodic.Server.Client
   , getLastVist
   ) where
 
-import           Data.Byteable                (toBytes)
-import qualified Data.ByteString.Char8        as B (intercalate)
-import qualified Periodic.Connection          as Conn
-
-import           Periodic.Agent               (AgentT, liftAgentT, receive,
-                                               send, send_)
-import           Periodic.Server.Scheduler
-import           Periodic.Types.ClientCommand
-import           Periodic.Types.ServerCommand
-
-import           Periodic.Monad
-import           Periodic.Utils               (getEpochTime)
-
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.Catch          (MonadCatch)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.STM            (atomically)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Control  (MonadBaseControl)
+import           Data.Byteable                (toBytes)
+import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.Int                     (Int64)
+import           Periodic.Agent               (AgentT, liftC, receive, send,
+                                               send_)
+import           Periodic.Connection          (ConnEnv, runConnectionT)
+import qualified Periodic.Connection          as Conn
+import           Periodic.Node                hiding (liftC)
+import           Periodic.Server.Scheduler
+import           Periodic.Types.ClientCommand
+import           Periodic.Types.ServerCommand
+import           Periodic.Utils               (getEpochTime)
 
-type ClientT m = PeriodicT (SchedT m) (TVar Int64)
+type ClientT m = NodeT (TVar Int64) (SchedT m)
 
-data ClientEnv m = ClientEnv
-  { periodicEnv      :: Env (SchedT m) (TVar Int64)
-  , periodicState    :: PeriodicState
-  , schedState       :: SchedState m
-  , schedConfig      :: SchedConfig
-  , connectionConfig :: Conn.ConnectionConfig
-  , connectionState  :: Conn.ConnectionState
+data ClientEnv = ClientEnv
+  { nodeEnv  :: NodeEnv (TVar Int64)
+  , schedEnv :: SchedEnv
+  , connEnv  :: ConnEnv
   }
 
-runClientT :: Monad m => ClientEnv m -> ClientT m a -> m a
+runClientT :: Monad m => ClientEnv -> ClientT m a -> m a
 runClientT ClientEnv {..} =
-  runSchedT schedState schedConfig
-    . Conn.runConnectionT connectionState connectionConfig
-    . runPeriodicT periodicState periodicEnv
+  runSchedT schedEnv
+    . runConnectionT connEnv
+    . runNodeT nodeEnv
 
 initClientEnv
-  :: (MonadIO m, MonadBaseControl IO m)
-  => Conn.ConnectionState
-  -> Conn.ConnectionConfig
-  -> SchedState m
-  -> SchedConfig
-  -> m (ClientEnv m)
-initClientEnv connectionState connectionConfig schedState schedConfig = do
+  :: MonadIO m
+  => ConnEnv
+  -> SchedEnv
+  -> m ClientEnv
+initClientEnv connEnv schedEnv = do
   lastVist <- liftIO $ newTVarIO =<< getEpochTime
-  let periodicEnv = initEnv_ lastVist $ handleAgentT lastVist
-  periodicState <- liftIO initPeriodicState
+  nodeEnv <- liftIO $ initEnv lastVist
   return ClientEnv{..}
 
 startClientT
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
-  => ClientEnv m -> m ()
-startClientT env0 = runClientT env0 startMainLoop
+  => ClientEnv -> m ()
+startClientT env0 = runClientT env0 $ do
+  startMainLoop_ . handleAgentT =<< env
 
 close :: MonadIO m => ClientT m ()
-close = stopPeriodicT
+close = stopNodeT
 
 getLastVist :: MonadIO m => ClientT m Int64
 getLastVist = do
@@ -87,18 +80,18 @@ handleAgentT lastVist = do
 
   cmd <- receive
   case cmd of
-    Left _         -> lift . lift $ Conn.close -- close client
+    Left _         -> liftC Conn.close -- close client
     Right (SubmitJob job) -> do
-      liftAgentT $ pushJob job
+      lift $ pushJob job
       send Success
     Right Status -> do
-      stats <- liftAgentT $ map toBytes <$> status
+      stats <- lift $ map toBytes <$> status
       send_ $ B.intercalate "\n" stats
     Right Ping -> send Pong
     Right (DropFunc fn) -> do
-      liftAgentT $ dropFunc fn
+      lift $ dropFunc fn
       send Success
     Right (RemoveJob job) -> do
-      liftAgentT $ removeJob job
+      lift $ removeJob job
       send Success
-    Right Shutdown -> liftAgentT shutdown
+    Right Shutdown -> lift shutdown

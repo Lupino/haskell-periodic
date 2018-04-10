@@ -12,7 +12,7 @@ import qualified Periodic.Client    as Client (ClientEnv, close, open,
                                                runClientT)
 import           Periodic.Transport (Transport)
 
-type ClientEnv = Pool (Client.ClientEnv IO)
+type ClientEnv = Pool Client.ClientEnv
 
 runClientT :: ClientEnv -> ClientT IO a -> IO a
 runClientT pool m = withResource pool $ flip Client.runClientT m

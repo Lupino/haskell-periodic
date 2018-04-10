@@ -21,7 +21,7 @@ import           Control.Monad.Catch          (MonadMask)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
-import           Periodic.Monad
+import           Periodic.Node
 import           Periodic.Types               (FromBS (..), FuncName (..),
                                                JobHandle, JobName (..),
                                                Workload (..))
@@ -30,7 +30,7 @@ import           Periodic.Types.WorkerCommand
 
 data JobConfig = JobConfig { job :: J.Job, handle :: JobHandle }
 
-type JobT m = PeriodicT m JobConfig
+type JobT m = NodeT JobConfig m
 
 name :: (FromBS a, Show a, Monad m) => JobT m a
 name = fromBS . unJN <$> name_
