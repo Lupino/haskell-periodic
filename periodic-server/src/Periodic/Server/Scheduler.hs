@@ -154,7 +154,7 @@ runTask delay m = void . async $ do
              else mzero
 
 runChanJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> SchedT m ()
-runChanJob taskList = void . async $ do
+runChanJob taskList = do
   cl <- asks sChanList
   al <- asks sAlive
   acts <- liftIO . atomically $ do
@@ -163,7 +163,9 @@ runChanJob taskList = void . async $ do
       st <- readTVar al
       if st then retry
             else pure []
-    else pure acts
+    else do
+      writeTVar cl []
+      pure acts
 
   mapM_ (doChanJob taskList) acts
 
