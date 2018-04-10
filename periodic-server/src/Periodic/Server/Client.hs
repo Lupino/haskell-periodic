@@ -61,7 +61,7 @@ initClientEnv connEnv schedEnv = do
 startClientT
   :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
   => ClientEnv -> m ()
-startClientT env0 = runClientT env0 $ do
+startClientT env0 = runClientT env0 $
   startMainLoop_ . handleAgentT =<< env
 
 close :: MonadIO m => ClientT m ()

@@ -30,19 +30,13 @@ instance Binary ClientCommand where
   get = do
     tp <- getWord8
     case tp of
-      13 -> do
-        job <- get
-        pure (SubmitJob job)
+      13 -> SubmitJob <$> get
       14 -> pure Status
-      9 -> pure Ping
-      15 -> do
-        func <- get
-        pure (DropFunc func)
-      17 -> do
-        job <- get
-        pure (RemoveJob job)
+      9  -> pure Ping
+      15 -> DropFunc <$> get
+      17 -> RemoveJob <$> get
       20 -> pure Shutdown
-      _ -> error $ "Error ClientCommand" ++ show tp
+      _  -> error $ "Error ClientCommand" ++ show tp
 
   put (SubmitJob job) = do
     putWord8 13

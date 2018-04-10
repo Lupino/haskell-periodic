@@ -43,23 +43,13 @@ instance Binary WorkerCommand where
         later <- getInt64be
         step <- fromIntegral <$> getInt16be
         pure (SchedLater jh later step)
-      3 -> do
-        jh <- get
-        pure (WorkDone jh)
-      4 -> do
-        jh <- get
-        pure (WorkFail jh)
+      3 -> WorkDone <$> get
+      4 -> WorkFail <$> get
       11 -> pure Sleep
       9 -> pure Ping
-      7 -> do
-        fn <- get
-        pure (CanDo fn)
-      8 -> do
-        fn <- get
-        pure (CantDo fn)
-      21 -> do
-        fn <- get
-        pure (Broadcast fn)
+      7 -> CanDo <$> get
+      8 -> CantDo <$> get
+      21 -> Broadcast <$> get
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1

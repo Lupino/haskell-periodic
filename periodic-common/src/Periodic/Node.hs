@@ -36,7 +36,6 @@ import           Control.Monad.Catch         (MonadCatch, MonadMask,
 import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.Reader.Class  (MonadReader (ask), asks)
 import           Control.Monad.STM           (atomically)
-import           Control.Monad.Trans.Class   (lift)
 import           Control.Monad.Trans.Class   (MonadTrans (..))
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe   (runMaybeT)

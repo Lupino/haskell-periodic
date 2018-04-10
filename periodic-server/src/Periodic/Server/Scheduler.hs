@@ -67,8 +67,7 @@ import           Control.Monad.Catch             (MonadCatch, MonadMask,
                                                   MonadThrow)
 import           Control.Monad.IO.Class          (MonadIO (..))
 import           Control.Monad.Reader.Class      (MonadReader (ask), asks)
-import           Control.Monad.Trans.Class       (lift)
-import           Control.Monad.Trans.Class       (MonadTrans)
+import           Control.Monad.Trans.Class       (MonadTrans, lift)
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe       (runMaybeT)
 import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
