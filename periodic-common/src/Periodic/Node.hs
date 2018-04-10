@@ -92,7 +92,7 @@ runNodeT nEnv = flip runReaderT nEnv . unNodeT
 
 initEnv :: u -> IO (NodeEnv u)
 initEnv uEnv = do
-  status <- newTVarIO True
+  nodeStatus <- newTVarIO True
   agentList <- newIOHashMap
   pure NodeEnv{..}
 
