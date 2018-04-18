@@ -195,9 +195,13 @@ pollJob taskList = do
         checkJob tl job@Job{..} = do
           w <- findTask tl job
           schedDelay <- asks sSchedDelay
-          unless (isJust w) $ do
-            now <- liftIO getEpochTime
-            when (jSchedAt > now || jSchedAt + schedDelay < now) $ reSchedJob tl job
+          case w of
+            Nothing -> do
+              now <- liftIO getEpochTime
+              when (jSchedAt > now || jSchedAt + schedDelay < now) $ reSchedJob tl job
+            Just w0 -> do
+              r <- canRun jFuncName
+              unless r $ cancel w0
 
         checkPoll
           :: (MonadIO m, MonadBaseControl IO m)
@@ -241,17 +245,22 @@ reSchedJob taskList job = do
 
   next <- liftIO $ (+ schedDelay * 2) <$> getEpochTime
   when (jSchedAt job < next) $ do
-    stList <- asks sFuncStatList
-    st' <- liftIO $ FL.lookup stList (jFuncName job)
-    case st' of
-      Nothing                  -> pure ()
-      Just FuncStat{sWorker=0} -> pure ()
-      Just _ -> do
-        w' <- schedJob taskList job
-        liftIO $ FL.insert taskList (jHandle job) w'
+    r <- canRun $ jFuncName job
+    when r $ do
+      w' <- schedJob taskList job
+      liftIO $ FL.insert taskList (jHandle job) w'
 
 findTask :: (MonadIO m) => TaskList m -> Job -> SchedT m (Maybe (Task m))
 findTask taskList job = liftIO $ FL.lookup taskList (jHandle job)
+
+canRun :: MonadIO m => FuncName -> SchedT m Bool
+canRun fn = do
+  stList <- asks sFuncStatList
+  st0 <- liftIO $ FL.lookup stList fn
+  case st0 of
+    Nothing                  -> pure False
+    Just FuncStat{sWorker=0} -> pure False
+    Just _                   -> pure True
 
 schedJob
   :: (MonadIO m, MonadBaseControl IO m)
@@ -261,22 +270,18 @@ schedJob taskList = async . schedJob_ taskList
 schedJob_ :: MonadIO m => TaskList m -> Job -> SchedT m ()
 schedJob_ taskList job@Job{..} = do
   SchedEnv{..} <- ask
-
-  st0 <- liftIO $ FL.lookup sFuncStatList jFuncName
-  case st0 of
-    Nothing -> pure ()
-    Just FuncStat{sWorker=0} -> pure ()
-    Just st -> do
-      now <- liftIO getEpochTime
-      when (jSchedAt > now) . liftIO . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
-      FuncStat{..} <- liftIO . atomically $ do
-        st <- FL.lookupSTM sFuncStatList jFuncName
-        case st of
-          Nothing                  -> retry
-          Just FuncStat{sWorker=0} -> retry
-          Just st'                 -> pure st'
-      if sBroadcast then popAgentListThen taskList
-                    else popAgentThen taskList
+  r <- canRun jFuncName
+  when r $ do
+    now <- liftIO getEpochTime
+    when (jSchedAt > now) . liftIO . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
+    FuncStat{..} <- liftIO . atomically $ do
+      st <- FL.lookupSTM sFuncStatList jFuncName
+      case st of
+        Nothing                  -> retry
+        Just FuncStat{sWorker=0} -> retry
+        Just st'                 -> pure st'
+    if sBroadcast then popAgentListThen taskList
+                  else popAgentThen taskList
 
   where popAgentThen
           :: MonadIO m => TaskList m -> SchedT m ()
