@@ -214,8 +214,8 @@ startServer mk path sock = do
 
   runSchedT schedEnv $ do
     startSchedT
-    lift $ runCheckClientState (clientList sEnv) 100
-    lift $ runCheckWorkerState (workerList sEnv) 100
+    lift $ runCheckClientState (clientList sEnv) 300
+    lift $ runCheckWorkerState (workerList sEnv) 300
 
     runServerT sEnv serveForever
 

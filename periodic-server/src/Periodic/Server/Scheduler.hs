@@ -129,7 +129,7 @@ initSchedEnv path sCleanup = do
   sAlive        <- newTVarIO True
   sChanList     <- newTVarIO []
   pure SchedEnv{..}
-  where sSchedDelay = 10
+  where sSchedDelay = 300
         sStorePath = path </> "dump.db"
 
 startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
