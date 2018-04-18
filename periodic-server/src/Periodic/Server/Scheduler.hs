@@ -72,7 +72,7 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe       (runMaybeT)
 import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 
-data Action = Add Job | Remove Job | Cancel
+data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
   { sSchedDelay   :: Int64
@@ -177,6 +177,7 @@ runChanJob taskList = do
             cancel (fromJust w)
             liftIO $ FL.delete tl (jHandle job)
         doChanJob tl Cancel = mapM_ cancel =<< liftIO (FL.elems tl)
+        doChanJob tl PollJob = pollJob tl
 
 
 
@@ -375,6 +376,7 @@ broadcastFunc :: MonadIO m => FuncName -> Bool -> SchedT m ()
 broadcastFunc n cast = do
   SchedEnv{..} <- ask
   liftIO . L.with sLocker $ FL.alter sFuncStatList updateStat n
+  pushChanList PollJob
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
@@ -384,6 +386,7 @@ removeFunc :: MonadIO m => FuncName -> SchedT m ()
 removeFunc n = do
   SchedEnv{..} <- ask
   liftIO . L.with sLocker $ FL.alter sFuncStatList updateStat n
+  pushChanList PollJob
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
@@ -398,6 +401,8 @@ dropFunc n = do
       when (sWorker (fromJust st) == 0) $ do
         FL.delete sFuncStatList n
         FL.delete sJobQueue n
+
+  pushChanList PollJob
 
 pushGrab :: MonadIO m => IOList FuncName -> IOList JobHandle -> AgentEnv' -> SchedT m ()
 pushGrab funcList handleList ag = do
