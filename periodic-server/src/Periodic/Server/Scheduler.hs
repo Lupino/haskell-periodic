@@ -78,8 +78,9 @@ import           Text.Read                       (readMaybe)
 data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
-  { sPollDelay    :: TVar Int
-  , sRevertDelay  :: TVar Int
+  { sPollDelay    :: TVar Int -- main poll loop every time delay
+  , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
+  , sTaskTimeout  :: TVar Int -- the task do timeout
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
@@ -134,6 +135,7 @@ initSchedEnv sStorePath sCleanup = do
   sChanList     <- newTVarIO []
   sPollDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
+  sTaskTimeout  <- newTVarIO 600
   pure SchedEnv{..}
 
 startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
@@ -149,6 +151,7 @@ startSchedT = do
 
   loadInt "poll-delay" sPollDelay
   loadInt "revert-delay" sPollDelay
+  loadInt "task-timeout" sTaskTimeout
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
 loadInt fn ref = do
@@ -174,6 +177,7 @@ setConfigInt key val = do
   case key of
     "poll-delay"   -> saveInt "poll-delay" val sPollDelay
     "revert-delay" -> saveInt "revert-delay" val sRevertDelay
+    "timeout"      -> saveInt "timeout" val sTaskTimeout
     _              -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT m Int
@@ -182,6 +186,7 @@ getConfigInt key = do
   case key of
     "poll-delay"   -> liftIO $ readTVarIO sPollDelay
     "revert-delay" -> liftIO $ readTVarIO sRevertDelay
+    "timeout"      -> liftIO $ readTVarIO sTaskTimeout
     _              -> pure 0
 
 
@@ -527,10 +532,11 @@ revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 revertProcessQueue = do
   now <- liftIO getEpochTime
   queue <- asks sProcessJob
+  tout <- liftIO . readTVarIO =<< asks sTaskTimeout
   mapM_ (failJob . jHandle)
-    =<< filter (isTimeout now) <$> liftIO (PQ.dumpJob queue)
-  where isTimeout :: Int64 -> Job -> Bool
-        isTimeout t1 Job{jSchedAt = t} = (t + 600) < t1
+    =<< filter (isTimeout now $ fromIntegral tout) <$> liftIO (PQ.dumpJob queue)
+  where isTimeout :: Int64 -> Int64 -> Job -> Bool
+        isTimeout t1 tout Job{jSchedAt = t} = (t + tout) < t1
 
 shutdown :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 shutdown = do
