@@ -75,7 +75,7 @@ import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
-  { sSchedDelay   :: Int64
+  { sPollDelay    :: TVar Int
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
@@ -128,9 +128,9 @@ initSchedEnv path sCleanup = do
   sProcessJob   <- newIOHashMap
   sAlive        <- newTVarIO True
   sChanList     <- newTVarIO []
+  sPollDelay   <- newTVarIO 300
   pure SchedEnv{..}
-  where sSchedDelay = 300
-        sStorePath = path </> "dump.db"
+  where sStorePath = path </> "dump.db"
 
 startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 startSchedT = do
@@ -138,16 +138,20 @@ startSchedT = do
   runTask 300 revertProcessQueue
   runTask 300 saveJob
   taskList <- liftIO newIOHashMap
-  runTask (fromIntegral sSchedDelay) $ pollJob taskList
+  runTask_ sPollDelay $ pollJob taskList
   runTask 0 $ runChanJob taskList
   exists <- liftIO $ doesFileExist sStorePath
   when exists $ mapM_ pushJob =<< loadJob
   mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
 
 runTask :: (MonadIO m, MonadBaseControl IO m) => Int -> SchedT m () -> SchedT m ()
-runTask delay m = void . async $ do
+runTask d m = flip runTask_ m =<< liftIO (newTVarIO d)
+
+runTask_ :: (MonadIO m, MonadBaseControl IO m) => TVar Int -> SchedT m () -> SchedT m ()
+runTask_ d m = void . async $ do
   SchedEnv{..} <- ask
   void . runMaybeT . forever $ do
+    delay <- liftIO $ readTVarIO d
     when (delay > 0) $ liftIO $ threadDelay $ delay * 1000 * 1000
     alive <- liftIO $ readTVarIO sAlive
     if alive then lift m
@@ -180,13 +184,19 @@ runChanJob taskList = do
         doChanJob tl PollJob = pollJob tl
 
 
+pollDelay :: (MonadIO m, Num a) => SchedT m a
+pollDelay = do
+  d <- asks sPollDelay
+  liftIO $ fromIntegral <$> readTVarIO d
 
 pollJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> SchedT m ()
 pollJob taskList = do
   SchedEnv{..} <- ask
   mapM_ checkPoll =<< liftIO (FL.toList taskList)
 
-  next <- liftIO $ (+ sSchedDelay * 2) <$> getEpochTime
+  delay <- (+100) <$> pollDelay
+
+  next <- liftIO $ (+ delay) <$> getEpochTime
   mapM_ (checkJob taskList) =<< liftIO (JQ.findLessJob sJobQueue next)
 
   where checkJob
@@ -194,11 +204,11 @@ pollJob taskList = do
           => TaskList m -> Job -> SchedT m ()
         checkJob tl job@Job{..} = do
           w <- findTask tl job
-          schedDelay <- asks sSchedDelay
+          delay <- pollDelay
           case w of
             Nothing -> do
               now <- liftIO getEpochTime
-              when (jSchedAt > now || jSchedAt + schedDelay < now) $ reSchedJob tl job
+              when (jSchedAt > now || jSchedAt + delay < now) $ reSchedJob tl job
             Just w0 -> do
               r <- canRun jFuncName
               unless r $ cancel w0
@@ -237,13 +247,13 @@ pushJob job@Job{..} = do
 
 reSchedJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
-  schedDelay <- asks sSchedDelay
   w <- findTask taskList job
   when (isJust w) $ do
     cancel (fromJust w)
     liftIO $ FL.delete taskList (jHandle job)
 
-  next <- liftIO $ (+ schedDelay * 2) <$> getEpochTime
+  delay <- (+100) <$> pollDelay
+  next <- liftIO $ (+ delay) <$> getEpochTime
   when (jSchedAt job < next) $ do
     r <- canRun $ jFuncName job
     when r $ do
