@@ -79,6 +79,7 @@ data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int
+  , sRevertDelay  :: TVar Int
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
@@ -131,13 +132,14 @@ initSchedEnv sStorePath sCleanup = do
   sProcessJob   <- newIOHashMap
   sAlive        <- newTVarIO True
   sChanList     <- newTVarIO []
-  sPollDelay   <- newTVarIO 300
+  sPollDelay    <- newTVarIO 300
+  sRevertDelay  <- newTVarIO 300
   pure SchedEnv{..}
 
 startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 startSchedT = do
   SchedEnv{..} <- ask
-  runTask 300 revertProcessQueue
+  runTask_ sRevertDelay revertProcessQueue
   runTask 300 $ saveJob "dump.db"
   taskList <- liftIO newIOHashMap
   runTask_ sPollDelay $ pollJob taskList
@@ -146,6 +148,7 @@ startSchedT = do
   mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
 
   loadInt "poll-delay" sPollDelay
+  loadInt "revert-delay" sPollDelay
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
 loadInt fn ref = do
@@ -169,15 +172,17 @@ setConfigInt :: MonadIO m => String -> Int -> SchedT m ()
 setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
-    "poll-delay" -> saveInt "poll-delay" val sPollDelay
-    _            -> pure ()
+    "poll-delay"   -> saveInt "poll-delay" val sPollDelay
+    "revert-delay" -> saveInt "revert-delay" val sRevertDelay
+    _              -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT m Int
 getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
-    "poll-delay" -> liftIO $ readTVarIO sPollDelay
-    _            -> pure 0
+    "poll-delay"   -> liftIO $ readTVarIO sPollDelay
+    "revert-delay" -> liftIO $ readTVarIO sRevertDelay
+    _              -> pure 0
 
 
 runTask :: (MonadIO m, MonadBaseControl IO m) => Int -> SchedT m () -> SchedT m ()
