@@ -72,6 +72,9 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe       (runMaybeT)
 import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 
+import           System.IO                       (readFile, writeFile)
+import           Text.Read                       (readMaybe)
+
 data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
@@ -119,8 +122,8 @@ runSchedT :: SchedEnv -> SchedT m a -> m a
 runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 
 initSchedEnv :: FilePath -> IO () -> IO SchedEnv
-initSchedEnv path sCleanup = do
-  createDirectoryIfMissing True path
+initSchedEnv sStorePath sCleanup = do
+  createDirectoryIfMissing True sStorePath
   sFuncStatList <- newIOHashMap
   sLocker       <- L.new
   sGrabQueue    <- newGrabQueue
@@ -130,19 +133,52 @@ initSchedEnv path sCleanup = do
   sChanList     <- newTVarIO []
   sPollDelay   <- newTVarIO 300
   pure SchedEnv{..}
-  where sStorePath = path </> "dump.db"
 
 startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 startSchedT = do
   SchedEnv{..} <- ask
   runTask 300 revertProcessQueue
-  runTask 300 saveJob
+  runTask 300 $ saveJob "dump.db"
   taskList <- liftIO newIOHashMap
   runTask_ sPollDelay $ pollJob taskList
   runTask 0 $ runChanJob taskList
-  exists <- liftIO $ doesFileExist sStorePath
-  when exists $ mapM_ pushJob =<< loadJob
+  mapM_ pushJob =<< loadJob "dump.db"
   mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
+
+  loadInt "poll-delay" sPollDelay
+
+loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
+loadInt fn ref = do
+  path <- (</> fn) <$> asks sStorePath
+  liftIO $ do
+    exists <- doesFileExist path
+    when exists $ do
+      v' <- readMaybe <$> readFile path
+      case v' of
+        Nothing -> pure ()
+        Just v  -> atomically $ writeTVar ref v
+
+saveInt :: MonadIO m => FilePath -> Int -> TVar Int -> SchedT m ()
+saveInt fn v ref = do
+  path <- (</> fn) <$> asks sStorePath
+  liftIO $ do
+    writeFile path $ show v
+    atomically $ writeTVar ref v
+
+setConfigInt :: MonadIO m => String -> Int -> SchedT m ()
+setConfigInt key val = do
+  SchedEnv {..} <- ask
+  case key of
+    "poll-delay" -> saveInt "poll-delay" val sPollDelay
+    _            -> pure ()
+
+getConfigInt :: MonadIO m => String -> SchedT m Int
+getConfigInt key = do
+  SchedEnv {..} <- ask
+  case key of
+    "poll-delay" -> liftIO $ readTVarIO sPollDelay
+    _            -> pure 0
+
 
 runTask :: (MonadIO m, MonadBaseControl IO m) => Int -> SchedT m () -> SchedT m ()
 runTask d m = flip runTask_ m =<< liftIO (newTVarIO d)
@@ -376,13 +412,17 @@ dumpJob = do
   js' <- liftIO . PQ.dumpJob =<< asks sProcessJob
   return $ js ++ js'
 
-saveJob :: MonadIO m => SchedT m ()
-saveJob = do
-  path <- asks sStorePath
+saveJob :: MonadIO m => FilePath -> SchedT m ()
+saveJob fn = do
+  path <- (</> fn) <$> asks sStorePath
   dumpJob >>= liftIO . encodeFile path
 
-loadJob :: MonadIO m => SchedT m [Job]
-loadJob = liftIO . decodeFile =<< asks sStorePath
+loadJob :: MonadIO m => FilePath -> SchedT m [Job]
+loadJob fn = do
+  path <- (</> fn) <$> asks sStorePath
+  exists <- liftIO $ doesFileExist path
+  if exists then liftIO $ decodeFile path
+            else pure []
 
 addFunc :: MonadIO m => FuncName -> SchedT m ()
 addFunc n = broadcastFunc n False
@@ -496,5 +536,5 @@ shutdown = do
     writeTVar sAlive False
     return t
   when alive $ do
-    saveJob
+    saveJob "dump.db"
     void . async $ liftIO sCleanup
