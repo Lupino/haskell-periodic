@@ -79,6 +79,7 @@ data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
+  , sSaveDelay    :: TVar Int -- save job loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
   , sStorePath    :: FilePath
@@ -134,6 +135,7 @@ initSchedEnv sStorePath sCleanup = do
   sAlive        <- newTVarIO True
   sChanList     <- newTVarIO []
   sPollDelay    <- newTVarIO 300
+  sSaveDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
   pure SchedEnv{..}
@@ -142,7 +144,7 @@ startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 startSchedT = do
   SchedEnv{..} <- ask
   runTask_ sRevertDelay revertProcessQueue
-  runTask 300 $ saveJob "dump.db"
+  runTask_ sSaveDelay $ saveJob "dump.db"
   taskList <- liftIO newIOHashMap
   runTask_ sPollDelay $ pollJob taskList
   runTask 0 $ runChanJob taskList
@@ -150,7 +152,8 @@ startSchedT = do
   mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
 
   loadInt "poll-delay" sPollDelay
-  loadInt "revert-delay" sPollDelay
+  loadInt "save-delay" sSaveDelay
+  loadInt "revert-delay" sRevertDelay
   loadInt "task-timeout" sTaskTimeout
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
@@ -176,6 +179,7 @@ setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
     "poll-delay"   -> saveInt "poll-delay" val sPollDelay
+    "save-delay"   -> saveInt "save-delay" val sSaveDelay
     "revert-delay" -> saveInt "revert-delay" val sRevertDelay
     "timeout"      -> saveInt "timeout" val sTaskTimeout
     _              -> pure ()
@@ -185,6 +189,7 @@ getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
     "poll-delay"   -> liftIO $ readTVarIO sPollDelay
+    "save-delay"   -> liftIO $ readTVarIO sSaveDelay
     "revert-delay" -> liftIO $ readTVarIO sRevertDelay
     "timeout"      -> liftIO $ readTVarIO sTaskTimeout
     _              -> pure 0
