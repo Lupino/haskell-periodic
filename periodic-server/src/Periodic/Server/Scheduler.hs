@@ -28,6 +28,9 @@ module Periodic.Server.Scheduler
   , dumpJob
   , status
   , shutdown
+  , keepalive
+  , setConfigInt
+  , getConfigInt
   ) where
 
 import           Control.Exception               (SomeException, try)
@@ -82,6 +85,7 @@ data SchedEnv = SchedEnv
   , sSaveDelay    :: TVar Int -- save job loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
+  , sKeepalive    :: TVar Int
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
@@ -138,6 +142,7 @@ initSchedEnv sStorePath sCleanup = do
   sSaveDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
+  sKeepalive    <- newTVarIO 300
   pure SchedEnv{..}
 
 startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
@@ -155,6 +160,7 @@ startSchedT = do
   loadInt "save-delay" sSaveDelay
   loadInt "revert-delay" sRevertDelay
   loadInt "task-timeout" sTaskTimeout
+  loadInt "keepalive" sKeepalive
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
 loadInt fn ref = do
@@ -182,6 +188,7 @@ setConfigInt key val = do
     "save-delay"   -> saveInt "save-delay" val sSaveDelay
     "revert-delay" -> saveInt "revert-delay" val sRevertDelay
     "timeout"      -> saveInt "timeout" val sTaskTimeout
+    "keepalive"    -> saveInt "keepalive" val sKeepalive
     _              -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT m Int
@@ -192,8 +199,11 @@ getConfigInt key = do
     "save-delay"   -> liftIO $ readTVarIO sSaveDelay
     "revert-delay" -> liftIO $ readTVarIO sRevertDelay
     "timeout"      -> liftIO $ readTVarIO sTaskTimeout
+    "keepalive"    -> liftIO $ readTVarIO sKeepalive
     _              -> pure 0
 
+keepalive :: Monad m => SchedT m (TVar Int)
+keepalive = asks sKeepalive
 
 runTask :: (MonadIO m, MonadBaseControl IO m) => Int -> SchedT m () -> SchedT m ()
 runTask d m = flip runTask_ m =<< liftIO (newTVarIO d)

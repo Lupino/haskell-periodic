@@ -170,12 +170,13 @@ handleConnection transport = do
 
 runCheckWorkerState
   :: (MonadIO m, MonadBaseControl IO m)
-  => WorkerList -> Int64 -> m ()
+  => WorkerList -> TVar Int -> m ()
 runCheckWorkerState ref alive = runCheckState "Worker" ref (checkWorkerState ref alive) alive
 
-checkWorkerState :: MonadIO m =>  WorkerList -> Int64 -> WorkerEnv -> m ()
+checkWorkerState :: MonadIO m =>  WorkerList -> TVar Int -> WorkerEnv -> m ()
 checkWorkerState ref alive env0 = runWorkerT env0 $ do
-  expiredAt <- (alive +) <$> Worker.getLastVist
+  delay <- liftIO $ fromIntegral <$> readTVarIO alive
+  expiredAt <- (delay +) <$> Worker.getLastVist
   now <- liftIO getEpochTime
   when (now > expiredAt) $ do
     Worker.close
@@ -184,12 +185,13 @@ checkWorkerState ref alive env0 = runWorkerT env0 $ do
 
 runCheckClientState
   :: (MonadIO m, MonadBaseControl IO m)
-  => ClientList -> Int64 -> m ()
+  => ClientList -> TVar Int -> m ()
 runCheckClientState ref alive = runCheckState "Client" ref (checkClientState ref alive) alive
 
-checkClientState :: MonadIO m => ClientList -> Int64 -> ClientEnv -> m ()
+checkClientState :: MonadIO m => ClientList -> TVar Int -> ClientEnv -> m ()
 checkClientState ref alive env0 = runClientT env0 $ do
-  expiredAt <- (alive +) <$> Client.getLastVist
+  delay <- liftIO $ fromIntegral <$> readTVarIO alive
+  expiredAt <- (delay +) <$> Client.getLastVist
   now <- liftIO getEpochTime
   when (now > expiredAt) $ do
     Client.close
@@ -198,9 +200,10 @@ checkClientState ref alive env0 = runClientT env0 $ do
 
 runCheckState
   :: (MonadIO m, MonadBaseControl IO m)
-  => String -> IOHashMap a b -> (b -> m ()) -> Int64 -> m ()
+  => String -> IOHashMap a b -> (b -> m ()) -> TVar Int -> m ()
 runCheckState var ref checkAlive alive = void . async . forever $ do
-  liftIO $ threadDelay $ fromIntegral alive * 1000 * 1000
+  delay <- liftIO $ readTVarIO alive
+  liftIO $ threadDelay $ fromIntegral delay * 1000 * 1000
   mapM_ checkAlive =<< liftIO (HM.elems ref)
   size <- liftIO $ HM.size ref
   liftIO $ errorM "Periodic.Server" $ "Total " ++ var ++ ": " ++ show size
@@ -214,8 +217,8 @@ startServer mk path sock = do
 
   runSchedT schedEnv $ do
     startSchedT
-    lift $ runCheckClientState (clientList sEnv) 300
-    lift $ runCheckWorkerState (workerList sEnv) 300
+    lift . runCheckClientState (clientList sEnv) =<< keepalive
+    lift . runCheckWorkerState (workerList sEnv) =<< keepalive
 
     runServerT sEnv serveForever
 
