@@ -19,6 +19,8 @@ module Periodic.Client
   , removeJob
   , dropFunc
   , status
+  , configGet
+  , configSet
   , shutdown
   ) where
 
@@ -38,6 +40,7 @@ import           Periodic.Socket              (connect)
 import           Periodic.Transport           (Transport, makeSocketTransport)
 import           Periodic.Types               (ClientType (TypeClient))
 import           Periodic.Types.ClientCommand
+import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 
@@ -142,6 +145,24 @@ status = withAgentT $ do
   send Status
   ret <- receive_
   return . map (B.split ',') $ B.lines ret
+
+configGet
+  :: (MonadIO m, MonadMask m)
+  => String -> ClientT m Int
+configGet k = withAgentT $ do
+  send (ConfigGet (ConfigKey k))
+  ret <- receive
+  case ret of
+    Left _             -> return 0
+    Right (Config _ v) -> return v
+    Right _            -> return 0
+
+configSet
+  :: (MonadIO m, MonadMask m)
+  => String -> Int -> ClientT m Bool
+configSet k v = withAgentT $ do
+  send (ConfigSet (ConfigKey k) v)
+  isSuccess
 
 shutdown
   :: (MonadIO m, MonadMask m)

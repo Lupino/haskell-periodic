@@ -31,6 +31,7 @@ import qualified Periodic.Connection          as Conn
 import           Periodic.Node                hiding (liftC)
 import           Periodic.Server.Scheduler
 import           Periodic.Types.ClientCommand
+import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.ServerCommand
 import           Periodic.Utils               (getEpochTime)
 
@@ -95,3 +96,11 @@ handleAgentT lastVist = do
       lift $ removeJob job
       send Success
     Right Shutdown -> lift shutdown
+
+    Right (ConfigGet (ConfigKey key)) -> do
+      v <- lift $ getConfigInt key
+      send $ Config (ConfigKey key) v
+
+    Right (ConfigSet (ConfigKey k) v) -> do
+      lift $ setConfigInt k v
+      send Success

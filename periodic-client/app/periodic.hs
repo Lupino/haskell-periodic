@@ -32,6 +32,7 @@ data Command = Status
              | Submit
              | Remove
              | Drop
+             | Config
              | Shutdown
              | Help
 
@@ -42,6 +43,7 @@ parseCommand "status"   = Status
 parseCommand "submit"   = Submit
 parseCommand "remove"   = Remove
 parseCommand "drop"     = Drop
+parseCommand "config"   = Config
 parseCommand "shutdown" = Shutdown
 parseCommand _          = Help
 
@@ -87,6 +89,7 @@ printHelp = do
   putStrLn "     submit   Submit job"
   putStrLn "     remove   Remove job"
   putStrLn "     drop     Drop function"
+  putStrLn "     config   Set or Get config"
   putStrLn "     shutdown Shutdown periodicd"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
@@ -130,6 +133,48 @@ printDropHelp = do
   putStrLn ""
   exitSuccess
 
+printConfigHelp :: IO ()
+printConfigHelp = do
+  putStrLn "periodic config - Set or get config"
+  putStrLn ""
+  putStrLn "Usage: periodic config command [options]"
+  putStrLn ""
+  putStrLn "Commands:"
+  putStrLn "     get   Get config"
+  putStrLn "     set   Set config"
+  putStrLn ""
+  exitSuccess
+
+printConfigGetHelp :: IO ()
+printConfigGetHelp = do
+  putStrLn "periodic config get - Get config"
+  putStrLn ""
+  putStrLn "Usage: periodic config get key"
+  putStrLn ""
+  putStrLn "Available keys:"
+  putStrLn "  poll-delay    - poll loop every time delay"
+  putStrLn "  save-delay    - save job loop every time delay"
+  putStrLn "  revert-delay  - revert process queue loop every time delay"
+  putStrLn "  timeout       - job process timeout"
+  putStrLn "  keepalive     - client keepalive"
+  putStrLn ""
+  exitSuccess
+
+printConfigSetHelp :: IO ()
+printConfigSetHelp = do
+  putStrLn "periodic config set - Set config"
+  putStrLn ""
+  putStrLn "Usage: periodic config set key val"
+  putStrLn ""
+  putStrLn "Available keys:"
+  putStrLn "  poll-delay    - poll loop every time delay"
+  putStrLn "  save-delay    - save job loop every time delay"
+  putStrLn "  revert-delay  - revert process queue loop every time delay"
+  putStrLn "  timeout       - job process timeout"
+  putStrLn "  keepalive     - client keepalive"
+  putStrLn ""
+  exitSuccess
+
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
@@ -144,6 +189,7 @@ main = do
   when (cmd == Submit && argc < 2) printSubmitHelp
   when (cmd == Remove && argc < 2) printRemoveHelp
   when (cmd == Drop   && argc < 1) printDropHelp
+  when (cmd == Config && argc < 1) printConfigHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
@@ -171,12 +217,24 @@ processCommand Status _   = doStatus
 processCommand Submit xs  = doSubmitJob xs
 processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
+processCommand Config xs  = doConfig xs
 processCommand Shutdown _ = shutdown
 
 doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
 doRemoveJob []     = liftIO printRemoveHelp
 
 doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
+
+doConfig [] = liftIO printConfigHelp
+doConfig ["get"] = liftIO printConfigGetHelp
+doConfig ["get", k] = do
+  v <- configGet k
+  liftIO $ print v
+doConfig ("get":_:_) = liftIO printConfigGetHelp
+doConfig ["set"] = liftIO printConfigSetHelp
+doConfig ["set", _] = liftIO printConfigSetHelp
+doConfig ["set", k, v] = void $ configSet k (read v)
+doConfig ("set":_:_:_) = liftIO printConfigSetHelp
 
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp

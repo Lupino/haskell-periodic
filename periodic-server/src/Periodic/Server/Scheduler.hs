@@ -159,7 +159,7 @@ startSchedT = do
   loadInt "poll-delay" sPollDelay
   loadInt "save-delay" sSaveDelay
   loadInt "revert-delay" sRevertDelay
-  loadInt "task-timeout" sTaskTimeout
+  loadInt "timeout" sTaskTimeout
   loadInt "keepalive" sKeepalive
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()

@@ -5,6 +5,8 @@ module Periodic.Types.ClientCommand
   ) where
 
 import           Data.Binary
+import           Data.Binary.Get         (getWord32be)
+import           Data.Binary.Put         (putWord32be)
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString.Lazy    (toStrict)
 import           Periodic.Types.Internal
@@ -16,6 +18,8 @@ data ClientCommand =
   | Ping
   | DropFunc FuncName
   | RemoveJob Job
+  | ConfigGet ConfigKey
+  | ConfigSet ConfigKey Int
   | Shutdown
 
   deriving (Show)
@@ -36,6 +40,11 @@ instance Binary ClientCommand where
       15 -> DropFunc <$> get
       17 -> RemoveJob <$> get
       20 -> pure Shutdown
+      22 -> ConfigGet <$> get
+      23 -> do
+        key <- get
+        val <- getWord32be
+        pure . ConfigSet key $ fromIntegral val
       _  -> error $ "Error ClientCommand" ++ show tp
 
   put (SubmitJob job) = do
@@ -50,3 +59,10 @@ instance Binary ClientCommand where
     putWord8 17
     put job
   put Shutdown        = putWord8 20
+  put (ConfigGet key) = do
+    putWord8 22
+    put key
+  put (ConfigSet k v) = do
+    putWord8 23
+    put k
+    putWord32be $ fromIntegral v
