@@ -1,5 +1,5 @@
 name:                periodic-common
-version:             1.0.0.0
+version:             1.0.1.0
 -- synopsis:
 description:         Periodic task system haskell client.
 homepage:            https://github.com/Lupino/haskell-periodic#readme
