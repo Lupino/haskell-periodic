@@ -8,6 +8,7 @@ module Main
 
 import           Control.Monad          (void, when)
 import           Control.Monad.IO.Class (liftIO)
+import           Data.Binary            (decodeFile, encodeFile)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString.Char8  as B (pack, unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
@@ -34,6 +35,8 @@ data Command = Status
              | Drop
              | Config
              | Shutdown
+             | Dump
+             | Load
              | Help
 
   deriving (Eq)
@@ -45,6 +48,8 @@ parseCommand "remove"   = Remove
 parseCommand "drop"     = Drop
 parseCommand "config"   = Config
 parseCommand "shutdown" = Shutdown
+parseCommand "dump"     = Dump
+parseCommand "load"     = Load
 parseCommand _          = Help
 
 data Options = Options { host     :: String
@@ -91,6 +96,8 @@ printHelp = do
   putStrLn "     drop     Drop function"
   putStrLn "     config   Set or Get config"
   putStrLn "     shutdown Shutdown periodicd"
+  putStrLn "     dump     Dump jobs"
+  putStrLn "     load     Load jobs"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
   putStrLn "Available options:"
@@ -175,6 +182,22 @@ printConfigSetHelp = do
   putStrLn ""
   exitSuccess
 
+printLoadHelp :: IO ()
+printLoadHelp = do
+  putStrLn "periodic load - Load jobs"
+  putStrLn ""
+  putStrLn "Usage: periodic load file"
+  putStrLn ""
+  exitSuccess
+
+printDumpHelp :: IO ()
+printDumpHelp = do
+  putStrLn "periodic dump - Dump jobs"
+  putStrLn ""
+  putStrLn "Usage: periodic dump file"
+  putStrLn ""
+  exitSuccess
+
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
@@ -190,6 +213,8 @@ main = do
   when (cmd == Remove && argc < 2) printRemoveHelp
   when (cmd == Drop   && argc < 1) printDropHelp
   when (cmd == Config && argc < 1) printConfigHelp
+  when (cmd == Load && argc < 1) printLoadHelp
+  when (cmd == Dump && argc < 1) printDumpHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
@@ -218,6 +243,8 @@ processCommand Submit xs  = doSubmitJob xs
 processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
 processCommand Config xs  = doConfig xs
+processCommand Load xs    = doLoad xs
+processCommand Dump xs    = doDump xs
 processCommand Shutdown _ = shutdown
 
 doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
@@ -235,6 +262,18 @@ doConfig ["set"] = liftIO printConfigSetHelp
 doConfig ["set", _] = liftIO printConfigSetHelp
 doConfig ["set", k, v] = void $ configSet k (read v)
 doConfig ("set":_:_:_) = liftIO printConfigSetHelp
+
+doLoad [fn] = do
+  jobs <- liftIO $ decodeFile fn
+  void $ load jobs
+
+doLoad _ = liftIO printLoadHelp
+
+doDump [fn] = do
+  jobs <- dump
+  liftIO $ encodeFile fn jobs
+
+doDump _ = liftIO printDumpHelp
 
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp

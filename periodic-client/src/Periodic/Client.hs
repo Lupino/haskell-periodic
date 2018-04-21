@@ -21,6 +21,8 @@ module Periodic.Client
   , status
   , configGet
   , configSet
+  , load
+  , dump
   , shutdown
   ) where
 
@@ -163,6 +165,20 @@ configSet
 configSet k v = withAgentT $ do
   send (ConfigSet (ConfigKey k) v)
   isSuccess
+
+load :: (MonadIO m, MonadMask m) => [Job] -> ClientT m Bool
+load jobs = withAgentT $ do
+  send (Load jobs)
+  isSuccess
+
+dump :: (MonadIO m, MonadMask m) => ClientT m [Job]
+dump = withAgentT $ do
+  send Dump
+  ret <- receive
+  case ret of
+    Left _            -> return []
+    Right (JobList v) -> return v
+    Right _           -> return []
 
 shutdown
   :: (MonadIO m, MonadMask m)

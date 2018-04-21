@@ -104,3 +104,11 @@ handleAgentT lastVist = do
     Right (ConfigSet (ConfigKey k) v) -> do
       lift $ setConfigInt k v
       send Success
+
+    Right Dump -> do
+      jobs <- lift dumpJob
+      send (JobList jobs)
+
+    Right (Load jobs) -> do
+      lift $ mapM_ pushJob jobs
+      send Success

@@ -21,6 +21,7 @@ data ServerCommand =
   | Unknown
   | Success
   | Config ConfigKey Int
+  | JobList [Job]
 
   deriving (Show)
 
@@ -47,6 +48,7 @@ instance Binary ServerCommand where
         key <- get
         val <- getWord32be
         pure . Config key $ fromIntegral val
+      25 -> JobList <$> get
       _ -> error $ "Error ServerCommand " ++ show tp
 
   put Noop               = putWord8 0
@@ -62,3 +64,6 @@ instance Binary ServerCommand where
     putWord8 24
     put k
     putWord32be $ fromIntegral v
+  put (JobList jobs)        = do
+    putWord8 25
+    put jobs
