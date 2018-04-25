@@ -17,7 +17,6 @@ module Periodic.Worker
 
 import           Control.Monad.Catch             (MonadCatch, MonadMask, catch)
 import           Control.Monad.IO.Class          (MonadIO (..))
-import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Control     (MonadBaseControl)
 import           Data.Byteable                   (toBytes)
 import           Periodic.Agent                  (AgentEnv, readerSize, receive,

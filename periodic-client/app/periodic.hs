@@ -152,11 +152,8 @@ printConfigHelp = do
   putStrLn ""
   exitSuccess
 
-printConfigGetHelp :: IO ()
-printConfigGetHelp = do
-  putStrLn "periodic config get - Get config"
-  putStrLn ""
-  putStrLn "Usage: periodic config get key"
+printConfigKeyList :: IO ()
+printConfigKeyList = do
   putStrLn ""
   putStrLn "Available keys:"
   putStrLn "  poll-delay    - poll loop every time delay"
@@ -167,20 +164,19 @@ printConfigGetHelp = do
   putStrLn ""
   exitSuccess
 
+printConfigGetHelp :: IO ()
+printConfigGetHelp = do
+  putStrLn "periodic config get - Get config"
+  putStrLn ""
+  putStrLn "Usage: periodic config get key"
+  printConfigKeyList
+
 printConfigSetHelp :: IO ()
 printConfigSetHelp = do
   putStrLn "periodic config set - Set config"
   putStrLn ""
   putStrLn "Usage: periodic config set key val"
-  putStrLn ""
-  putStrLn "Available keys:"
-  putStrLn "  poll-delay    - poll loop every time delay"
-  putStrLn "  save-delay    - save job loop every time delay"
-  putStrLn "  revert-delay  - revert process queue loop every time delay"
-  putStrLn "  timeout       - job process timeout"
-  putStrLn "  keepalive     - client keepalive"
-  putStrLn ""
-  exitSuccess
+  printConfigKeyList
 
 printLoadHelp :: IO ()
 printLoadHelp = do
@@ -252,7 +248,6 @@ doRemoveJob []     = liftIO printRemoveHelp
 
 doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
 
-doConfig [] = liftIO printConfigHelp
 doConfig ["get"] = liftIO printConfigGetHelp
 doConfig ["get", k] = do
   v <- configGet k
@@ -262,6 +257,7 @@ doConfig ["set"] = liftIO printConfigSetHelp
 doConfig ["set", _] = liftIO printConfigSetHelp
 doConfig ["set", k, v] = void $ configSet k (read v)
 doConfig ("set":_:_:_) = liftIO printConfigSetHelp
+doConfig _ = liftIO printConfigHelp
 
 doLoad [fn] = do
   jobs <- liftIO $ decodeFile fn

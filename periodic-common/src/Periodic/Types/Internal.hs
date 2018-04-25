@@ -9,8 +9,8 @@ module Periodic.Types.Internal
   ) where
 
 import           Data.Binary              (Binary (..), decodeOrFail)
-import           Data.Binary.Get          (getByteString, getWord32be, getWord8)
-import           Data.Binary.Put          (putByteString, putWord32be, putWord8)
+import           Data.Binary.Get          (getByteString, getWord8)
+import           Data.Binary.Put          (putByteString, putWord8)
 import           Data.ByteString          (ByteString)
 import           Data.ByteString.Char8    (pack, unpack)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
@@ -47,8 +47,8 @@ instance FromBS LB.ByteString where
 instance FromBS ByteString where
   fromBS = id
 
-data ConfigKey = ConfigKey String
- deriving (Show)
+newtype ConfigKey = ConfigKey String
+  deriving (Show)
 instance Binary ConfigKey where
   get = do
     size <- getWord8

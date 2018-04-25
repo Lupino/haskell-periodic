@@ -449,24 +449,25 @@ loadJob fn = do
   if exists then liftIO $ decodeFile path
             else pure []
 
+
+alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
+alterFunc n f = do
+  SchedEnv{..} <- ask
+  liftIO . L.with sLocker $ FL.alter sFuncStatList f n
+  pushChanList PollJob
+
 addFunc :: MonadIO m => FuncName -> SchedT m ()
 addFunc n = broadcastFunc n False
 
 broadcastFunc :: MonadIO m => FuncName -> Bool -> SchedT m ()
-broadcastFunc n cast = do
-  SchedEnv{..} <- ask
-  liftIO . L.with sLocker $ FL.alter sFuncStatList updateStat n
-  pushChanList PollJob
+broadcastFunc n cast = alterFunc n updateStat
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
 removeFunc :: MonadIO m => FuncName -> SchedT m ()
-removeFunc n = do
-  SchedEnv{..} <- ask
-  liftIO . L.with sLocker $ FL.alter sFuncStatList updateStat n
-  pushChanList PollJob
+removeFunc n = alterFunc n updateStat
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
