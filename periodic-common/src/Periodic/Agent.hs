@@ -115,8 +115,8 @@ receive_ = do
       if s then retry
            else pure B.empty
     else do
-      writeTVar reader $ tail v
-      pure $ head v
+      writeTVar reader $! tail v
+      pure $! head v
 
 receive :: (Parser cmd, MonadIO m) => AgentT m (Either String cmd)
 receive = runParser <$> receive_

@@ -128,13 +128,13 @@ recv' ConnEnv{..} nbytes = do
   buf <- atomically $ do
     bf <- readTVar buffer
     writeTVar buffer $! B.drop nbytes bf
-    return $ B.take nbytes bf
+    return $! B.take nbytes bf
   if B.length buf == nbytes then return buf
                             else do
                               otherBuf <- readBuf (nbytes - B.length buf)
                               let out = B.concat [ buf, otherBuf ]
                               atomically . writeTVar buffer $! B.drop nbytes out
-                              return $ B.take nbytes out
+                              return $! B.take nbytes out
 
   where readBuf :: Int -> IO B.ByteString
         readBuf 0  = return B.empty
@@ -144,7 +144,7 @@ recv' ConnEnv{..} nbytes = do
           if B.length buf >= nb then return buf
                                 else do
                                   otherBuf <- readBuf (nb - B.length buf)
-                                  return $ B.concat [ buf, otherBuf ]
+                                  return $! B.concat [ buf, otherBuf ]
 
 send :: MonadIO m => B.ByteString -> ConnectionT m ()
 send dat = do

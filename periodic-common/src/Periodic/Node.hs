@@ -162,10 +162,10 @@ tryDoFeed bs agentHandler = do
 doFeed :: MonadIO m => ByteString -> AgentT m () -> NodeT u m ()
 doFeed bs agentHandler = do
   NodeEnv{..} <- ask
-  v <- liftIO . HM.lookup agentList $ B.take msgidLength bs
+  v <- liftIO . HM.lookup agentList $! B.take msgidLength bs
   case v of
     Just aEnv ->
-      liftC . runAgentT aEnv . feed $ B.drop msgidLength bs
+      liftC . runAgentT aEnv . feed $! B.drop msgidLength bs
     Nothing    -> do
       let mid = B.take msgidLength bs
       reader <- liftIO $ mkAgentReader [B.drop msgidLength bs]

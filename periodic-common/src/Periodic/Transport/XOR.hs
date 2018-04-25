@@ -15,8 +15,8 @@ import           Periodic.Transport          (Transport (..))
 xorBS :: TVar LB.ByteString -> B.ByteString -> IO B.ByteString
 xorBS ref bs = atomically $ do
   buf <- readTVar ref
-  writeTVar ref $ LB.drop len buf
-  return . xor' $ LB.take len buf
+  writeTVar ref $! LB.drop len buf
+  return . xor' $! LB.take len buf
 
  where  bs' = LB.fromStrict bs
         len = LB.length bs'
