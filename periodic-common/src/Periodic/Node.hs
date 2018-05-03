@@ -31,8 +31,8 @@ import           Control.Concurrent.STM.TVar
 import           Control.Exception           (SomeException)
 import           Control.Monad               (forever, mzero, void)
 import           Control.Monad.Base
-import           Control.Monad.Catch         (MonadCatch, MonadMask,
-                                              MonadThrow (throwM), bracket, try)
+import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow,
+                                              bracket, try)
 import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.Reader.Class  (MonadReader (ask), asks)
 import           Control.Monad.STM           (atomically)
