@@ -47,6 +47,7 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 
 import           Data.Int                     (Int64)
+import           Data.Maybe                   (fromMaybe)
 
 import           Control.Monad                (forever, unless, void)
 import           Periodic.Utils               (getEpochTime)
@@ -108,10 +109,10 @@ submitJob_ j = withAgentT $ do
 
 submitJob
   :: (MonadIO m, MonadMask m)
-  => FuncName -> JobName -> Int64 -> ClientT m Bool
-submitJob jFuncName jName later = do
-  jSchedAt <- (+later) <$> liftIO getEpochTime
-  submitJob_ Job{jWorkload = "", jCount = 0, ..}
+  => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> ClientT m Bool
+submitJob jFuncName jName w later = do
+  jSchedAt <- (+fromMaybe 0 later) <$> liftIO getEpochTime
+  submitJob_ Job{jWorkload = fromMaybe "" w, jCount = 0, ..}
 
 dropFunc
   :: (MonadIO m, MonadMask m)

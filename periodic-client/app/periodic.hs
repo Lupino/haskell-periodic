@@ -12,6 +12,7 @@ import           Data.Binary            (decodeFile, encodeFile)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString.Char8  as B (pack, unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
+import           Data.Int               (Int64)
 import           Data.List              (isPrefixOf, transpose)
 import           Data.Maybe             (fromMaybe)
 import           Periodic.Client
@@ -19,11 +20,12 @@ import           Periodic.Socket        (getService)
 import           Periodic.Transport     (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR (makeXORTransport)
-import           Periodic.Types         (FuncName (..), JobName (..))
+import           Periodic.Types         (Workload)
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
 import           Text.Read              (readMaybe)
 
+import           Data.String            (fromString)
 import           Data.UnixTime
 import           System.IO.Unsafe       (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes as T
@@ -243,10 +245,10 @@ processCommand Load xs    = doLoad xs
 processCommand Dump xs    = doDump xs
 processCommand Shutdown _ = shutdown
 
-doRemoveJob (x:xs) = mapM_ (removeJob (FuncName $ B.pack x) . JobName . B.pack) xs
+doRemoveJob (x:xs) = mapM_ (removeJob (fromString x) . fromString) xs
 doRemoveJob []     = liftIO printRemoveHelp
 
-doDropFunc = mapM_ (dropFunc . FuncName . B.pack)
+doDropFunc = mapM_ (dropFunc . fromString)
 
 doConfig ["get"] = liftIO printConfigGetHelp
 doConfig ["get", k] = do
@@ -273,11 +275,15 @@ doDump _ = liftIO printDumpHelp
 
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp
-doSubmitJob (x:y:xs) = void $ submitJob (FuncName $ B.pack x) (JobName $ B.pack y) later
-  where later = case xs of
-                  []              -> 0
-                  ("--later":l:_) -> fromMaybe 0 (readMaybe l)
-                  _               -> 0
+doSubmitJob (x:y:xs) = void $ submitJob (fromString x) (fromString y) wl l
+
+  where go :: (Maybe Workload, Maybe Int64) -> [String] -> (Maybe Workload, Maybe Int64)
+        go v []                    = v
+        go (_, l) ("-w":w:ys)      = go (Just (fromString w), l) ys
+        go (w, _) ("--later":l:ys) = go (w, readMaybe l) ys
+        go v (_:ys)                = go v ys
+
+        (wl, l) = go (Nothing, Nothing) xs
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status
