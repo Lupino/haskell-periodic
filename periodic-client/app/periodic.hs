@@ -278,10 +278,11 @@ doSubmitJob [_]      = liftIO printSubmitHelp
 doSubmitJob (x:y:xs) = void $ submitJob (fromString x) (fromString y) wl l
 
   where go :: (Maybe Workload, Maybe Int64) -> [String] -> (Maybe Workload, Maybe Int64)
-        go v []                    = v
-        go (_, l) ("-w":w:ys)      = go (Just (fromString w), l) ys
-        go (w, _) ("--later":l:ys) = go (w, readMaybe l) ys
-        go v (_:ys)                = go v ys
+        go v []                        = v
+        go (_, l0) ("-w":w:ys)         = go (Just (fromString w), l0) ys
+        go (_, l0) ("--workload":w:ys) = go (Just (fromString w), l0) ys
+        go (w, _) ("--later":l0:ys)    = go (w, readMaybe l0) ys
+        go v (_:ys)                    = go v ys
 
         (wl, l) = go (Nothing, Nothing) xs
 
