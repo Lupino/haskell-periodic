@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MonoLocalBinds             #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -42,7 +41,7 @@ module Periodic.Server.Scheduler
 
 import           Control.Exception                (SomeException, try)
 import           Control.Monad                    (forever, mzero, unless, void,
-                                                   when)
+                                                   when, (>=>))
 import           Data.Int                         (Int64)
 import           Data.Maybe                       (fromJust, fromMaybe, isJust)
 import           Periodic.Agent                   (AgentEnv', aAlive,
@@ -88,6 +87,7 @@ import           Data.BTree.Impure                (Tree)
 import qualified Data.BTree.Impure                as B
 import           Data.BTree.Primitives            (Key, Value)
 import           Data.ByteString                  (ByteString)
+import           Data.Foldable                    (forM_)
 import           Data.Typeable                    (Typeable)
 import           Database.Haskey.Alloc.Concurrent (Root)
 import           GHC.Generics                     (Generic)
@@ -396,14 +396,12 @@ pushJob job@Job{..} = do
   where doPushJob :: (MonadIO m, MonadHaskey Schema m) => SchedT m ()
         doPushJob = do
           pushChanList (Add job)
-          transact_ $ \schema ->
-            updateJobTree (insertTree jFuncName jName job) schema
-              >>= commit_
+          transact_ $ updateJobTree (insertTree jFuncName jName job) >=> commit_
 
 reSchedJob :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
   w <- findTask taskList job
-  when (isJust w) $ cancel (fromJust w)
+  forM_ w cancel
 
   delay <- (+100) <$> pollDelay
   next <- liftIO $ (+ delay) <$> getEpochTime
@@ -455,19 +453,18 @@ schedJob_ taskList job@Job{..} = do
           if alive then do
             liftIO $ IL.insert jq (jHandle job)
             nextSchedAt <- liftIO getEpochTime
-            transact_ $ \schema ->
-              updateProcTree (insertTree jFuncName (hashJobName jName) job {jSchedAt = nextSchedAt}) schema
-                >>= commit_
+            transact_ $
+              updateProcTree (insertTree jFuncName (hashJobName jName) job {jSchedAt = nextSchedAt})
+                >=> commit_
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                transact_ $ \schema ->
-                  updateProcTree (deleteTree jFuncName (hashJobName jName)) schema
-                    >>= commit_
+                transact_ $
+                  updateProcTree (deleteTree jFuncName (hashJobName jName))
+                    >=> commit_
                 liftIO $ IL.delete jq (jHandle job)
                 schedJob_ tl job
-              Right _ -> do
-                endSchedJob tl
+              Right _ -> endSchedJob tl
           else schedJob_ tl job
 
         popAgentListThen :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
@@ -484,9 +481,7 @@ schedJob_ taskList job@Job{..} = do
 
         endSchedJob :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
         endSchedJob tl = do
-          transact_ $ \schema ->
-            updateJobTree (deleteTree jFuncName jName) schema
-              >>= commit_
+          transact_ $ updateJobTree (deleteTree jFuncName jName) >=> commit_
 
           -- block on pollJob
           lock <- asks sLocker
@@ -500,7 +495,7 @@ adjustFuncStat fn = do
     schedAt <- queryJobTree (minSchedAt fn) schema
     return (size, sizePQ, schedAt)
 
-  schedAt <- if sc > 0 then pure sc else liftIO $ getEpochTime
+  schedAt <- if sc > 0 then pure sc else liftIO getEpochTime
 
   SchedEnv{..} <- ask
   liftIO $ FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
@@ -525,8 +520,8 @@ removeJob job = do
 
 dumpJob :: (MonadIO m, MonadHaskey Schema m) => SchedT m [Job]
 dumpJob = do
-  js <- transactReadOnly $ queryProcTree $ foldrTree (\j acc -> j:acc) []
-  js' <- transactReadOnly $ queryJobTree $ foldrTree (\j acc -> j:acc) []
+  js <- transactReadOnly $ queryProcTree $ foldrTree (:) []
+  js' <- transactReadOnly $ queryJobTree $ foldrTree (:) []
   return . concat $ js ++ js'
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
@@ -558,8 +553,8 @@ dropFunc n = do
   liftIO . L.with sLocker $ do
     st <- FL.lookup sFuncStatList n
     case st of
-      Just (FuncStat{sWorker = 0}) -> FL.delete sFuncStatList n
-      _                            -> pure ()
+      Just FuncStat{sWorker=0} -> FL.delete sFuncStatList n
+      _                        -> pure ()
 
   pushChanList PollJob
 
@@ -583,7 +578,7 @@ failJob jh = do
 
 retryJob :: (MonadIO m, MonadHaskey Schema m) => Job -> SchedT m ()
 retryJob job = do
-  transact_ $ \schema -> do
+  transact_ $ \schema ->
     updateProcTree (deleteTree fn (hashJobName jn)) schema
       >>= updateJobTree (insertTree fn jn job)
       >>= commit_
@@ -594,8 +589,8 @@ retryJob job = do
 
 
 doneJob :: (MonadIO m, MonadHaskey Schema m) => JobHandle -> SchedT m ()
-doneJob jh = do
-  transact_ $ \schema -> updateProcTree (deleteTree fn jn) schema >>= commit_
+doneJob jh =
+  transact_ $ updateProcTree (deleteTree fn jn) >=> commit_
 
   where (fn, jn) = unHandle jh
 
@@ -636,5 +631,4 @@ shutdown = do
     t <- readTVar sAlive
     writeTVar sAlive False
     return t
-  when alive $ do
-    void . async $ liftIO sCleanup
+  when alive . void . async $ liftIO sCleanup
