@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-11.4
+resolver: nightly-2018-05-20
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -39,6 +39,10 @@ packages:
 - periodic-common
 - periodic-client
 - periodic-server
+- location:
+    git: https://github.com/Lupino/haskey-mtl.git
+    commit: a12cff875254558e068cb7683c6b58bbfd9b65e2
+  extra-dep: true
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps: []
