@@ -328,7 +328,8 @@ runChanJob taskList = do
           w <- findTask tl job
           when (isJust w) $ do
             cancel (fromJust w)
-            liftIO $ FL.delete tl (jHandle job)
+            lock <- asks sLocker
+            liftIO $ L.with lock $ FL.delete tl (jHandle job)
         doChanJob tl Cancel = mapM_ cancel =<< liftIO (FL.elems tl)
         doChanJob tl PollJob = pollJob tl
 
@@ -402,9 +403,7 @@ pushJob job@Job{..} = do
 reSchedJob :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
   w <- findTask taskList job
-  when (isJust w) $ do
-    cancel (fromJust w)
-    liftIO $ FL.delete taskList (jHandle job)
+  when (isJust w) $ cancel (fromJust w)
 
   delay <- (+100) <$> pollDelay
   next <- liftIO $ (+ delay) <$> getEpochTime
@@ -558,8 +557,9 @@ dropFunc n = do
   SchedEnv{..} <- ask
   liftIO . L.with sLocker $ do
     st <- FL.lookup sFuncStatList n
-    when (isJust st) $
-      when (sWorker (fromJust st) == 0) $ FL.delete sFuncStatList n
+    case st of
+      Just (FuncStat{sWorker = 0}) -> FL.delete sFuncStatList n
+      _                            -> pure ()
 
   pushChanList PollJob
 
