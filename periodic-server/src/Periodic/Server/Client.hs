@@ -17,6 +17,7 @@ module Periodic.Server.Client
 
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.Catch          (MonadCatch)
+import           Control.Monad.Haskey         (MonadHaskey)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.STM            (atomically)
 import           Control.Monad.Trans.Class    (lift)
@@ -60,7 +61,7 @@ initClientEnv connEnv schedEnv = do
   return ClientEnv{..}
 
 startClientT
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadHaskey Schema m)
   => ClientEnv -> m ()
 startClientT env0 = runClientT env0 $
   startMainLoop_ . handleAgentT =<< env
@@ -73,7 +74,7 @@ getLastVist = do
   ref <- env
   liftIO $ readTVarIO ref
 
-handleAgentT :: (MonadIO m, MonadBaseControl IO m) => TVar Int64 -> AgentT (SchedT m)  ()
+handleAgentT :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => TVar Int64 -> AgentT (SchedT m)  ()
 handleAgentT lastVist = do
   liftIO $ do
     t <- getEpochTime

@@ -1,7 +1,13 @@
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MonoLocalBinds             #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -9,8 +15,9 @@
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Periodic.Server.Scheduler
-  (
-    SchedT
+  ( Schema
+  , emptySchema
+  , SchedT
   , runSchedT
   , SchedEnv
   , initSchedEnv
@@ -33,56 +40,62 @@ module Periodic.Server.Scheduler
   , getConfigInt
   ) where
 
-import           Control.Exception               (SomeException, try)
-import           Control.Monad                   (forever, mzero, unless, void,
-                                                  when)
-import           Data.Binary                     (decodeFile, encodeFile)
-import           Data.Int                        (Int64)
-import           Data.Maybe                      (fromJust, fromMaybe, isJust)
-import           Periodic.Agent                  (AgentEnv', aAlive, runAgentT',
-                                                  send)
-import           Periodic.IOHashMap              (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap              as FL
-import           Periodic.IOList                 (IOList)
-import qualified Periodic.IOList                 as IL
-import qualified Periodic.Lock                   as L (Lock, new, with)
+import           Control.Exception                (SomeException, try)
+import           Control.Monad                    (forever, mzero, unless, void,
+                                                   when)
+import           Data.Int                         (Int64)
+import           Data.Maybe                       (fromJust, fromMaybe, isJust)
+import           Periodic.Agent                   (AgentEnv', aAlive,
+                                                   runAgentT', send)
+import           Periodic.IOHashMap               (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap               as FL
+import           Periodic.IOList                  (IOList)
+import qualified Periodic.IOList                  as IL
+import qualified Periodic.Lock                    as L (Lock, new, with, withM)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
-import           Periodic.Server.JobQueue        (JobQueue)
-import qualified Periodic.Server.JobQueue        as JQ
-import           Periodic.Server.ProcessQueue    (ProcessQueue)
-import qualified Periodic.Server.ProcessQueue    as PQ
 import           Periodic.Types.Job
-import           Periodic.Types.ServerCommand    (ServerCommand (JobAssign))
-import           Periodic.Utils                  (getEpochTime)
+import           Periodic.Types.ServerCommand     (ServerCommand (JobAssign))
+import           Periodic.Utils                   (getEpochTime)
 
-import           System.Directory                (createDirectoryIfMissing,
-                                                  doesFileExist)
-import           System.FilePath                 ((</>))
+import           System.Directory                 (createDirectoryIfMissing,
+                                                   doesFileExist)
+import           System.FilePath                  ((</>))
 
-import           Control.Concurrent              (threadDelay)
-import           Control.Concurrent.Async.Lifted (Async, async, cancel, poll)
+import           Control.Concurrent               (threadDelay)
+import           Control.Concurrent.Async.Lifted  (Async, async, cancel, poll)
 import           Control.Concurrent.STM.TVar
-import           Control.Monad.STM               (atomically, retry)
+import           Control.Monad.STM                (atomically, retry)
 
 import           Control.Monad.Base
-import           Control.Monad.Catch             (MonadCatch, MonadMask,
-                                                  MonadThrow)
-import           Control.Monad.IO.Class          (MonadIO (..))
-import           Control.Monad.Reader.Class      (MonadReader (ask), asks)
-import           Control.Monad.Trans.Class       (MonadTrans, lift)
+import           Control.Monad.Catch              (MonadCatch, MonadMask,
+                                                   MonadThrow)
+import           Control.Monad.IO.Class           (MonadIO (..))
+import           Control.Monad.Reader.Class       (MonadReader (ask), asks)
+import           Control.Monad.Trans.Class        (MonadTrans, lift)
 import           Control.Monad.Trans.Control
-import           Control.Monad.Trans.Maybe       (runMaybeT)
-import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
+import           Control.Monad.Trans.Maybe        (runMaybeT)
+import           Control.Monad.Trans.Reader       (ReaderT, runReaderT)
 
-import           System.IO                       (readFile, writeFile)
-import           Text.Read                       (readMaybe)
+import           System.IO                        (readFile, writeFile)
+import           Text.Read                        (readMaybe)
+
+import           Control.Lens                     (Lens', lens, (%%~), (^.))
+import           Control.Monad.Haskey
+import           Data.Binary                      (Binary)
+import           Data.BTree.Alloc                 (AllocM, AllocReaderM)
+import           Data.BTree.Impure                (Tree)
+import qualified Data.BTree.Impure                as B
+import           Data.BTree.Primitives            (Key, Value)
+import           Data.ByteString                  (ByteString)
+import           Data.Typeable                    (Typeable)
+import           Database.Haskey.Alloc.Concurrent (Root)
+import           GHC.Generics                     (Generic)
 
 data Action = Add Job | Remove Job | Cancel | PollJob
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
-  , sSaveDelay    :: TVar Int -- save job loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
   , sKeepalive    :: TVar Int
@@ -91,11 +104,84 @@ data SchedEnv = SchedEnv
   , sFuncStatList :: FuncStatList
   , sLocker       :: L.Lock
   , sGrabQueue    :: GrabQueue
-  , sJobQueue     :: JobQueue
-  , sProcessJob   :: ProcessQueue
   , sAlive        :: TVar Bool
   , sChanList     :: TVar [Action]
   }
+
+type JobTree = Tree JobName Job
+type ProcTree = Tree ByteString Job
+
+data Schema = Schema
+  { _schemaJobTrees  :: Tree FuncName JobTree
+  , _schemaProcTrees :: Tree FuncName ProcTree
+  } deriving (Generic, Show, Typeable)
+
+instance Binary Schema
+instance Value Schema
+instance Root Schema
+
+emptySchema :: Schema
+emptySchema = Schema B.empty B.empty
+
+schemaJobTrees :: Lens' Schema (Tree FuncName JobTree)
+schemaJobTrees = lens _schemaJobTrees $ \s x -> s { _schemaJobTrees = x }
+
+schemaProcTrees :: Lens' Schema (Tree FuncName ProcTree)
+schemaProcTrees = lens _schemaProcTrees $ \s x -> s { _schemaProcTrees = x }
+
+updateJobTree
+  :: (AllocM n, AllocReaderM n) => (Tree FuncName JobTree -> n (Tree FuncName JobTree)) -> Schema -> n Schema
+updateJobTree f = schemaJobTrees %%~ f
+
+queryJobTree
+  :: AllocReaderM n => (Tree FuncName JobTree -> n a) -> Schema -> n a
+queryJobTree f root = f (root ^. schemaJobTrees)
+
+updateProcTree
+  :: (AllocM n, AllocReaderM n) => (Tree FuncName ProcTree -> n (Tree FuncName ProcTree)) -> Schema -> n Schema
+updateProcTree f = schemaProcTrees %%~ f
+
+queryProcTree
+  :: AllocReaderM n => (Tree FuncName ProcTree -> n a) -> Schema -> n a
+queryProcTree f root = f (root ^. schemaProcTrees)
+
+insertTree
+  :: (AllocM n, AllocReaderM n, Key k)
+  => FuncName -> k -> Job -> Tree FuncName (Tree k Job) -> n (Tree FuncName (Tree k Job))
+insertTree fn k job tree =
+  fromMaybe B.empty <$> B.lookup fn tree
+    >>= B.insert k job
+    >>= flip (B.insert fn) tree
+
+deleteTree
+  :: (AllocM n, AllocReaderM n, Key k)
+  => FuncName -> k -> Tree FuncName (Tree k Job) -> n (Tree FuncName (Tree k Job))
+deleteTree fn jn tree =
+  fromMaybe B.empty <$> B.lookup fn tree
+    >>= B.delete jn
+    >>= flip (B.insert fn) tree
+
+sizeTree :: (AllocReaderM n, Key k) => FuncName -> Tree FuncName (Tree k Job) -> n Int64
+sizeTree fn tree =
+  fromMaybe B.empty <$> B.lookup fn tree
+    >>= B.foldr (\_ acc -> acc + 1) 0
+
+minSchedAt :: (AllocReaderM n, Key k) => FuncName -> Tree FuncName (Tree k Job) -> n Int64
+minSchedAt fn tree =
+  fromMaybe B.empty <$> B.lookup fn tree
+    >>= B.foldr (\j acc -> if acc == 0  || acc > jSchedAt j then jSchedAt j else acc) 0
+
+foldrTree :: (AllocReaderM n, Key k) => (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n [a]
+foldrTree f a0 = B.foldrM (\t0 acc -> (: acc) <$> B.foldr f a0 t0) []
+
+lookupJob :: (AllocReaderM n, Key k) => FuncName -> k -> Tree FuncName (Tree k Job) -> n (Maybe Job)
+lookupJob fn jn tree = fromMaybe B.empty <$> B.lookup fn tree >>= B.lookup jn
+
+memberJob :: (AllocReaderM n, Key k) => FuncName -> k -> Tree FuncName (Tree k Job) -> n Bool
+memberJob fn jn = fmap isJust . lookupJob fn jn
+
+treeFuncList :: (AllocReaderM n, Key k) => Tree FuncName (Tree k Job) -> n [FuncName]
+treeFuncList = B.foldrWithKey (\k _ acc -> k:acc) []
 
 newtype SchedT m a = SchedT {unSchedT :: ReaderT SchedEnv m a}
   deriving
@@ -122,6 +208,11 @@ instance MonadBaseControl IO m => MonadBaseControl IO (SchedT m) where
   liftBaseWith = defaultLiftBaseWith
   restoreM     = defaultRestoreM
 
+instance MonadHaskey root m => MonadHaskey root (SchedT m) where
+  transact tx = lift $ transact tx
+  transact_ tx = lift $ transact_ tx
+  transactReadOnly tx = lift $ transactReadOnly tx
+
 type Task m = Async (StM (SchedT m) ())
 type TaskList m = IOHashMap JobHandle (Task m)
 
@@ -134,30 +225,25 @@ initSchedEnv sStorePath sCleanup = do
   sFuncStatList <- newIOHashMap
   sLocker       <- L.new
   sGrabQueue    <- newGrabQueue
-  sJobQueue     <- newIOHashMap
-  sProcessJob   <- newIOHashMap
   sAlive        <- newTVarIO True
   sChanList     <- newTVarIO []
   sPollDelay    <- newTVarIO 300
-  sSaveDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
   sKeepalive    <- newTVarIO 300
   pure SchedEnv{..}
 
-startSchedT :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+startSchedT
+  :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+  => SchedT m ()
 startSchedT = do
   SchedEnv{..} <- ask
   runTask_ sRevertDelay revertProcessQueue
-  runTask_ sSaveDelay $ saveJob "dump.db"
   taskList <- liftIO newIOHashMap
   runTask_ sPollDelay $ pollJob taskList
   runTask 0 $ runChanJob taskList
-  mapM_ pushJob =<< loadJob "dump.db"
-  mapM_ adjustFuncStat =<< liftIO (FL.keys sJobQueue)
 
   loadInt "poll-delay" sPollDelay
-  loadInt "save-delay" sSaveDelay
   loadInt "revert-delay" sRevertDelay
   loadInt "timeout" sTaskTimeout
   loadInt "keepalive" sKeepalive
@@ -185,7 +271,6 @@ setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
     "poll-delay"   -> saveInt "poll-delay" val sPollDelay
-    "save-delay"   -> saveInt "save-delay" val sSaveDelay
     "revert-delay" -> saveInt "revert-delay" val sRevertDelay
     "timeout"      -> saveInt "timeout" val sTaskTimeout
     "keepalive"    -> saveInt "keepalive" val sKeepalive
@@ -196,7 +281,6 @@ getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
     "poll-delay"   -> liftIO $ readTVarIO sPollDelay
-    "save-delay"   -> liftIO $ readTVarIO sSaveDelay
     "revert-delay" -> liftIO $ readTVarIO sRevertDelay
     "timeout"      -> liftIO $ readTVarIO sTaskTimeout
     "keepalive"    -> liftIO $ readTVarIO sKeepalive
@@ -218,7 +302,9 @@ runTask_ d m = void . async $ do
     if alive then lift m
              else mzero
 
-runChanJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> SchedT m ()
+runChanJob
+  :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+  => TaskList m -> SchedT m ()
 runChanJob taskList = do
   cl <- asks sChanList
   al <- asks sAlive
@@ -234,7 +320,9 @@ runChanJob taskList = do
 
   mapM_ (doChanJob taskList) acts
 
-  where doChanJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Action -> SchedT m ()
+  where doChanJob
+          :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+          => TaskList m -> Action -> SchedT m ()
         doChanJob tl (Add job) = reSchedJob tl job
         doChanJob tl (Remove job) = do
           w <- findTask tl job
@@ -250,7 +338,9 @@ pollDelay = do
   d <- asks sPollDelay
   liftIO $ fromIntegral <$> readTVarIO d
 
-pollJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> SchedT m ()
+pollJob
+  :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+  => TaskList m -> SchedT m ()
 pollJob taskList = do
   SchedEnv{..} <- ask
   mapM_ checkPoll =<< liftIO (FL.toList taskList)
@@ -258,18 +348,22 @@ pollJob taskList = do
   delay <- (+100) <$> pollDelay
 
   next <- liftIO $ (+ delay) <$> getEpochTime
-  mapM_ (checkJob taskList) =<< liftIO (JQ.findLessJob sJobQueue next)
+  jobs <- transactReadOnly $ queryJobTree $ foldrTree (foldFunc next) []
+  L.withM sLocker $ mapM_ (checkJob taskList) $ concat jobs
 
-  where checkJob
-          :: (MonadIO m, MonadBaseControl IO m)
+  where foldFunc :: Int64 -> Job -> [Job] -> [Job]
+        foldFunc t job acc | jSchedAt job < t = job : acc
+                           | otherwise = acc
+
+        checkJob
+          :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
           => TaskList m -> Job -> SchedT m ()
         checkJob tl job@Job{..} = do
           w <- findTask tl job
-          delay <- pollDelay
           case w of
             Nothing -> do
-              now <- liftIO getEpochTime
-              when (jSchedAt > now || jSchedAt + delay < now) $ reSchedJob tl job
+              isProc <- transactReadOnly $ queryProcTree (memberJob jFuncName (hashJobName jName))
+              unless isProc $ reSchedJob tl job
             Just w0 -> do
               r <- canRun jFuncName
               unless r $ cancel w0
@@ -290,23 +384,22 @@ pushChanList act = do
     l <- readTVar cl
     writeTVar cl (act:l)
 
-pushJob :: MonadIO m => Job -> SchedT m ()
+pushJob :: (MonadIO m, MonadHaskey Schema m) => Job -> SchedT m ()
 pushJob job@Job{..} = do
-  SchedEnv{..} <- ask
-  exists <- liftIO $ JQ.memberJob sJobQueue jFuncName jName
-  isProc <- liftIO $ PQ.memberJob sProcessJob jFuncName (hashJobName jName)
+  exists <- transactReadOnly $ queryJobTree $ memberJob jFuncName jName
   if exists then doPushJob
-            else unless isProc doPushJob
+            else do
+              isProc <- transactReadOnly $ queryProcTree (memberJob jFuncName (hashJobName jName))
+              unless isProc doPushJob
 
-  adjustFuncStat jFuncName
-
-  where doPushJob :: MonadIO m => SchedT m ()
+  where doPushJob :: (MonadIO m, MonadHaskey Schema m) => SchedT m ()
         doPushJob = do
-          queue <- asks sJobQueue
           pushChanList (Add job)
-          liftIO $ JQ.pushJob queue job
+          transact_ $ \schema ->
+            updateJobTree (insertTree jFuncName jName job) schema
+              >>= commit_
 
-reSchedJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Job -> SchedT m ()
+reSchedJob :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
   w <- findTask taskList job
   when (isJust w) $ do
@@ -334,11 +427,11 @@ canRun fn = do
     Just _                   -> pure True
 
 schedJob
-  :: (MonadIO m, MonadBaseControl IO m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
   => TaskList m -> Job -> SchedT m (Task m)
 schedJob taskList = async . schedJob_ taskList
 
-schedJob_ :: MonadIO m => TaskList m -> Job -> SchedT m ()
+schedJob_ :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> Job -> SchedT m ()
 schedJob_ taskList job@Job{..} = do
   SchedEnv{..} <- ask
   r <- canRun jFuncName
@@ -355,34 +448,34 @@ schedJob_ taskList job@Job{..} = do
                   else popAgentThen taskList
 
   where popAgentThen
-          :: MonadIO m => TaskList m -> SchedT m ()
+          :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
         popAgentThen tl = do
           SchedEnv{..} <- ask
           (jq, env0) <- liftIO $ atomically $ popAgentSTM sGrabQueue jFuncName
           alive <- liftIO $ runAgentT' env0 aAlive
           if alive then do
-            liftIO $ do
-              IL.insert jq (jHandle job)
-              nextSchedAt <- getEpochTime
-              PQ.insertJob sProcessJob job {jSchedAt = nextSchedAt}
+            liftIO $ IL.insert jq (jHandle job)
+            nextSchedAt <- liftIO getEpochTime
+            transact_ $ \schema ->
+              updateProcTree (insertTree jFuncName (hashJobName jName) job {jSchedAt = nextSchedAt}) schema
+                >>= commit_
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                liftIO $ do
-                  PQ.removeJob sProcessJob jFuncName (hashJobName jName)
-                  IL.delete jq (jHandle job)
+                transact_ $ \schema ->
+                  updateProcTree (deleteTree jFuncName (hashJobName jName)) schema
+                    >>= commit_
+                liftIO $ IL.delete jq (jHandle job)
                 schedJob_ tl job
               Right _ -> do
-                adjustFuncStat jFuncName
                 endSchedJob tl
           else schedJob_ tl job
 
-        popAgentListThen :: MonadIO m => TaskList m -> SchedT m ()
+        popAgentListThen :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
         popAgentListThen tl = do
           SchedEnv{..} <- ask
           agents <- liftIO $ popAgentList sGrabQueue jFuncName
           mapM_ (doSubmitJob . snd) agents
-          adjustFuncStat jFuncName
           unless (null agents) $ endSchedJob tl -- wait to resched the broadcast job
 
         doSubmitJob :: MonadIO m => AgentEnv' -> SchedT m (Either SomeException ())
@@ -390,25 +483,28 @@ schedJob_ taskList job@Job{..} = do
           SchedEnv{..} <- ask
           liftIO . try $ assignJob agent job
 
-        endSchedJob :: MonadIO m => TaskList m -> SchedT m ()
+        endSchedJob :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
         endSchedJob tl = do
-          SchedEnv{..} <- ask
-          liftIO $ do
-            JQ.removeJob sJobQueue jFuncName jName
-            FL.delete tl (jHandle job)
+          transact_ $ \schema ->
+            updateJobTree (deleteTree jFuncName jName) schema
+              >>= commit_
 
-adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
+          -- block on pollJob
+          lock <- asks sLocker
+          liftIO $ L.with lock $ FL.delete tl (jHandle job)
+
+adjustFuncStat :: (MonadIO m, MonadHaskey Schema m) => FuncName -> SchedT m ()
 adjustFuncStat fn = do
+  (size, sizePQ, sc) <- transactReadOnly $ \schema -> do
+    size <- queryJobTree (sizeTree fn) schema
+    sizePQ <- queryProcTree (sizeTree fn) schema
+    schedAt <- queryJobTree (minSchedAt fn) schema
+    return (size, sizePQ, schedAt)
+
+  schedAt <- if sc > 0 then pure sc else liftIO $ getEpochTime
+
   SchedEnv{..} <- ask
-  liftIO . L.with sLocker $ do
-    size <- fromIntegral <$> JQ.sizeJob sJobQueue fn
-    sizePQ <- fromIntegral <$> PQ.sizeJob sProcessJob fn
-    schedAt <- do
-      minJob <- JQ.findMinJob sJobQueue fn
-      case minJob of
-        Nothing  -> getEpochTime
-        Just job -> return $ jSchedAt job
-    FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
+  liftIO $ FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
 
   where update :: Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
         update size sizePQ schedAt st =
@@ -417,43 +513,27 @@ adjustFuncStat fn = do
                                              , sSchedAt = schedAt
                                              })
 
-removeJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
+removeJob :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => Job -> SchedT m ()
 removeJob job = do
-  SchedEnv{..} <- ask
-  liftIO $ do
-    has <- JQ.memberJob sJobQueue (jFuncName job) (jName job)
-    when has $ JQ.removeJob sJobQueue (jFuncName job) (jName job)
-
-    isProc <- PQ.memberJob sProcessJob (jFuncName job) (hashJobName $ jName job)
-    when isProc $ PQ.removeJob sProcessJob (jFuncName job) (hashJobName $ jName job)
-
-  adjustFuncStat (jFuncName job)
+  transact_ $ \schema ->
+    updateProcTree (deleteTree fn (hashJobName jn)) schema
+      >>= updateJobTree (deleteTree fn jn)
+      >>= commit_
 
   pushChanList (Remove job)
+  where jn = jName job
+        fn = jFuncName job
 
-dumpJob :: MonadIO m => SchedT m [Job]
+dumpJob :: (MonadIO m, MonadHaskey Schema m) => SchedT m [Job]
 dumpJob = do
-  js <- liftIO . JQ.dumpJob =<< asks sJobQueue
-  js' <- liftIO . PQ.dumpJob =<< asks sProcessJob
-  return $ js ++ js'
-
-saveJob :: MonadIO m => FilePath -> SchedT m ()
-saveJob fn = do
-  path <- (</> fn) <$> asks sStorePath
-  dumpJob >>= liftIO . encodeFile path
-
-loadJob :: MonadIO m => FilePath -> SchedT m [Job]
-loadJob fn = do
-  path <- (</> fn) <$> asks sStorePath
-  exists <- liftIO $ doesFileExist path
-  if exists then liftIO $ decodeFile path
-            else pure []
-
+  js <- transactReadOnly $ queryProcTree $ foldrTree (\j acc -> j:acc) []
+  js' <- transactReadOnly $ queryJobTree $ foldrTree (\j acc -> j:acc) []
+  return . concat $ js ++ js'
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
 alterFunc n f = do
   SchedEnv{..} <- ask
-  liftIO . L.with sLocker $ FL.alter sFuncStatList f n
+  liftIO $ FL.alter sFuncStatList f n
   pushChanList PollJob
 
 addFunc :: MonadIO m => FuncName -> SchedT m ()
@@ -479,9 +559,7 @@ dropFunc n = do
   liftIO . L.with sLocker $ do
     st <- FL.lookup sFuncStatList n
     when (isJust st) $
-      when (sWorker (fromJust st) == 0) $ do
-        FL.delete sFuncStatList n
-        FL.delete sJobQueue n
+      when (sWorker (fromJust st) == 0) $ FL.delete sFuncStatList n
 
   pushChanList PollJob
 
@@ -494,45 +572,38 @@ assignJob :: AgentEnv' -> Job -> IO ()
 assignJob env0 job =
   runAgentT' env0 $ send (JobAssign (jHandle job) job)
 
-failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
+failJob :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => JobHandle -> SchedT m ()
 failJob jh = do
-  SchedEnv{..} <- ask
-  job <- liftIO $ PQ.lookupJob sProcessJob fn jn
+  job <- transactReadOnly $ queryProcTree $ lookupJob fn jn
   when (isJust job) $ do
     nextSchedAt <- liftIO getEpochTime
     retryJob ((fromJust job) {jSchedAt = nextSchedAt})
 
   where (fn, jn) = unHandle jh
 
-retryJob :: MonadIO m => Job -> SchedT m ()
+retryJob :: (MonadIO m, MonadHaskey Schema m) => Job -> SchedT m ()
 retryJob job = do
-  SchedEnv{..} <- ask
-  liftIO $ JQ.pushJob sJobQueue job
-  liftIO $ PQ.removeJob sProcessJob fn (hashJobName jn)
-
-  adjustFuncStat fn
+  transact_ $ \schema -> do
+    updateProcTree (deleteTree fn (hashJobName jn)) schema
+      >>= updateJobTree (insertTree fn jn job)
+      >>= commit_
   pushChanList (Add job)
 
   where  fn = jFuncName job
          jn = jName job
 
 
-doneJob :: MonadIO m => JobHandle -> SchedT m ()
+doneJob :: (MonadIO m, MonadHaskey Schema m) => JobHandle -> SchedT m ()
 doneJob jh = do
-  SchedEnv{..} <- ask
-  job <- liftIO $ PQ.lookupJob sProcessJob fn jn
-  when (isJust job) $ do
-    liftIO $ PQ.removeJob sProcessJob fn jn
-    adjustFuncStat fn
+  transact_ $ \schema -> updateProcTree (deleteTree fn jn) schema >>= commit_
 
   where (fn, jn) = unHandle jh
 
 schedLaterJob
-  :: (MonadIO m, MonadBaseControl IO m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
   => JobHandle -> Int64 -> Int -> SchedT m ()
 schedLaterJob jh later step = do
-  SchedEnv{..} <- ask
-  job <- liftIO $ PQ.lookupJob sProcessJob fn jn
+  job <- transactReadOnly $ queryProcTree $ lookupJob fn jn
   when (isJust job) $ do
     let job' = fromJust job
 
@@ -541,18 +612,21 @@ schedLaterJob jh later step = do
 
   where (fn, jn) = unHandle jh
 
-status :: MonadIO m => SchedT m [FuncStat]
-status = liftIO . FL.elems =<< asks sFuncStatList
+status :: (MonadIO m, MonadHaskey Schema m) => SchedT m [FuncStat]
+status = do
+  mapM_ adjustFuncStat =<< transactReadOnly (queryJobTree treeFuncList)
+  liftIO . FL.elems =<< asks sFuncStatList
 
-revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+revertProcessQueue :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => SchedT m ()
 revertProcessQueue = do
   now <- liftIO getEpochTime
-  queue <- asks sProcessJob
-  tout <- liftIO . readTVarIO =<< asks sTaskTimeout
-  mapM_ (failJob . jHandle)
-    =<< filter (isTimeout now $ fromIntegral tout) <$> liftIO (PQ.dumpJob queue)
-  where isTimeout :: Int64 -> Int64 -> Job -> Bool
-        isTimeout t1 tout Job{jSchedAt = t} = (t + tout) < t1
+  tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
+  handles <- transactReadOnly $ queryProcTree $ foldrTree (foldFunc now tout) []
+  mapM_ (failJob . jHandle) $ concat handles
+
+  where foldFunc :: Int64 -> Int64 -> Job -> [Job] -> [Job]
+        foldFunc t1 tout job acc | jSchedAt job + tout < t1 = job : acc
+                                 | otherwise = acc
 
 shutdown :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 shutdown = do
@@ -563,5 +637,4 @@ shutdown = do
     writeTVar sAlive False
     return t
   when alive $ do
-    saveJob "dump.db"
     void . async $ liftIO sCleanup

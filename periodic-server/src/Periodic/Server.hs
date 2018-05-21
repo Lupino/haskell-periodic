@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
@@ -22,6 +23,7 @@ import           Control.Monad                   (forever, mzero, unless, void,
 import           Control.Monad.Base
 import           Control.Monad.Catch             (MonadCatch, MonadMask,
                                                   MonadThrow, try)
+import           Control.Monad.Haskey
 import           Control.Monad.IO.Class          (MonadIO (..))
 import           Control.Monad.Reader.Class      (MonadReader (ask), asks)
 import           Control.Monad.STM               (atomically)
@@ -100,7 +102,7 @@ initServerEnv serveState mkTransport serveSock = do
   pure ServerEnv{..}
 
 serveForever
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadHaskey Schema m)
   => ServerT m ()
 serveForever = do
   state <- asks serveState
@@ -111,12 +113,12 @@ serveForever = do
     unless alive mzero
 
 tryServeOnce
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadHaskey Schema m)
   => ServerT m (Either SomeException ())
 tryServeOnce = try serveOnce
 
 serveOnce
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadHaskey Schema m)
   => ServerT m ()
 serveOnce = do
   (sock', _) <- liftIO . accept =<< asks serveSock
@@ -124,7 +126,7 @@ serveOnce = do
   void $ async $ handleConnection =<< liftIO (makeTransport sock')
 
 handleConnection
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadHaskey Schema m)
   => Transport -> ServerT m ()
 handleConnection transport = do
   ServerEnv{..} <- ask
@@ -214,7 +216,7 @@ startServer mk path sock = do
   sEnv <- initServerEnv state mk sock
   schedEnv <- initSchedEnv path $ atomically $ writeTVar state False
 
-  runSchedT schedEnv $ do
+  runWithHaskey path $ runSchedT schedEnv $ do
     startSchedT
     lift . runCheckClientState (clientList sEnv) =<< keepalive
     lift . runCheckWorkerState (workerList sEnv) =<< keepalive
@@ -223,3 +225,14 @@ startServer mk path sock = do
 
     shutdown
     liftIO $ Socket.close sock
+
+runWithHaskey :: FilePath -> HaskeyT Schema IO () -> IO ()
+runWithHaskey fp m = do
+    db <- flip runFileStoreT defFileStoreConfig $
+        openConcurrentDb hnds >>= \case
+            Nothing -> createConcurrentDb hnds emptySchema
+            Just db -> return db
+
+    runHaskeyT m db defFileStoreConfig
+  where
+    hnds = concurrentHandles fp

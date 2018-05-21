@@ -159,7 +159,6 @@ printConfigKeyList = do
   putStrLn ""
   putStrLn "Available keys:"
   putStrLn "  poll-delay    - poll loop every time delay"
-  putStrLn "  save-delay    - save job loop every time delay"
   putStrLn "  revert-delay  - revert process queue loop every time delay"
   putStrLn "  timeout       - job process timeout"
   putStrLn "  keepalive     - client keepalive"

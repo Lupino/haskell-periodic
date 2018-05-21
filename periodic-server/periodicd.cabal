@@ -21,8 +21,6 @@ library
                      , Periodic.Server.Worker
                      , Periodic.Server.GrabQueue
                      , Periodic.Server.FuncStat
-                     , Periodic.Server.JobQueue
-                     , Periodic.Server.ProcessQueue
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring
@@ -42,6 +40,11 @@ library
                      , monad-control
                      , lifted-async
                      , mtl
+
+                     , haskey-mtl
+                     , haskey-btree
+                     , haskey
+                     , lens
   default-language:    Haskell2010
 
 executable periodicd
