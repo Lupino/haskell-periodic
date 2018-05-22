@@ -50,7 +50,7 @@ import           Periodic.IOHashMap               (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap               as FL
 import           Periodic.IOList                  (IOList)
 import qualified Periodic.IOList                  as IL
-import qualified Periodic.Lock                    as L (Lock, new, with, withM)
+import qualified Periodic.Lock                    as L (Lock, new, with)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
 import           Periodic.Types.Job
@@ -248,13 +248,13 @@ initSchedEnv sStorePath sCleanup = do
   pure SchedEnv{..}
 
 startSchedT
-  :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
   => SchedT m ()
 startSchedT = do
   SchedEnv{..} <- ask
   runTask_ sRevertDelay revertProcessQueue
   taskList <- liftIO newIOHashMap
-  runTask_ sPollDelay $ pollJob taskList
+  runTask_ sPollDelay $ pushChanList PollJob
   runTask 0 $ runChanJob taskList
 
   loadInt "poll-delay" sPollDelay
@@ -317,7 +317,7 @@ runTask_ d m = void . async $ do
              else mzero
 
 runChanJob
-  :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
   => TaskList m -> SchedT m ()
 runChanJob taskList = do
   cl <- asks sChanList
@@ -335,17 +335,12 @@ runChanJob taskList = do
   mapM_ (doChanJob taskList) acts
 
   where doChanJob
-          :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+          :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
           => TaskList m -> Action -> SchedT m ()
-        doChanJob tl (Add job) = reSchedJob tl job
-        doChanJob tl (Remove job) = do
-          w <- findTask tl job
-          when (isJust w) $ do
-            cancel (fromJust w)
-            lock <- asks sLocker
-            liftIO $ L.with lock $ FL.delete tl (jHandle job)
-        doChanJob tl Cancel = mapM_ cancel =<< liftIO (FL.elems tl)
-        doChanJob tl PollJob = pollJob tl
+        doChanJob tl (Add job)    = reSchedJob tl job
+        doChanJob tl (Remove job) = findTask tl job >>= flip forM_ cancel
+        doChanJob tl Cancel       = mapM_ cancel =<< liftIO (FL.elems tl)
+        doChanJob tl PollJob      = pollJob tl
 
 
 pollDelay :: (MonadIO m, Num a) => SchedT m a
@@ -354,7 +349,7 @@ pollDelay = do
   liftIO $ fromIntegral <$> readTVarIO d
 
 pollJob
-  :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadHaskey Schema m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
   => TaskList m -> SchedT m ()
 pollJob taskList = do
   SchedEnv{..} <- ask
@@ -369,7 +364,7 @@ pollJob taskList = do
             $ queryJobTree
             $ foldrTree' (`elem` funcList) (foldFunc next) []
 
-  L.withM sLocker $ mapM_ (checkJob taskList) $ concat jobs
+  mapM_ (checkJob taskList) $ concat jobs
 
   where foldFunc :: Int64 -> Job -> [Job] -> [Job]
         foldFunc t job acc | jSchedAt job < t = job : acc
@@ -401,7 +396,11 @@ pollJob taskList = do
           r <- poll w
           case r of
             Just (Right ()) -> liftIO $ FL.delete taskList jh
-            _               -> pure ()
+            _               -> do
+              r0 <- canRun fn
+              unless r0 $ cancel w
+
+          where (fn, _) = unHandle jh
 
 pushChanList :: MonadIO m => Action -> SchedT m ()
 pushChanList act = do
@@ -468,7 +467,7 @@ schedJob_ taskList job@Job{..} = do
         Nothing                  -> retry
         Just FuncStat{sWorker=0} -> retry
         Just st'                 -> pure st'
-    if sBroadcast then popAgentListThen taskList
+    if sBroadcast then popAgentListThen
                   else popAgentThen taskList
 
   where popAgentThen
@@ -491,28 +490,24 @@ schedJob_ taskList job@Job{..} = do
                     >=> commit_
                 liftIO $ IL.delete jq (jHandle job)
                 schedJob_ tl job
-              Right _ -> endSchedJob tl
+              Right _ -> endSchedJob
           else schedJob_ tl job
 
-        popAgentListThen :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
-        popAgentListThen tl = do
+        popAgentListThen :: (MonadIO m, MonadHaskey Schema m) => SchedT m ()
+        popAgentListThen = do
           SchedEnv{..} <- ask
           agents <- liftIO $ popAgentList sGrabQueue jFuncName
           mapM_ (doSubmitJob . snd) agents
-          unless (null agents) $ endSchedJob tl -- wait to resched the broadcast job
+          unless (null agents) $ endSchedJob -- wait to resched the broadcast job
 
         doSubmitJob :: MonadIO m => AgentEnv' -> SchedT m (Either SomeException ())
         doSubmitJob agent = do
           SchedEnv{..} <- ask
           liftIO . try $ assignJob agent job
 
-        endSchedJob :: (MonadIO m, MonadHaskey Schema m) => TaskList m -> SchedT m ()
-        endSchedJob tl = do
+        endSchedJob :: MonadHaskey Schema m => SchedT m ()
+        endSchedJob =
           transact_ $ updateJobTree (deleteTree jFuncName jName) >=> commit_
-
-          -- block on pollJob
-          lock <- asks sLocker
-          liftIO $ L.with lock $ FL.delete tl (jHandle job)
 
 adjustFuncStat :: (MonadIO m, MonadHaskey Schema m) => FuncName -> SchedT m ()
 adjustFuncStat fn = do
