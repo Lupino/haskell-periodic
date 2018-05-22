@@ -245,7 +245,7 @@ initSchedEnv sStorePath sCleanup = do
   sPollDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
-  sMaxThread    <- newTVarIO 1024
+  sMaxThread    <- newTVarIO 250
   sKeepalive    <- newTVarIO 300
   pure SchedEnv{..}
 
@@ -381,7 +381,7 @@ pollJob taskList = do
 
   mapM_ (checkJob taskList) jobs
 
-  when (length jobs >= maxThread - 50) $ pushChanList (PollJob1 10)
+  when (length jobs >= maxThread - 20) $ pushChanList (PollJob1 10)
 
   where foldFunc :: Int -> Int64 -> Job -> [Job] -> [Job]
         foldFunc t0 t job acc | jSchedAt job > t || length acc > t0 = acc
