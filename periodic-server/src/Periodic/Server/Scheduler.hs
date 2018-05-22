@@ -92,12 +92,13 @@ import           Data.Typeable                    (Typeable)
 import           Database.Haskey.Alloc.Concurrent (Root)
 import           GHC.Generics                     (Generic)
 
-data Action = Add Job | Remove Job | Cancel | PollJob
+data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
+  , sMaxThread    :: TVar Int -- max poll thread
   , sKeepalive    :: TVar Int
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
@@ -244,6 +245,7 @@ initSchedEnv sStorePath sCleanup = do
   sPollDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
+  sMaxThread    <- newTVarIO 1024
   sKeepalive    <- newTVarIO 300
   pure SchedEnv{..}
 
@@ -261,6 +263,7 @@ startSchedT = do
   loadInt "revert-delay" sRevertDelay
   loadInt "timeout" sTaskTimeout
   loadInt "keepalive" sKeepalive
+  loadInt "max-thread" sMaxThread
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
 loadInt fn ref = do
@@ -288,6 +291,7 @@ setConfigInt key val = do
     "revert-delay" -> saveInt "revert-delay" val sRevertDelay
     "timeout"      -> saveInt "timeout" val sTaskTimeout
     "keepalive"    -> saveInt "keepalive" val sKeepalive
+    "max-thread"   -> saveInt "max-thread" val sMaxThread
     _              -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT m Int
@@ -298,6 +302,7 @@ getConfigInt key = do
     "revert-delay" -> liftIO $ readTVarIO sRevertDelay
     "timeout"      -> liftIO $ readTVarIO sTaskTimeout
     "keepalive"    -> liftIO $ readTVarIO sKeepalive
+    "max-thread"   -> liftIO $ readTVarIO sMaxThread
     _              -> pure 0
 
 keepalive :: Monad m => SchedT m (TVar Int)
@@ -337,10 +342,17 @@ runChanJob taskList = do
   where doChanJob
           :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
           => TaskList m -> Action -> SchedT m ()
-        doChanJob tl (Add job)    = reSchedJob tl job
+        doChanJob tl (Add job)    = do
+          maxThread <- liftIO . readTVarIO =<< asks sMaxThread
+          thread <- liftIO $ FL.size tl
+          when (maxThread > thread) $ reSchedJob tl job
         doChanJob tl (Remove job) = findTask tl job >>= flip forM_ cancel
         doChanJob tl Cancel       = mapM_ cancel =<< liftIO (FL.elems tl)
         doChanJob tl PollJob      = pollJob tl
+        doChanJob _ (PollJob1 d)  =
+          void $ async $ do
+            liftIO $ threadDelay $ d * 1000000 -- 1 seconds
+            pushChanList PollJob
 
 
 pollDelay :: (MonadIO m, Num a) => SchedT m a
@@ -358,17 +370,23 @@ pollJob taskList = do
   delay <- (+100) <$> pollDelay
   next <- liftIO $ (+ delay) <$> getEpochTime
 
+
   funcList <- foldrM foldFunc1 [] =<< transactReadOnly (queryJobTree treeFuncList)
 
-  jobs <- transactReadOnly
+  maxThread <- liftIO $ readTVarIO sMaxThread
+
+  jobs <- fmap concat $ transactReadOnly
             $ queryJobTree
-            $ foldrTree' (`elem` funcList) (foldFunc next) []
+            $ foldrTree' (`elem` funcList) (foldFunc maxThread next) []
 
-  mapM_ (checkJob taskList) $ concat jobs
+  mapM_ (checkJob taskList) jobs
 
-  where foldFunc :: Int64 -> Job -> [Job] -> [Job]
-        foldFunc t job acc | jSchedAt job < t = job : acc
-                           | otherwise = acc
+  when (length jobs >= maxThread - 50) $ do
+    pushChanList (PollJob1 10)
+
+  where foldFunc :: Int -> Int64 -> Job -> [Job] -> [Job]
+        foldFunc t0 t job acc | jSchedAt job > t || length acc > t0 = acc
+                              | otherwise = job : acc
 
         foldFunc1 :: MonadIO m => FuncName -> [FuncName] -> SchedT m [FuncName]
         foldFunc1 fn acc = do
