@@ -346,7 +346,7 @@ runChanJob taskList = do
           maxThread <- liftIO . readTVarIO =<< asks sMaxThread
           thread <- liftIO $ FL.size tl
           when (maxThread > thread) $ reSchedJob tl job
-        doChanJob tl (Remove job) = findTask tl job >>= flip forM_ cancel
+        doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
         doChanJob tl Cancel       = mapM_ cancel =<< liftIO (FL.elems tl)
         doChanJob tl PollJob      = pollJob tl
         doChanJob _ (PollJob1 d)  =
@@ -381,8 +381,7 @@ pollJob taskList = do
 
   mapM_ (checkJob taskList) jobs
 
-  when (length jobs >= maxThread - 50) $ do
-    pushChanList (PollJob1 10)
+  when (length jobs >= maxThread - 50) $ pushChanList (PollJob1 10)
 
   where foldFunc :: Int -> Int64 -> Job -> [Job] -> [Job]
         foldFunc t0 t job acc | jSchedAt job > t || length acc > t0 = acc
@@ -516,7 +515,7 @@ schedJob_ taskList job@Job{..} = do
           SchedEnv{..} <- ask
           agents <- liftIO $ popAgentList sGrabQueue jFuncName
           mapM_ (doSubmitJob . snd) agents
-          unless (null agents) $ endSchedJob -- wait to resched the broadcast job
+          unless (null agents) endSchedJob -- wait to resched the broadcast job
 
         doSubmitJob :: MonadIO m => AgentEnv' -> SchedT m (Either SomeException ())
         doSubmitJob agent = do
