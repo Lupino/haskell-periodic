@@ -87,7 +87,7 @@ import           Data.BTree.Impure                (Tree)
 import qualified Data.BTree.Impure                as B
 import           Data.BTree.Primitives            (Key, Value)
 import           Data.ByteString                  (ByteString)
-import           Data.Foldable                    (forM_)
+import           Data.Foldable                    (foldrM, forM_)
 import           Data.Typeable                    (Typeable)
 import           Database.Haskey.Alloc.Concurrent (Root)
 import           GHC.Generics                     (Generic)
@@ -171,8 +171,22 @@ minSchedAt fn tree =
   fromMaybe B.empty <$> B.lookup fn tree
     >>= B.foldr (\j acc -> if acc == 0  || acc > jSchedAt j then jSchedAt j else acc) 0
 
-foldrTree :: (AllocReaderM n, Key k) => (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n [a]
+foldrTree
+  :: (AllocReaderM n, Key k)
+  => (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n [a]
 foldrTree f a0 = B.foldrM (\t0 acc -> (: acc) <$> B.foldr f a0 t0) []
+
+foldrTree'
+  :: (AllocReaderM n, Key k)
+  => (FuncName -> Bool)
+  -> (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n [a]
+foldrTree' check f a = B.foldrWithKeyM (foldFunc f a) []
+  where foldFunc
+          :: (AllocReaderM n, Key k)
+          => (Job -> a -> a) -> a
+          -> FuncName -> Tree k Job -> [a] -> n [a]
+        foldFunc f0 a0 k t acc | check k = (: acc) <$> B.foldr f0 a0 t
+                               | otherwise = pure acc
 
 lookupJob :: (AllocReaderM n, Key k) => FuncName -> k -> Tree FuncName (Tree k Job) -> n (Maybe Job)
 lookupJob fn jn tree = fromMaybe B.empty <$> B.lookup fn tree >>= B.lookup jn
@@ -347,14 +361,25 @@ pollJob taskList = do
   mapM_ checkPoll =<< liftIO (FL.toList taskList)
 
   delay <- (+100) <$> pollDelay
-
   next <- liftIO $ (+ delay) <$> getEpochTime
-  jobs <- transactReadOnly $ queryJobTree $ foldrTree (foldFunc next) []
+
+  funcList <- foldrM foldFunc1 [] =<< transactReadOnly (queryJobTree treeFuncList)
+
+  jobs <- transactReadOnly
+            $ queryJobTree
+            $ foldrTree' (`elem` funcList) (foldFunc next) []
+
   L.withM sLocker $ mapM_ (checkJob taskList) $ concat jobs
 
   where foldFunc :: Int64 -> Job -> [Job] -> [Job]
         foldFunc t job acc | jSchedAt job < t = job : acc
                            | otherwise = acc
+
+        foldFunc1 :: MonadIO m => FuncName -> [FuncName] -> SchedT m [FuncName]
+        foldFunc1 fn acc = do
+          r <- canRun fn
+          if r then pure (fn:acc)
+               else pure acc
 
         checkJob
           :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
@@ -415,8 +440,10 @@ findTask :: (MonadIO m) => TaskList m -> Job -> SchedT m (Maybe (Task m))
 findTask taskList job = liftIO $ FL.lookup taskList (jHandle job)
 
 canRun :: MonadIO m => FuncName -> SchedT m Bool
-canRun fn = do
-  stList <- asks sFuncStatList
+canRun fn = asks sFuncStatList >>= liftIO . flip canRun_ fn
+
+canRun_ :: FuncStatList -> FuncName -> IO Bool
+canRun_ stList fn = do
   st0 <- liftIO $ FL.lookup stList fn
   case st0 of
     Nothing                  -> pure False
