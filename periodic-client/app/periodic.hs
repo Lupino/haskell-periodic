@@ -162,7 +162,7 @@ printConfigKeyList = do
   putStrLn "  revert-delay  - revert process queue loop every time delay"
   putStrLn "  timeout       - job process timeout"
   putStrLn "  keepalive     - client keepalive"
-  putStrLn "  max-thread    - max poll thread"
+  putStrLn "  max-patch    - max poll patch size"
   putStrLn ""
   exitSuccess
 

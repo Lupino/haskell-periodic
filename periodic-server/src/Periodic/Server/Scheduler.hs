@@ -92,13 +92,15 @@ import           Data.Typeable                    (Typeable)
 import           Database.Haskey.Alloc.Concurrent (Root)
 import           GHC.Generics                     (Generic)
 
+import           Data.HashPSQ                     (HashPSQ)
+import qualified Data.HashPSQ                     as PSQ
 data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
-  , sMaxThread    :: TVar Int -- max poll thread
+  , sMaxPatch     :: TVar Int -- max poll patch size
   , sKeepalive    :: TVar Int
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
@@ -174,20 +176,20 @@ minSchedAt fn tree =
 
 foldrTree
   :: (AllocReaderM n, Key k)
-  => (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n [a]
-foldrTree f a0 = B.foldrM (\t0 acc -> (: acc) <$> B.foldr f a0 t0) []
+  => (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n a
+foldrTree f a = B.foldrM (\t0 acc -> B.foldr f acc t0) a
 
 foldrTree'
   :: (AllocReaderM n, Key k)
   => (FuncName -> Bool)
-  -> (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n [a]
-foldrTree' check f a = B.foldrWithKeyM (foldFunc f a) []
+  -> (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n a
+foldrTree' check f a = B.foldrWithKeyM (foldFunc f) a
   where foldFunc
           :: (AllocReaderM n, Key k)
-          => (Job -> a -> a) -> a
-          -> FuncName -> Tree k Job -> [a] -> n [a]
-        foldFunc f0 a0 k t acc | check k = (: acc) <$> B.foldr f0 a0 t
-                               | otherwise = pure acc
+          => (Job -> a -> a)
+          -> FuncName -> Tree k Job -> a -> n a
+        foldFunc f0 k t acc | check k = B.foldr f0 acc t
+                            | otherwise = pure acc
 
 lookupJob :: (AllocReaderM n, Key k) => FuncName -> k -> Tree FuncName (Tree k Job) -> n (Maybe Job)
 lookupJob fn jn tree = fromMaybe B.empty <$> B.lookup fn tree >>= B.lookup jn
@@ -245,7 +247,7 @@ initSchedEnv sStorePath sCleanup = do
   sPollDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
-  sMaxThread    <- newTVarIO 250
+  sMaxPatch     <- newTVarIO 250
   sKeepalive    <- newTVarIO 300
   pure SchedEnv{..}
 
@@ -263,7 +265,7 @@ startSchedT = do
   loadInt "revert-delay" sRevertDelay
   loadInt "timeout" sTaskTimeout
   loadInt "keepalive" sKeepalive
-  loadInt "max-thread" sMaxThread
+  loadInt "max-patch" sMaxPatch
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
 loadInt fn ref = do
@@ -291,7 +293,7 @@ setConfigInt key val = do
     "revert-delay" -> saveInt "revert-delay" val sRevertDelay
     "timeout"      -> saveInt "timeout" val sTaskTimeout
     "keepalive"    -> saveInt "keepalive" val sKeepalive
-    "max-thread"   -> saveInt "max-thread" val sMaxThread
+    "max-patch"    -> saveInt "max-patch" val sMaxPatch
     _              -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT m Int
@@ -302,7 +304,7 @@ getConfigInt key = do
     "revert-delay" -> liftIO $ readTVarIO sRevertDelay
     "timeout"      -> liftIO $ readTVarIO sTaskTimeout
     "keepalive"    -> liftIO $ readTVarIO sKeepalive
-    "max-thread"   -> liftIO $ readTVarIO sMaxThread
+    "max-patch"    -> liftIO $ readTVarIO sMaxPatch
     _              -> pure 0
 
 keepalive :: Monad m => SchedT m (TVar Int)
@@ -342,10 +344,7 @@ runChanJob taskList = do
   where doChanJob
           :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
           => TaskList m -> Action -> SchedT m ()
-        doChanJob tl (Add job)    = do
-          maxThread <- liftIO . readTVarIO =<< asks sMaxThread
-          thread <- liftIO $ FL.size tl
-          when (maxThread > thread) $ reSchedJob tl job
+        doChanJob tl (Add job)    = reSchedJob tl job
         doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
         doChanJob tl Cancel       = mapM_ cancel =<< liftIO (FL.elems tl)
         doChanJob tl PollJob      = pollJob tl
@@ -367,25 +366,32 @@ pollJob taskList = do
   SchedEnv{..} <- ask
   mapM_ checkPoll =<< liftIO (FL.toList taskList)
 
-  delay <- (+100) <$> pollDelay
-  next <- liftIO $ (+ delay) <$> getEpochTime
+  now <- liftIO getEpochTime
+  next <- (+ (100 + now)) <$> pollDelay
 
+  handles <- liftIO $ FL.keys taskList
 
   funcList <- foldrM foldFunc1 [] =<< transactReadOnly (queryJobTree treeFuncList)
 
-  maxThread <- liftIO $ readTVarIO sMaxThread
+  maxPatch <- liftIO $ readTVarIO sMaxPatch
 
-  jobs <- fmap concat $ transactReadOnly
+  let check job = if jHandle job `elem` handles then False
+                                                else jSchedAt job < next
+
+  jobs <- transactReadOnly
             $ queryJobTree
-            $ foldrTree' (`elem` funcList) (foldFunc maxThread next) []
+            $ foldrTree' (`elem` funcList) (foldFunc maxPatch check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
 
-  when (length jobs >= maxThread - 20) $ pushChanList (PollJob1 10)
+  when (PSQ.size jobs >= maxPatch - 20) $ pushChanList (PollJob1 10)
 
-  where foldFunc :: Int -> Int64 -> Job -> [Job] -> [Job]
-        foldFunc t0 t job acc | jSchedAt job > t || length acc > t0 = acc
-                              | otherwise = job : acc
+  where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
+        foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (jHandle job) (now - jSchedAt job) job acc
+                                 | otherwise = acc
+          where trimPSQ :: HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
+                trimPSQ q | PSQ.size q > s = PSQ.deleteMin q
+                          | otherwise = q
 
         foldFunc1 :: MonadIO m => FuncName -> [FuncName] -> SchedT m [FuncName]
         foldFunc1 fn acc = do
@@ -408,7 +414,7 @@ pollJob taskList = do
 
         checkPoll
           :: (MonadIO m, MonadBaseControl IO m)
-          => (JobHandle, Async (StM (SchedT m) ())) -> SchedT m ()
+          => (JobHandle, Task m) -> SchedT m ()
         checkPoll (jh, w) = do
           r <- poll w
           case r of
@@ -561,7 +567,7 @@ dumpJob :: (MonadIO m, MonadHaskey Schema m) => SchedT m [Job]
 dumpJob = do
   js <- transactReadOnly $ queryProcTree $ foldrTree (:) []
   js' <- transactReadOnly $ queryJobTree $ foldrTree (:) []
-  return . concat $ js ++ js'
+  return $ js ++ js'
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
 alterFunc n f = do
@@ -656,7 +662,7 @@ revertProcessQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
   handles <- transactReadOnly $ queryProcTree $ foldrTree (foldFunc now tout) []
-  mapM_ (failJob . jHandle) $ concat handles
+  mapM_ (failJob . jHandle) handles
 
   where foldFunc :: Int64 -> Int64 -> Job -> [Job] -> [Job]
         foldFunc t1 tout job acc | jSchedAt job + tout < t1 = job : acc
