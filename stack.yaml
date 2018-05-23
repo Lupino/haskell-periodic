@@ -39,13 +39,10 @@ packages:
 - periodic-common
 - periodic-client
 - periodic-server
-- location:
-    git: https://github.com/Lupino/haskey-mtl.git
-    commit: a12cff875254558e068cb7683c6b58bbfd9b65e2
-  extra-dep: true
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
-extra-deps: []
+extra-deps:
+- haskey-mtl-0.3.1.0
 
 # Override default flag values for local packages and extra-deps
 flags: {}
