@@ -94,6 +94,8 @@ import           GHC.Generics                     (Generic)
 
 import           Data.HashPSQ                     (HashPSQ)
 import qualified Data.HashPSQ                     as PSQ
+import           System.Log.Logger                (errorM)
+
 data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
 
 data SchedEnv = SchedEnv
@@ -355,29 +357,49 @@ runChanJob taskList = do
 
 
 pollDelay :: (MonadIO m, Num a) => SchedT m a
-pollDelay = do
-  d <- asks sPollDelay
-  liftIO $ fromIntegral <$> readTVarIO d
+pollDelay = liftIO . fmap fromIntegral . readTVarIO =<< asks sPollDelay
 
 pollJob
   :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
   => TaskList m -> SchedT m ()
 pollJob taskList = do
-  SchedEnv{..} <- ask
   mapM_ checkPoll =<< liftIO (FL.toList taskList)
+  stList <- asks sFuncStatList
+  funcList <- liftIO $ foldr foldFunc [] <$> FL.toList stList
+  pollJob_ taskList funcList
 
+  where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
+        foldFunc (_, FuncStat{sWorker=0}) acc = acc
+        foldFunc (fn, _) acc                  = fn:acc
+
+        checkPoll
+          :: (MonadIO m, MonadBaseControl IO m)
+          => (JobHandle, Task m) -> SchedT m ()
+        checkPoll (jh, w) = do
+          r <- poll w
+          case r of
+            Just (Right ())  -> liftIO $ FL.delete taskList jh
+            Just (Left e)  ->
+              liftIO $ FL.delete taskList jh
+                     >> errorM "Periodic.Server.Scheduler" ("Poll error: " ++ show e)
+            Nothing -> do
+              r0 <- canRun fn
+              unless r0 $ cancel w
+
+          where (fn, _) = unHandle jh
+
+pollJob_
+  :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
+  => TaskList m -> [FuncName] -> SchedT m ()
+pollJob_ _ [] = pure ()
+pollJob_ taskList funcList = do
   now <- liftIO getEpochTime
   next <- (+ (100 + now)) <$> pollDelay
-
   handles <- liftIO $ FL.keys taskList
-
-  funcList <- foldrM foldFunc1 [] =<< transactReadOnly (queryJobTree treeFuncList)
-
-  maxPatch <- liftIO $ readTVarIO sMaxPatch
-
   let check job = if jHandle job `elem` handles then False
                                                 else jSchedAt job < next
 
+  maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly
             $ queryJobTree
             $ foldrTree' (`elem` funcList) (foldFunc maxPatch check now) PSQ.empty
@@ -393,12 +415,6 @@ pollJob taskList = do
                 trimPSQ q | PSQ.size q > s = trimPSQ $ PSQ.deleteMin q
                           | otherwise = q
 
-        foldFunc1 :: MonadIO m => FuncName -> [FuncName] -> SchedT m [FuncName]
-        foldFunc1 fn acc = do
-          r <- canRun fn
-          if r then pure (fn:acc)
-               else pure acc
-
         checkJob
           :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
           => TaskList m -> Job -> SchedT m ()
@@ -411,19 +427,6 @@ pollJob taskList = do
             Just w0 -> do
               r <- canRun jFuncName
               unless r $ cancel w0
-
-        checkPoll
-          :: (MonadIO m, MonadBaseControl IO m)
-          => (JobHandle, Task m) -> SchedT m ()
-        checkPoll (jh, w) = do
-          r <- poll w
-          case r of
-            Just (Right ()) -> liftIO $ FL.delete taskList jh
-            _               -> do
-              r0 <- canRun fn
-              unless r0 $ cancel w
-
-          where (fn, _) = unHandle jh
 
 pushChanList :: MonadIO m => Action -> SchedT m ()
 pushChanList act = do
