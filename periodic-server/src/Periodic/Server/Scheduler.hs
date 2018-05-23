@@ -390,7 +390,7 @@ pollJob taskList = do
         foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (jHandle job) (now - jSchedAt job) job acc
                                  | otherwise = acc
           where trimPSQ :: HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
-                trimPSQ q | PSQ.size q > s = PSQ.deleteMin q
+                trimPSQ q | PSQ.size q > s = trimPSQ $ PSQ.deleteMin q
                           | otherwise = q
 
         foldFunc1 :: MonadIO m => FuncName -> [FuncName] -> SchedT m [FuncName]
