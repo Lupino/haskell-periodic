@@ -10,7 +10,7 @@ import           Control.Monad          (void, when)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Binary            (decodeFile, encodeFile)
 import           Data.ByteString        (ByteString)
-import qualified Data.ByteString.Char8  as B (pack, unpack)
+import qualified Data.ByteString.Char8  as B (pack, readFile, unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.Int               (Int64)
 import           Data.List              (isPrefixOf, transpose)
@@ -20,7 +20,7 @@ import           Periodic.Socket        (getService)
 import           Periodic.Transport     (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR (makeXORTransport)
-import           Periodic.Types         (Workload)
+import           Periodic.Types         (Workload (..))
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
 import           Text.Read              (readMaybe)
@@ -118,10 +118,10 @@ printSubmitHelp :: IO ()
 printSubmitHelp = do
   putStrLn "periodic submit - Submit job"
   putStrLn ""
-  putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD] [--later 0]"
+  putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD|@FILE] [--later 0]"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -w --workload WORKLOAD"
+  putStrLn "  -w --workload WORKLOAD or @FILE"
   putStrLn "     --later    Sched job later"
   putStrLn ""
   exitSuccess
@@ -275,16 +275,22 @@ doDump _ = liftIO printDumpHelp
 
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp
-doSubmitJob (x:y:xs) = void $ submitJob (fromString x) (fromString y) wl l
+doSubmitJob (x:y:xs) = do
+  (wl, l) <- liftIO $ go (Nothing, Nothing) xs
+  void $ submitJob (fromString x) (fromString y) wl l
 
-  where go :: (Maybe Workload, Maybe Int64) -> [String] -> (Maybe Workload, Maybe Int64)
-        go v []                        = v
-        go (_, l0) ("-w":w:ys)         = go (Just (fromString w), l0) ys
-        go (_, l0) ("--workload":w:ys) = go (Just (fromString w), l0) ys
-        go (w, _) ("--later":l0:ys)    = go (w, readMaybe l0) ys
-        go v (_:ys)                    = go v ys
-
-        (wl, l) = go (Nothing, Nothing) xs
+  where go :: (Maybe Workload, Maybe Int64) -> [String] -> IO (Maybe Workload, Maybe Int64)
+        go v []                              = pure v
+        go (_, l0) ("-w":('@':f):ys)         = do
+          w <- B.readFile f
+          go (Just (Workload w), l0) ys
+        go (_, l0) ("--workload":('@':f):ys) = do
+          w <- B.readFile f
+          go (Just (Workload w), l0) ys
+        go (_, l0) ("-w":w:ys)               = go (Just (fromString w), l0) ys
+        go (_, l0) ("--workload":w:ys)       = go (Just (fromString w), l0) ys
+        go (w, _) ("--later":l0:ys)          = go (w, readMaybe l0) ys
+        go v (_:ys)                          = go v ys
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status
