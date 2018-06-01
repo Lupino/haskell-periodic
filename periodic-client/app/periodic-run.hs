@@ -17,12 +17,13 @@ import qualified Data.Text                      as T (unpack)
 import           Data.Text.Encoding             (decodeUtf8With)
 import           Data.Text.Encoding.Error       (ignore)
 import           Periodic.Job                   (JobT, name, schedLater,
-                                                 workDone, workFail, workload)
+                                                 workData, workDone, workFail,
+                                                 workload)
 import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR         (makeXORTransport)
-import           Periodic.Types.Job             (FuncName (..))
+import           Periodic.Types.Job             (FuncName (..), Workload (..))
 import           Periodic.Worker                (addFunc, broadcast, runWorkerT,
                                                  work)
 import           System.Environment             (getArgs, lookupEnv)
@@ -41,6 +42,7 @@ data Options = Options { host     :: String
                        , caStore  :: FilePath
                        , thread   :: Int
                        , notify   :: Bool
+                       , data_    :: Bool
                        , showHelp :: Bool
                        }
 
@@ -54,6 +56,7 @@ options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , caStore = "ca.pem"
                       , thread = 1
                       , notify = False
+                      , data_ = True
                       , showHelp = False
                       }
 
@@ -69,6 +72,7 @@ parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
 parseOptions ("--thread":x:xs)   opt = parseOptions xs opt { thread = read x }
 parseOptions ("--help":xs)       opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)  opt = parseOptions xs opt { notify = True }
+parseOptions ("--data":xs)       opt = parseOptions xs opt { data_ = True }
 parseOptions ("-h":xs)           opt = parseOptions xs opt { showHelp = True }
 parseOptions []                  opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                 opt = (opt { showHelp = True }, "", "", [])
@@ -78,7 +82,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--broadcast]] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--broadcast] [--data]] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host      Socket path [$PERIODIC_PORT]"
@@ -91,6 +95,7 @@ printHelp = do
   putStrLn "     --ca        trusted certificates"
   putStrLn "     --thread    worker thread"
   putStrLn "     --broadcast is broadcast worker"
+  putStrLn "     --data      send work data to client"
   putStrLn "  -h --help      Display help message"
   putStrLn ""
   exitSuccess
@@ -110,7 +115,7 @@ main = do
 
   runWorkerT (makeTransport opts) host $ do
     let proc = if notify then broadcast else addFunc
-    proc (FuncName $ B.pack func) $ processWorker cmd argv
+    proc (FuncName $ B.pack func) $ processWorker data_ cmd argv
     liftIO $ putStrLn "Worker started."
     work thread
 
@@ -127,8 +132,8 @@ makeTransport' p transport  = do
   key <- LB.readFile p
   makeXORTransport key transport
 
-processWorker :: String -> [String] -> JobT IO ()
-processWorker cmd argv = do
+processWorker :: Bool -> String -> [String] -> JobT IO ()
+processWorker data_ cmd argv = do
   n <- name
   rb <- workload
   (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
@@ -142,8 +147,8 @@ processWorker cmd argv = do
         let lastLine = last $ LB.lines out
 
         case (readMaybe . unpackBS . LB.toStrict) lastLine of
-           Nothing    -> workDone
-           Just later -> schedLater later
+          Nothing    -> if data_ then workData (Workload $ LB.toStrict out) else workDone
+          Just later -> schedLater later
 
 unpackBS :: B.ByteString -> String
 unpackBS = T.unpack . decodeUtf8With ignore

@@ -33,6 +33,7 @@ import qualified Text.PrettyPrint.Boxes as T
 
 data Command = Status
              | Submit
+             | Run
              | Remove
              | Drop
              | Config
@@ -46,6 +47,7 @@ data Command = Status
 parseCommand :: String -> Command
 parseCommand "status"   = Status
 parseCommand "submit"   = Submit
+parseCommand "run"      = Run
 parseCommand "remove"   = Remove
 parseCommand "drop"     = Drop
 parseCommand "config"   = Config
@@ -94,6 +96,7 @@ printHelp = do
   putStrLn "Commands:"
   putStrLn "     status   Show status"
   putStrLn "     submit   Submit job"
+  putStrLn "     run      Run job and output result"
   putStrLn "     remove   Remove job"
   putStrLn "     drop     Drop function"
   putStrLn "     config   Set or Get config"
@@ -114,15 +117,28 @@ printHelp = do
   putStrLn ""
   exitSuccess
 
+printWorkloadHelp :: IO ()
+printWorkloadHelp = do
+  putStrLn ""
+  putStrLn "Available options:"
+  putStrLn "  -w --workload WORKLOAD or @FILE"
+
 printSubmitHelp :: IO ()
 printSubmitHelp = do
   putStrLn "periodic submit - Submit job"
   putStrLn ""
   putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD|@FILE] [--later 0]"
-  putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -w --workload WORKLOAD or @FILE"
+  printWorkloadHelp
   putStrLn "     --later    Sched job later"
+  putStrLn ""
+  exitSuccess
+
+printRunHelp :: IO ()
+printRunHelp = do
+  putStrLn "periodic run - Run job and output result"
+  putStrLn ""
+  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE]"
+  printWorkloadHelp
   putStrLn ""
   exitSuccess
 
@@ -208,6 +224,7 @@ main = do
   when (cmd == Help) printHelp
 
   when (cmd == Submit && argc < 2) printSubmitHelp
+  when (cmd == Run && argc < 2) printRunHelp
   when (cmd == Remove && argc < 2) printRemoveHelp
   when (cmd == Drop   && argc < 1) printDropHelp
   when (cmd == Config && argc < 1) printConfigHelp
@@ -238,6 +255,7 @@ processCommand :: Command -> [String] -> ClientT IO ()
 processCommand Help _     = liftIO printHelp
 processCommand Status _   = doStatus
 processCommand Submit xs  = doSubmitJob xs
+processCommand Run xs     = doRunJob xs
 processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
 processCommand Config xs  = doConfig xs
@@ -291,6 +309,21 @@ doSubmitJob (x:y:xs) = do
         go (_, l0) ("--workload":w:ys)       = go (Just (fromString w), l0) ys
         go (w, _) ("--later":l0:ys)          = go (w, readMaybe l0) ys
         go v (_:ys)                          = go v ys
+
+doRunJob []       = liftIO printRunHelp
+doRunJob [_]      = liftIO printRunHelp
+doRunJob (x:y:xs) = void . runJob (fromString x) (fromString y) =<< liftIO (go xs)
+
+  where go :: [String] -> IO (Maybe Workload)
+        go []                       = pure Nothing
+        go ("-w":('@':f):_)         = getFile f
+        go ("--workload":('@':f):_) = getFile f
+        go ("-w":w:_)               = pure $ Just (fromString w)
+        go ("--workload":w:_)       = pure $ Just (fromString w)
+        go (_:ys)                   = go ys
+
+        getFile :: String -> IO (Maybe Workload)
+        getFile fn = Just . Workload <$> B.readFile fn
 
 doStatus = do
   st <- map formatTime . unpackBS <$> status
