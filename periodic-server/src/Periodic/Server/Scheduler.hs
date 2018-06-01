@@ -567,8 +567,10 @@ removeJob job = do
       >>= commit_
 
   pushChanList (Remove job)
+  pushResult jh ""
   where jn = jName job
         fn = jFuncName job
+        jh = jHandle job
 
 dumpJob :: (MonadIO m, MonadHaskey Schema m) => SchedT m [Job]
 dumpJob = do
@@ -645,14 +647,9 @@ doneJob
   :: (MonadIO m, MonadHaskey Schema m)
   => JobHandle -> Workload -> SchedT m ()
 doneJob jh w = do
-  wl <- asks sWaitList
-  liftIO $ FL.alter wl updateWL jh
   transact_ $ updateProcTree (deleteTree fn jn) >=> commit_
-  where updateWL :: Maybe (Maybe Workload) -> Maybe (Maybe Workload)
-        updateWL Nothing  = Nothing
-        updateWL (Just _) = Just (Just w)
-
-        (fn, jn) = unHandle jh
+  pushResult jh w
+  where (fn, jn) = unHandle jh
 
 schedLaterJob
   :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
@@ -708,3 +705,13 @@ waitResult state job = do
             else pure ""
 
   where jh = jHandle job
+
+pushResult
+  :: (MonadIO m, MonadHaskey Schema m)
+  => JobHandle -> Workload -> SchedT m ()
+pushResult jh w = do
+  wl <- asks sWaitList
+  liftIO $ FL.alter wl updateWL jh
+  where updateWL :: Maybe (Maybe Workload) -> Maybe (Maybe Workload)
+        updateWL Nothing  = Nothing
+        updateWL (Just _) = Just (Just w)
