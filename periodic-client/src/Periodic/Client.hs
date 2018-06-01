@@ -15,6 +15,8 @@ module Periodic.Client
   , ping
   , submitJob_
   , submitJob
+  , runJob_
+  , runJob
   , removeJob_
   , removeJob
   , dropFunc
@@ -113,6 +115,21 @@ submitJob
 submitJob jFuncName jName w later = do
   jSchedAt <- (+fromMaybe 0 later) <$> liftIO getEpochTime
   submitJob_ Job{jWorkload = fromMaybe "" w, jCount = 0, ..}
+
+runJob_ :: (MonadIO m, MonadMask m) => Job -> ClientT m (Either String Workload)
+runJob_ j = withAgentT $ do
+  send (RunJob j)
+  w <- receive
+  case w of
+    Left e            -> pure $ Left e
+    Right (Result w0) -> pure $ Right w0
+
+runJob
+  :: (MonadIO m, MonadMask m)
+  => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> ClientT m (Either String Workload)
+runJob jFuncName jName w later = do
+  jSchedAt <- (+fromMaybe 0 later) <$> liftIO getEpochTime
+  runJob_ Job{jWorkload = fromMaybe "" w, jCount = 0, ..}
 
 dropFunc
   :: (MonadIO m, MonadMask m)

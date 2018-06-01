@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
@@ -104,7 +105,7 @@ handleAgentT WorkerConfig {..} = do
       env0 <- agentEnv'
       lift $ pushGrab wFuncList wJobQueue env0
     Right (WorkDone jh) -> do
-      lift $ doneJob jh
+      lift $ doneJob jh ""
       liftIO $ delete wJobQueue jh
     Right (WorkFail jh) -> do
       lift $ failJob jh
@@ -129,3 +130,7 @@ handleAgentT WorkerConfig {..} = do
       unless has $ do
         lift $ broadcastFunc fn True
         liftIO $ insert wFuncList fn
+
+    Right (WorkData jh w) -> do
+      lift $ doneJob jh w
+      liftIO $ delete wJobQueue jh

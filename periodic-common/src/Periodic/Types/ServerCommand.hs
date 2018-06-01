@@ -6,7 +6,7 @@ module Periodic.Types.ServerCommand
 
 import           Data.Byteable           (Byteable (..))
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (Job, JobHandle)
+import           Periodic.Types.Job      (Job, JobHandle, Workload)
 
 import           Data.Binary
 import           Data.Binary.Get         (getWord32be)
@@ -16,6 +16,7 @@ import           Data.ByteString.Lazy    (toStrict)
 data ServerCommand =
     Noop
   | JobAssign JobHandle Job
+  | Result Workload
   | NoJob
   | Pong
   | Unknown
@@ -49,6 +50,7 @@ instance Binary ServerCommand where
         val <- getWord32be
         pure . Config key $ fromIntegral val
       25 -> JobList <$> get
+      29 -> Result <$> get
       _ -> error $ "Error ServerCommand " ++ show tp
 
   put Noop               = putWord8 0
@@ -67,3 +69,6 @@ instance Binary ServerCommand where
   put (JobList jobs)        = do
     putWord8 25
     put jobs
+  put (Result w)        = do
+    putWord8 29
+    put w

@@ -7,7 +7,7 @@ module Periodic.Types.WorkerCommand
 import           Data.Byteable           (Byteable (..))
 import           Data.Int                (Int64)
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (FuncName, JobHandle)
+import           Periodic.Types.Job      (FuncName, JobHandle, Workload)
 
 import           Data.Binary
 import           Data.Binary.Get
@@ -19,6 +19,7 @@ data WorkerCommand =
   | SchedLater JobHandle Int64 Int
   | WorkDone JobHandle
   | WorkFail JobHandle
+  | WorkData JobHandle Workload
   | Sleep
   | Ping
   | CanDo FuncName
@@ -50,6 +51,9 @@ instance Binary WorkerCommand where
       7 -> CanDo <$> get
       8 -> CantDo <$> get
       21 -> Broadcast <$> get
+      30 -> do
+        jh <- get
+        WorkData jh <$> get
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
@@ -75,3 +79,7 @@ instance Binary WorkerCommand where
   put (Broadcast fn) = do
     putWord8 21
     put fn
+  put (WorkData jh w) = do
+    putWord8 30
+    put jh
+    put w

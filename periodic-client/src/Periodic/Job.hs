@@ -12,6 +12,7 @@ module Periodic.Job
   , counter
 
   , workDone
+  , workData
   , workFail
   , schedLater
   , schedLater'
@@ -62,6 +63,13 @@ workDone
 workDone = do
   h <- handle <$> env
   withAgentT $ send (WorkDone h)
+
+workData
+  :: (MonadIO m, MonadMask m)
+  => Workload -> JobT m ()
+workData w = do
+  h <- handle <$> env
+  withAgentT $ send (WorkData h w)
 
 workFail
   :: (MonadIO m, MonadMask m)

@@ -23,6 +23,7 @@ data ClientCommand =
   | Dump
   | Load [Job]
   | Shutdown
+  | RunJob Job
 
   deriving (Show)
 
@@ -49,6 +50,7 @@ instance Binary ClientCommand where
         pure . ConfigSet key $ fromIntegral val
       26 -> pure Dump
       27 -> Load <$> get
+      28 -> RunJob <$> get
       _  -> error $ "Error ClientCommand" ++ show tp
 
   put (SubmitJob job) = do
@@ -74,3 +76,6 @@ instance Binary ClientCommand where
   put (Load jobs)     = do
     putWord8 27
     put jobs
+  put (RunJob job)    = do
+    putWord8 28
+    put job

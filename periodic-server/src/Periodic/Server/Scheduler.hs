@@ -37,9 +37,10 @@ module Periodic.Server.Scheduler
   , keepalive
   , setConfigInt
   , getConfigInt
+  , waitResult
   ) where
 
-import           Control.Exception                (SomeException, try)
+import           Control.Exception                (SomeException, bracket_, try)
 import           Control.Monad                    (forever, mzero, unless, void,
                                                    when, (>=>))
 import           Data.Int                         (Int64)
@@ -98,6 +99,8 @@ import           System.Log.Logger                (errorM)
 
 data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
 
+type WaitList = IOHashMap JobHandle (Maybe Workload)
+
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
@@ -111,6 +114,7 @@ data SchedEnv = SchedEnv
   , sGrabQueue    :: GrabQueue
   , sAlive        :: TVar Bool
   , sChanList     :: TVar [Action]
+  , sWaitList     :: WaitList
   }
 
 type JobTree = Tree JobName Job
@@ -179,13 +183,13 @@ minSchedAt fn tree =
 foldrTree
   :: (AllocReaderM n, Key k)
   => (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n a
-foldrTree f a = B.foldrM (\t0 acc -> B.foldr f acc t0) a
+foldrTree f = B.foldrM (flip (B.foldr f))
 
 foldrTree'
   :: (AllocReaderM n, Key k)
   => (FuncName -> Bool)
   -> (Job -> a -> a) -> a -> Tree FuncName (Tree k Job) -> n a
-foldrTree' check f a = B.foldrWithKeyM (foldFunc f) a
+foldrTree' check f = B.foldrWithKeyM (foldFunc f)
   where foldFunc
           :: (AllocReaderM n, Key k)
           => (Job -> a -> a)
@@ -242,6 +246,7 @@ initSchedEnv :: FilePath -> IO () -> IO SchedEnv
 initSchedEnv sStorePath sCleanup = do
   createDirectoryIfMissing True sStorePath
   sFuncStatList <- newIOHashMap
+  sWaitList     <- newIOHashMap
   sLocker       <- L.new
   sGrabQueue    <- newGrabQueue
   sAlive        <- newTVarIO True
@@ -396,8 +401,7 @@ pollJob_ taskList funcList = do
   now <- liftIO getEpochTime
   next <- (+ (100 + now)) <$> pollDelay
   handles <- liftIO $ FL.keys taskList
-  let check job = if jHandle job `elem` handles then False
-                                                else jSchedAt job < next
+  let check job = notElem (jHandle job) handles && (jSchedAt job < next)
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly
@@ -636,11 +640,19 @@ retryJob job = do
          jn = jName job
 
 
-doneJob :: (MonadIO m, MonadHaskey Schema m) => JobHandle -> SchedT m ()
-doneJob jh =
-  transact_ $ updateProcTree (deleteTree fn jn) >=> commit_
 
-  where (fn, jn) = unHandle jh
+doneJob
+  :: (MonadIO m, MonadHaskey Schema m)
+  => JobHandle -> Workload -> SchedT m ()
+doneJob jh w = do
+  wl <- asks sWaitList
+  liftIO $ FL.alter wl updateWL jh
+  transact_ $ updateProcTree (deleteTree fn jn) >=> commit_
+  where updateWL :: Maybe (Maybe Workload) -> Maybe (Maybe Workload)
+        updateWL Nothing  = Nothing
+        updateWL (Just _) = Just (Just w)
+
+        (fn, jn) = unHandle jh
 
 schedLaterJob
   :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m)
@@ -680,3 +692,19 @@ shutdown = do
     writeTVar sAlive False
     return t
   when alive . void . async $ liftIO sCleanup
+
+waitResult :: MonadIO m => TVar Bool -> Job -> SchedT m Workload
+waitResult state job = do
+  wl <- asks sWaitList
+  liftIO $ bracket_ (FL.insert wl jh Nothing) (FL.delete wl jh)
+         $ atomically $ do
+           st <- readTVar state
+           if st then do
+             w0 <- FL.lookupSTM wl jh
+             case w0 of
+               Just (Just w1) -> pure w1
+               Just Nothing   -> retry
+               Nothing        -> pure ""
+            else pure ""
+
+  where jh = jHandle job
