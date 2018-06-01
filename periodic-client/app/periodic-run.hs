@@ -133,21 +133,21 @@ makeTransport' p transport  = do
   makeXORTransport key transport
 
 processWorker :: Bool -> String -> [String] -> JobT IO ()
-processWorker data_ cmd argv = do
+processWorker dat cmd argv = do
   n <- name
   rb <- workload
   (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
-  unless (LB.null out) $ liftIO $ LB.putStr out
+  unless (LB.null out || dat) $ liftIO $ LB.putStr out
   unless (LB.null err) $ liftIO $ LB.hPut stderr err
   case code of
     ExitFailure _ -> workFail
     ExitSuccess   ->
-      if LB.null out then workDone
-                     else do
-        let lastLine = last $ LB.lines out
+      if dat then workData (Workload $ LB.toStrict out)
+             else do
 
+        let lastLine = last $ LB.lines err
         case (readMaybe . unpackBS . LB.toStrict) lastLine of
-          Nothing    -> if data_ then workData (Workload $ LB.toStrict out) else workDone
+          Nothing    -> workDone
           Just later -> schedLater later
 
 unpackBS :: B.ByteString -> String

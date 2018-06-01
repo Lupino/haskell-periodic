@@ -10,7 +10,8 @@ import           Control.Monad          (void, when)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Binary            (decodeFile, encodeFile)
 import           Data.ByteString        (ByteString)
-import qualified Data.ByteString.Char8  as B (pack, readFile, unpack)
+import qualified Data.ByteString.Char8  as B (hPut, pack, putStr, readFile,
+                                              unpack)
 import qualified Data.ByteString.Lazy   as LB (readFile)
 import           Data.Int               (Int64)
 import           Data.List              (isPrefixOf, transpose)
@@ -23,6 +24,7 @@ import           Periodic.Transport.XOR (makeXORTransport)
 import           Periodic.Types         (Workload (..))
 import           System.Environment     (getArgs, lookupEnv)
 import           System.Exit            (exitSuccess)
+import           System.IO              (stderr)
 import           Text.Read              (readMaybe)
 
 import           Data.String            (fromString)
@@ -312,7 +314,11 @@ doSubmitJob (x:y:xs) = do
 
 doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
-doRunJob (x:y:xs) = void . runJob (fromString x) (fromString y) =<< liftIO (go xs)
+doRunJob (x:y:xs) = do
+  out <- runJob (fromString x) (fromString y) =<< liftIO (go xs)
+  case out of
+    Left e             -> liftIO $ B.hPut stderr $ B.pack e
+    Right (Workload w) -> liftIO $ B.putStr w
 
   where go :: [String] -> IO (Maybe Workload)
         go []                       = pure Nothing
