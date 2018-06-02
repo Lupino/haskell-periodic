@@ -146,16 +146,13 @@ processWorker sout dat cmd argv = do
   liftIO $ LB.hPut stderr err
   case code of
     ExitFailure _ -> workFail
-    ExitSuccess   ->
-      if dat then workData (LB.toStrict out)
-             else
-
-        if LB.null err then workDone
-                       else do
-          let lastLine = last $ LB.lines err
-          case (readMaybe . unpackBS . LB.toStrict) lastLine of
-            Nothing    -> workDone
-            Just later -> schedLater later
+    ExitSuccess | dat  -> workData (LB.toStrict out)
+                | LB.null err -> workDone
+                | otherwise -> do
+      let lastLine = last $ LB.lines err
+      case (readMaybe . unpackBS . LB.toStrict) lastLine of
+        Nothing    -> workDone
+        Just later -> schedLater later
 
 unpackBS :: B.ByteString -> String
 unpackBS = T.unpack . decodeUtf8With ignore
