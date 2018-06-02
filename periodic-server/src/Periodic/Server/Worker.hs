@@ -38,6 +38,7 @@ import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 import           Periodic.Utils               (getEpochTime)
+import           System.Log.Logger            (errorM)
 
 data WorkerConfig = WorkerConfig
   { wFuncList :: IOList FuncName
@@ -100,7 +101,9 @@ handleAgentT WorkerConfig {..} = do
     atomically $ writeTVar wLastVist t
   cmd <- receive
   case cmd of
-    Left _     -> liftC Conn.close -- close worker
+    Left e -> do
+      liftIO $ errorM "Periodic.Server.Worker" $ "Worker error: " ++ e
+      liftC Conn.close -- close worker
     Right GrabJob -> do
       env0 <- agentEnv'
       lift $ pushGrab wFuncList wJobQueue env0
