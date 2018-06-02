@@ -122,6 +122,7 @@ runJob_ j = withAgentT $ do
   case w of
     Left e            -> pure $ Left e
     Right (Result w0) -> pure $ Right w0
+    Right _           -> pure $ Left "Failed"
 
 runJob
   :: (MonadIO m, MonadMask m)

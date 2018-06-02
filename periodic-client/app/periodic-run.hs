@@ -6,7 +6,7 @@ module Main
     main
   ) where
 
-import           Control.Monad                  (unless, when)
+import           Control.Monad                  (when)
 import           Control.Monad.IO.Class         (liftIO)
 import qualified Data.ByteString.Char8          as B (ByteString, pack)
 import qualified Data.ByteString.Lazy           as LB (null, readFile, toStrict)
@@ -23,7 +23,7 @@ import           Periodic.Socket                (getService)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.TLS
 import           Periodic.Transport.XOR         (makeXORTransport)
-import           Periodic.Types.Job             (FuncName (..), Workload (..))
+import           Periodic.Types.Job             (FuncName (..))
 import           Periodic.Worker                (addFunc, broadcast, runWorkerT,
                                                  work)
 import           System.Environment             (getArgs, lookupEnv)

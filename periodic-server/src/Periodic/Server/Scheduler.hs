@@ -88,7 +88,7 @@ import           Data.BTree.Impure                (Tree)
 import qualified Data.BTree.Impure                as B
 import           Data.BTree.Primitives            (Key, Value)
 import           Data.ByteString                  (ByteString)
-import           Data.Foldable                    (foldrM, forM_)
+import           Data.Foldable                    (forM_)
 import           Data.Typeable                    (Typeable)
 import           Database.Haskey.Alloc.Concurrent (Root)
 import           GHC.Generics                     (Generic)
