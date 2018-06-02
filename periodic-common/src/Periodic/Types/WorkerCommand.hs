@@ -12,6 +12,7 @@ import           Periodic.Types.Job      (FuncName, JobHandle, Workload)
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
+import           Data.ByteString         (ByteString)
 import           Data.ByteString.Lazy    (toStrict)
 
 data WorkerCommand =
@@ -19,7 +20,7 @@ data WorkerCommand =
   | SchedLater JobHandle Int64 Int
   | WorkDone JobHandle
   | WorkFail JobHandle
-  | WorkData JobHandle Workload
+  | WorkData JobHandle ByteString
   | Sleep
   | Ping
   | CanDo FuncName
@@ -53,7 +54,7 @@ instance Binary WorkerCommand where
       21 -> Broadcast <$> get
       30 -> do
         jh <- get
-        WorkData jh <$> get
+        WorkData jh . toStrict <$> getRemainingLazyByteString
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
@@ -82,4 +83,4 @@ instance Binary WorkerCommand where
   put (WorkData jh w) = do
     putWord8 30
     put jh
-    put w
+    putByteString w

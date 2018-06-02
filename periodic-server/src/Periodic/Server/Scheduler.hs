@@ -99,7 +99,7 @@ import           System.Log.Logger                (errorM)
 
 data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
 
-type WaitList = IOHashMap JobHandle (Maybe Workload)
+type WaitList = IOHashMap JobHandle (Maybe ByteString)
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
@@ -645,7 +645,7 @@ retryJob job = do
 
 doneJob
   :: (MonadIO m, MonadHaskey Schema m)
-  => JobHandle -> Workload -> SchedT m ()
+  => JobHandle -> ByteString -> SchedT m ()
 doneJob jh w = do
   transact_ $ updateProcTree (deleteTree fn jn) >=> commit_
   pushResult jh w
@@ -690,7 +690,7 @@ shutdown = do
     return t
   when alive . void . async $ liftIO sCleanup
 
-waitResult :: MonadIO m => TVar Bool -> Job -> SchedT m Workload
+waitResult :: MonadIO m => TVar Bool -> Job -> SchedT m ByteString
 waitResult state job = do
   wl <- asks sWaitList
   liftIO $ bracket_ (FL.insert wl jh Nothing) (FL.delete wl jh)
@@ -708,10 +708,10 @@ waitResult state job = do
 
 pushResult
   :: (MonadIO m, MonadHaskey Schema m)
-  => JobHandle -> Workload -> SchedT m ()
+  => JobHandle -> ByteString -> SchedT m ()
 pushResult jh w = do
   wl <- asks sWaitList
   liftIO $ FL.alter wl updateWL jh
-  where updateWL :: Maybe (Maybe Workload) -> Maybe (Maybe Workload)
+  where updateWL :: Maybe (Maybe ByteString) -> Maybe (Maybe ByteString)
         updateWL Nothing  = Nothing
         updateWL (Just _) = Just (Just w)

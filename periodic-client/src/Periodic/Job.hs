@@ -70,7 +70,7 @@ workData
   => ByteString -> JobT m ()
 workData w = do
   h <- handle <$> env
-  withAgentT $ send (WorkData h (Workload w))
+  withAgentT $ send (WorkData h w)
 
 workFail
   :: (MonadIO m, MonadMask m)
