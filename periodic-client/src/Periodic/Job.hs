@@ -20,6 +20,7 @@ module Periodic.Job
 
 import           Control.Monad.Catch          (MonadMask)
 import           Control.Monad.IO.Class       (MonadIO (..))
+import           Data.ByteString              (ByteString)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
 import           Periodic.Node
@@ -66,10 +67,10 @@ workDone = do
 
 workData
   :: (MonadIO m, MonadMask m)
-  => Workload -> JobT m ()
+  => ByteString -> JobT m ()
 workData w = do
   h <- handle <$> env
-  withAgentT $ send (WorkData h w)
+  withAgentT $ send (WorkData h (Workload w))
 
 workFail
   :: (MonadIO m, MonadMask m)
