@@ -43,7 +43,7 @@ import           Periodic.Socket              (connect)
 import           Periodic.Transport           (Transport, makeSocketTransport)
 import           Periodic.Types               (ClientType (TypeClient))
 import           Periodic.Types.ClientCommand
-import           Periodic.Types.Internal      (ConfigKey (..))
+import           Periodic.Types.Internal      (ConfigKey (..), parseBinary)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 
@@ -188,11 +188,10 @@ load jobs = withAgentT $ do
 dump :: (MonadIO m, MonadMask m) => ClientT m [Job]
 dump = withAgentT $ do
   send Dump
-  ret <- receive
+  ret <- parseBinary <$> receive_
   case ret of
-    Left _            -> return []
-    Right (JobList v) -> return v
-    Right _           -> return []
+    Left _  -> return []
+    Right v -> return v
 
 shutdown
   :: (MonadIO m, MonadMask m)

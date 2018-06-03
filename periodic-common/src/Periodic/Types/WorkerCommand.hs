@@ -7,7 +7,7 @@ module Periodic.Types.WorkerCommand
 import           Data.Byteable           (Byteable (..))
 import           Data.Int                (Int64)
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (FuncName, JobHandle, Workload)
+import           Periodic.Types.Job      (FuncName, JobHandle)
 
 import           Data.Binary
 import           Data.Binary.Get
@@ -52,7 +52,7 @@ instance Binary WorkerCommand where
       7 -> CanDo <$> get
       8 -> CantDo <$> get
       21 -> Broadcast <$> get
-      30 -> do
+      26 -> do
         jh <- get
         WorkData jh . toStrict <$> getRemainingLazyByteString
       _ -> error $ "Error WorkerCommand " ++ show tp
@@ -81,6 +81,6 @@ instance Binary WorkerCommand where
     putWord8 21
     put fn
   put (WorkData jh w) = do
-    putWord8 30
+    putWord8 26
     put jh
     putByteString w

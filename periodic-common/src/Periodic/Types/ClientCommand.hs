@@ -48,9 +48,9 @@ instance Binary ClientCommand where
         key <- get
         val <- getWord32be
         pure . ConfigSet key $ fromIntegral val
-      26 -> pure Dump
-      27 -> Load <$> get
-      28 -> RunJob <$> get
+      18 -> pure Dump
+      19 -> Load <$> get
+      25 -> RunJob <$> get
       _  -> error $ "Error ClientCommand" ++ show tp
 
   put (SubmitJob job) = do
@@ -72,10 +72,10 @@ instance Binary ClientCommand where
     putWord8 23
     put k
     putWord32be $ fromIntegral v
-  put Dump            = putWord8 26
+  put Dump            = putWord8 18
   put (Load jobs)     = do
-    putWord8 27
+    putWord8 19
     put jobs
   put (RunJob job)    = do
-    putWord8 28
+    putWord8 25
     put job

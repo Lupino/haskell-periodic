@@ -22,8 +22,10 @@ import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.STM            (atomically)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Control  (MonadBaseControl)
+import           Data.Binary                  (encode)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
+import           Data.ByteString.Lazy         (toStrict)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (AgentT, liftC, receive, send,
                                                send_)
@@ -111,9 +113,7 @@ handleAgentT lastVist = do
       lift $ setConfigInt k v
       send Success
 
-    Right Dump -> do
-      jobs <- lift dumpJob
-      send (JobList jobs)
+    Right Dump -> send_ =<< lift (toStrict . encode <$> dumpJob)
 
     Right (Load jobs) -> do
       lift $ mapM_ pushJob jobs
