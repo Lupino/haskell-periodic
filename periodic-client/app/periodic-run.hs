@@ -33,33 +33,35 @@ import           System.Process.ByteString.Lazy (readProcessWithExitCode)
 import           Text.Read                      (readMaybe)
 
 
-data Options = Options { host     :: String
-                       , xorFile  :: FilePath
-                       , useTls   :: Bool
-                       , hostName :: String
-                       , certKey  :: FilePath
-                       , cert     :: FilePath
-                       , caStore  :: FilePath
-                       , thread   :: Int
-                       , notify   :: Bool
-                       , data_    :: Bool
-                       , stdout_  :: Bool
-                       , showHelp :: Bool
+data Options = Options { host      :: String
+                       , xorFile   :: FilePath
+                       , useTls    :: Bool
+                       , hostName  :: String
+                       , certKey   :: FilePath
+                       , cert      :: FilePath
+                       , caStore   :: FilePath
+                       , thread    :: Int
+                       , notify    :: Bool
+                       , useData   :: Bool
+                       , useStdout :: Bool
+                       , useName   :: Bool
+                       , showHelp  :: Bool
                        }
 
 options :: Maybe String -> Maybe String -> Options
-options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
-                      , xorFile = fromMaybe "" f
-                      , useTls = False
-                      , hostName = "localhost"
-                      , certKey = "client-key.pem"
-                      , cert = "client.pem"
-                      , caStore = "ca.pem"
-                      , thread = 1
-                      , notify = False
-                      , data_ = False
-                      , stdout_ = True
-                      , showHelp = False
+options h f = Options { host      = fromMaybe "unix:///tmp/periodic.sock" h
+                      , xorFile   = fromMaybe "" f
+                      , useTls    = False
+                      , hostName  = "localhost"
+                      , certKey   = "client-key.pem"
+                      , cert      = "client.pem"
+                      , caStore   = "ca.pem"
+                      , thread    = 1
+                      , notify    = False
+                      , useData   = False
+                      , useStdout = True
+                      , useName   = True
+                      , showHelp  = False
                       }
 
 parseOptions :: [String] -> Options -> (Options, String, String, [String])
@@ -74,8 +76,9 @@ parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
 parseOptions ("--thread":x:xs)   opt = parseOptions xs opt { thread = read x }
 parseOptions ("--help":xs)       opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)  opt = parseOptions xs opt { notify = True }
-parseOptions ("--data":xs)       opt = parseOptions xs opt { data_ = True }
-parseOptions ("--no-stdout":xs)  opt = parseOptions xs opt { stdout_ = False }
+parseOptions ("--data":xs)       opt = parseOptions xs opt { useData = True }
+parseOptions ("--no-stdout":xs)  opt = parseOptions xs opt { useStdout = False }
+parseOptions ("--no-name":xs)    opt = parseOptions xs opt { useName = False }
 parseOptions ("-h":xs)           opt = parseOptions xs opt { showHelp = True }
 parseOptions []                  opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                 opt = (opt { showHelp = True }, "", "", [])
@@ -85,7 +88,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--broadcast] [--data]] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--broadcast] [--data] [--no-stdout] [--no-name]] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host      Socket path [$PERIODIC_PORT]"
@@ -100,6 +103,7 @@ printHelp = do
   putStrLn "     --broadcast is broadcast worker"
   putStrLn "     --data      send work data to client"
   putStrLn "     --no-stdout hidden the stdout"
+  putStrLn "     --no-name   ignore the job name"
   putStrLn "  -h --help      Display help message"
   putStrLn ""
   exitSuccess
@@ -120,7 +124,7 @@ main = do
   runWorkerT (makeTransport opts) host $ do
     let proc = if notify then broadcast else addFunc
 
-    proc (FuncName $ B.pack func) $ processWorker stdout_ data_ cmd argv
+    proc (FuncName $ B.pack func) $ processWorker opts cmd argv
     liftIO $ putStrLn "Worker started."
     work thread
 
@@ -137,16 +141,17 @@ makeTransport' p transport  = do
   key <- LB.readFile p
   makeXORTransport key transport
 
-processWorker :: Bool -> Bool -> String -> [String] -> JobT IO ()
-processWorker sout dat cmd argv = do
+processWorker :: Options -> String -> [String] -> JobT IO ()
+processWorker Options{..} cmd argv = do
   n <- name
   rb <- workload
-  (code, out, err) <- liftIO $ readProcessWithExitCode cmd (argv ++ [n]) rb
-  when sout $ liftIO $ LB.putStr out
+  let argv' = if useName then argv ++ [n] else argv
+  (code, out, err) <- liftIO $ readProcessWithExitCode cmd argv' rb
+  when useStdout $ liftIO $ LB.putStr out
   liftIO $ LB.hPut stderr err
   case code of
     ExitFailure _ -> workFail
-    ExitSuccess | dat  -> workData (LB.toStrict out)
+    ExitSuccess | useData -> workData (LB.toStrict out)
                 | LB.null err -> workDone
                 | otherwise -> do
       let lastLine = last $ LB.lines err

@@ -6,7 +6,7 @@ module Periodic.Types.ServerCommand
 
 import           Data.Byteable           (Byteable (..))
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (Job, JobHandle, Workload)
+import           Periodic.Types.Job      (Job, JobHandle)
 
 import           Data.Binary
 import           Data.Binary.Get         (getWord32be)
