@@ -37,8 +37,7 @@ instance Binary ServerCommand where
       0 -> pure Noop
       5 -> do
         jh <- get
-        job <- get
-        pure (JobAssign jh job)
+        JobAssign jh <$> get
       6 -> pure NoJob
       10 -> pure Pong
       12 -> pure Unknown
