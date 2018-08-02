@@ -24,7 +24,7 @@ data Persister = Persister
   , minSchedAt :: FuncName -> IO Int64
   , funcList   :: IO [FuncName]
   , foldrM     :: forall a . (Job -> a -> a) -> a -> IO a
-  , foldrM'    :: forall a . (FuncName -> Bool) -> (Job -> a -> a) -> a -> IO a
+  , foldrM'    :: forall a . [FuncName] -> (Job -> a -> a) -> a -> IO a
   }
 
 persister :: Persister

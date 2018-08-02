@@ -30,7 +30,8 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe       (runMaybeT)
 import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 import           Data.ByteString                 (ByteString)
-import           Data.Either                     (isLeft)
+import           Data.Either                     (fromRight, isLeft)
+import           Data.String                     (fromString)
 import           Network.Socket                  (Socket, accept)
 import qualified Network.Socket                  as Socket (close)
 import           Periodic.Connection
@@ -40,13 +41,14 @@ import qualified Periodic.IOHashMap              as HM
 import           Periodic.Node                   (liftC)
 import           Periodic.Server.Client
 import qualified Periodic.Server.Client          as Client
-import           Periodic.Server.Persist         (persist)
+import           Periodic.Server.Persist.SQLite  (initSQLite)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Worker
 import qualified Periodic.Server.Worker          as Worker
 import           Periodic.Transport              (Transport)
 import           Periodic.Types                  (ClientType (..), runParser)
 import           Periodic.Utils                  (getEpochTime)
+import           System.Directory                (createDirectoryIfMissing)
 import           System.Log.Logger               (errorM)
 
 type ClientList = IOHashMap ByteString ClientEnv
@@ -213,7 +215,9 @@ startServer :: (Socket -> IO Transport) -> FilePath -> Socket -> IO ()
 startServer mk path sock = do
   state <- newTVarIO True
   sEnv <- initServerEnv state mk sock
-  schedEnv <- initSchedEnv path persist $ atomically $ writeTVar state False
+  createDirectoryIfMissing True path
+  sqlite <- initSQLite $ fromString $ path ++ "/data.sqlite"
+  schedEnv <- initSchedEnv path sqlite $ atomically $ writeTVar state False
 
   runSchedT schedEnv $ do
     startSchedT

@@ -54,8 +54,7 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand    (ServerCommand (JobAssign))
 import           Periodic.Utils                  (getEpochTime)
 
-import           System.Directory                (createDirectoryIfMissing,
-                                                  doesFileExist)
+import           System.Directory                (doesFileExist)
 import           System.FilePath                 ((</>))
 
 import           Control.Concurrent              (threadDelay)
@@ -143,7 +142,6 @@ runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 
 initSchedEnv :: FilePath -> Persist -> IO () -> IO SchedEnv
 initSchedEnv sStorePath sPersist sCleanup = do
-  createDirectoryIfMissing True sStorePath
   sFuncStatList <- newIOHashMap
   sWaitList     <- newIOHashMap
   sLocker       <- L.new
@@ -314,7 +312,7 @@ pollJob_ taskList funcList = do
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly $ \m _ ->
-    Persist.foldrM' m (`elem` funcList) (foldFunc maxPatch check now) PSQ.empty
+    Persist.foldrM' m funcList (foldFunc maxPatch check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
 
