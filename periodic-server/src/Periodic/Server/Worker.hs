@@ -28,7 +28,6 @@ import           Prelude                      hiding (elem)
 
 import           Control.Concurrent.STM.TVar
 import           Control.Monad.Catch          (MonadCatch)
-import           Control.Monad.Haskey         (MonadHaskey)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.STM            (atomically)
 import           Control.Monad.Trans.Class    (lift)
@@ -76,7 +75,7 @@ initWorkerEnv connEnv schedEnv = do
   return WorkerEnv{..}
 
 startWorkerT
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadHaskey Schema m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
   => WorkerEnv -> m ()
 startWorkerT env0 = runWorkerT env0 $ do
   startMainLoop_ . handleAgentT =<< env
@@ -94,7 +93,7 @@ getLastVist = do
   WorkerConfig {..} <- env
   liftIO $ readTVarIO wLastVist
 
-handleAgentT :: (MonadIO m, MonadBaseControl IO m, MonadHaskey Schema m) => WorkerConfig -> AgentT (SchedT m) ()
+handleAgentT :: (MonadIO m, MonadBaseControl IO m) => WorkerConfig -> AgentT (SchedT m) ()
 handleAgentT WorkerConfig {..} = do
   liftIO $ do
     t <- getEpochTime

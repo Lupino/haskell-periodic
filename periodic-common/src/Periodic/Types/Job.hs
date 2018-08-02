@@ -29,7 +29,6 @@ import           Periodic.Types.Internal
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
-import           Data.BTree.Primitives   (Key, Value)
 
 newtype FuncName  = FuncName {unFN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -57,9 +56,6 @@ instance Binary FuncName where
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
 
-instance Value FuncName
-instance Key FuncName
-
 newtype JobName   = JobName {unJN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
@@ -85,9 +81,6 @@ instance Binary JobName where
   put (JobName dat) = do
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
-
-instance Value JobName
-instance Key JobName
 
 data JobHandle = JobHandle FuncName ByteString
   deriving (Generic, Eq, Ord, Show)
@@ -165,8 +158,6 @@ instance Binary Job where
     put jWorkload
     putInt64be jSchedAt
     putInt32be $ fromIntegral jCount
-
-instance Value Job
 
 newJob :: FuncName -> JobName -> Job
 newJob jFuncName jName = Job { jWorkload = Workload B.empty
