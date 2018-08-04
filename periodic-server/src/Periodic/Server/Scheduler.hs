@@ -75,8 +75,9 @@ import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 import           System.IO                       (readFile, writeFile)
 import           Text.Read                       (readMaybe)
 
-import           Periodic.Server.Persist         (Persist, Persister)
-import qualified Periodic.Server.Persist         as Persist
+import           Periodic.Server.Persist         (Persist (main, proc),
+                                                  Persister)
+import qualified Periodic.Server.Persist         as P
 
 import           Data.Binary                     (Binary)
 import           Data.ByteString                 (ByteString)
@@ -232,13 +233,13 @@ withPersist f = do
   persist <- asks sPersist
   liftIO $ f persist
 
-transact :: MonadIO m => (Persist -> Persister -> Persister -> IO a) -> SchedT m a
-transact f = withPersist $ \persist -> do
-  Persist.transact persist $ f persist (Persist.main persist) (Persist.proc persist)
+transact :: MonadIO m => (Persist -> IO a) -> SchedT m a
+transact f = withPersist $ \persist ->
+  P.transact persist $ f persist
 
-transactReadOnly :: MonadIO m => (Persist -> Persister -> Persister -> IO a) -> SchedT m a
-transactReadOnly f = withPersist $ \persist -> do
-  Persist.transactReadOnly persist $ f persist (Persist.main persist) (Persist.proc persist)
+transactReadOnly :: MonadIO m => (Persist -> IO a) -> SchedT m a
+transactReadOnly f = withPersist $ \persist ->
+  P.transactReadOnly persist $ f persist
 
 runChanJob
   :: (MonadIO m, MonadBaseControl IO m)
@@ -314,8 +315,8 @@ pollJob_ taskList funcList = do
   let check job = notElem (jHandle job) handles && (jSchedAt job < next)
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
-  jobs <- transactReadOnly $ \_ m _ ->
-    Persist.foldr' m funcList (foldFunc maxPatch check now) PSQ.empty
+  jobs <- transactReadOnly $ \p ->
+    P.foldr' (main p) funcList (foldFunc maxPatch check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
 
@@ -335,7 +336,7 @@ pollJob_ taskList funcList = do
           w <- findTask tl job
           case w of
             Nothing -> do
-              isProc <- transactReadOnly $ \_ _ p -> Persist.member p jFuncName (hashJobName jName)
+              isProc <- transactReadOnly $ \p -> P.member (proc p) jFuncName (hashJobName jName)
               unless isProc $ reSchedJob tl job
             Just w0 -> do
               r <- canRun jFuncName
@@ -350,16 +351,16 @@ pushChanList act = do
 
 pushJob :: MonadIO m => Job -> SchedT m ()
 pushJob job@Job{..} = do
-  exists <- transactReadOnly $ \_ m _ -> Persist.member m jFuncName jName
+  exists <- transactReadOnly $ \p -> P.member (main p) jFuncName jName
   if exists then doPushJob
             else do
-              isProc <- transactReadOnly $ \_ _ p -> Persist.member p jFuncName (hashJobName jName)
+              isProc <- transactReadOnly $ \p -> P.member (proc p) jFuncName (hashJobName jName)
               unless isProc doPushJob
 
   where doPushJob :: MonadIO m => SchedT m ()
         doPushJob = do
           pushChanList (Add job)
-          transact $ \_ m _ -> Persist.insert m jFuncName jName job
+          transact $ \p -> P.insert (main p) jFuncName jName job
 
 reSchedJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
@@ -418,11 +419,11 @@ schedJob_ taskList job@Job{..} = do
           if alive then do
             liftIO $ IL.insert jq (jHandle job)
             nextSchedAt <- liftIO getEpochTime
-            transact $ \_ _ p -> Persist.insert p jFuncName (hashJobName jName) job {jSchedAt = nextSchedAt}
+            transact $ \p -> P.insert (proc p) jFuncName (hashJobName jName) job {jSchedAt = nextSchedAt}
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                transact $ \_ _ p -> Persist.delete p jFuncName (hashJobName jName)
+                transact $ \p -> P.delete (proc p) jFuncName (hashJobName jName)
                 liftIO $ IL.delete jq (jHandle job)
                 schedJob_ tl job
               Right _ -> endSchedJob
@@ -441,14 +442,14 @@ schedJob_ taskList job@Job{..} = do
           liftIO . try $ assignJob agent job
 
         endSchedJob :: MonadIO m => SchedT m ()
-        endSchedJob = transact $ \_ m _ -> Persist.delete m jFuncName jName
+        endSchedJob = transact $ \p -> P.delete (main p) jFuncName jName
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
-  (size, sizePQ, sc) <- transactReadOnly $ \a m p -> do
-    size <- Persist.size m fn
-    sizePQ <- Persist.size p fn
-    sc <- Persist.minSchedAt a fn
+  (size, sizePQ, sc) <- transactReadOnly $ \p -> do
+    size <- P.size (main p) fn
+    sizePQ <- P.size (proc p) fn
+    sc <- P.minSchedAt p fn
     pure (size, sizePQ, sc)
 
   SchedEnv{..} <- ask
@@ -465,9 +466,9 @@ adjustFuncStat fn = do
 
 removeJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
 removeJob job = do
-  transact $ \_ m p -> do
-    Persist.delete p fn (hashJobName jn)
-    Persist.delete p fn jn
+  transact $ \p -> do
+    P.delete (proc p) fn (hashJobName jn)
+    P.delete (main p) fn jn
 
   pushChanList (Remove job)
   pushResult jh ""
@@ -476,16 +477,16 @@ removeJob job = do
         jh = jHandle job
 
 dumpJob :: MonadIO m => SchedT m [Job]
-dumpJob = transactReadOnly $ \_ m p -> do
-  js <- Persist.foldr m (:) []
-  js' <- Persist.foldr p (:) []
+dumpJob = transactReadOnly $ \p -> do
+  js <- P.foldr (main p) (:) []
+  js' <- P.foldr (proc p) (:) []
   return $ js ++ js'
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
 alterFunc n f = do
   SchedEnv{..} <- ask
   liftIO $ FL.alter sFuncStatList f n
-  transact $ \a _ _ -> Persist.insertFuncName a n
+  transact $ \p -> P.insertFuncName p n
   pushChanList PollJob
 
 addFunc :: MonadIO m => FuncName -> SchedT m ()
@@ -513,7 +514,7 @@ dropFunc n = do
     case st of
       Just FuncStat{sWorker=0} -> do
         FL.delete sFuncStatList n
-        Persist.transact sPersist $ Persist.removeFuncName sPersist n
+        P.transact sPersist $ P.removeFuncName sPersist n
       _                        -> pure ()
 
   pushChanList PollJob
@@ -529,7 +530,7 @@ assignJob env0 job =
 
 failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
 failJob jh = do
-  job <- transactReadOnly $ \_ _ p -> Persist.lookup p fn jn
+  job <- transactReadOnly $ \p -> P.lookup (proc p) fn jn
   when (isJust job) $ do
     nextSchedAt <- liftIO getEpochTime
     retryJob ((fromJust job) {jSchedAt = nextSchedAt})
@@ -538,9 +539,9 @@ failJob jh = do
 
 retryJob :: MonadIO m => Job -> SchedT m ()
 retryJob job = do
-  transact $ \_ m p -> do
-    Persist.delete p fn (hashJobName jn)
-    Persist.insert m fn jn job
+  transact $ \p -> do
+    P.delete (proc p) fn (hashJobName jn)
+    P.insert (main p) fn jn job
 
   pushChanList (Add job)
 
@@ -553,7 +554,7 @@ doneJob
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT m ()
 doneJob jh w = do
-  transact $ \_ _ p -> Persist.delete p fn jn
+  transact $ \p -> P.delete (proc p) fn jn
   pushResult jh w
   where (fn, jn) = unHandle jh
 
@@ -561,7 +562,7 @@ schedLaterJob
   :: (MonadIO m, MonadBaseControl IO m)
   => JobHandle -> Int64 -> Int -> SchedT m ()
 schedLaterJob jh later step = do
-  job <- transactReadOnly $ \_ _ p -> Persist.lookup p fn jn
+  job <- transactReadOnly $ \p -> P.lookup (proc p) fn jn
   when (isJust job) $ do
     let job' = fromJust job
 
@@ -572,14 +573,14 @@ schedLaterJob jh later step = do
 
 status :: MonadIO m => SchedT m [FuncStat]
 status = do
-  mapM_ adjustFuncStat =<< transactReadOnly (\a _ _ -> Persist.funcList a)
+  mapM_ adjustFuncStat =<< transactReadOnly (\p -> P.funcList p)
   liftIO . FL.elems =<< asks sFuncStatList
 
 revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 revertProcessQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
-  handles <- transactReadOnly $ \_ _ p -> Persist.foldr p (foldFunc now tout) []
+  handles <- transactReadOnly $ \p -> P.foldr (proc p) (foldFunc now tout) []
   mapM_ (failJob . jHandle) handles
 
   where foldFunc :: Int64 -> Int64 -> Job -> [Job] -> [Job]
