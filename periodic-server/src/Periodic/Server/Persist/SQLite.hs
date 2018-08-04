@@ -39,6 +39,7 @@ initSQLite path = do
       beginTx db
       createTable db mainTableName
       createTable db procTableName
+      createFuncTable db
       commitTx db
       pure $ Persist
         { main = Persister
@@ -47,8 +48,6 @@ initSQLite path = do
           , insert = doInsert db mainTableName
           , delete = doDelete db mainTableName
           , size = doSize db mainTableName
-          , minSchedAt = doMinSchedAt db mainTableName
-          , funcList = doFuncList db mainTableName
           , foldr = doFoldr db mainTableName
           , foldr' = doFoldr' db mainTableName
           }
@@ -58,11 +57,14 @@ initSQLite path = do
           , insert = doInsert db procTableName
           , delete = doDelete db procTableName
           , size = doSize db procTableName
-          , minSchedAt = doMinSchedAt db procTableName
-          , funcList = doFuncList db procTableName
           , foldr = doFoldr db procTableName
           , foldr' = doFoldr' db procTableName
           }
+
+        , insertFuncName = doInsertFuncName db
+        , removeFuncName = doRemoveFuncName db
+        , funcList = doFuncList db
+        , minSchedAt = doMinSchedAt db mainTableName
         , transact = doTransact db
         , transactReadOnly = doTransact db
         }
@@ -98,6 +100,12 @@ createTable db (Table tn) = void . exec db $ Utf8 $
     <> " value BLOB,"
     <> " sched_at INTEGER DEFAULT 0,"
     <> " PRIMARY KEY (func, name))"
+
+createFuncTable :: Database -> IO ()
+createFuncTable db = void . exec db $ Utf8 $
+  "CREATE TABLE IF NOT EXISTS funcs ("
+    <> "func CHAR(256) NOT NULL,"
+    <> " PRIMARY KEY (func))"
 
 dbError :: String -> IO a
 dbError = throwM . userError . ("Database error: " ++)
@@ -150,7 +158,16 @@ doInsert db (Table tn) (FuncName fn) jn job = do
   bindInt64 stmt 4 $ jSchedAt job
   void $ liftEither $ step stmt
   void $ finalize stmt
+  doInsertFuncName db (FuncName fn)
   where sql = Utf8 $ "INSERT OR REPLACE INTO " <> tn <> " VALUES (?, ?, ?, ?)"
+
+doInsertFuncName :: Database -> FuncName -> IO ()
+doInsertFuncName db (FuncName fn) = do
+  stmt <- prepStmt db sql
+  bindBlob stmt 1 fn
+  void $ liftEither $ step stmt
+  void $ finalize stmt
+  where sql = Utf8 $ "INSERT OR REPLACE INTO funcs VALUES (?)"
 
 doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (ByteString -> a -> a) -> a -> IO a
 doFoldr_ db sql stepStmt f acc = do
@@ -190,10 +207,10 @@ doFoldr' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
         foldFunc  f0 (FuncName fn) acc0 =
           doFoldr_ db sql (\stmt -> void $ bindBlob stmt 1 fn) (mkFoldFunc f0) acc0
 
-doFuncList :: Database -> Table -> IO [FuncName]
-doFuncList db (Table tn) =
+doFuncList :: Database -> IO [FuncName]
+doFuncList db =
   doFoldr_ db sql (const $ pure ()) (\fn acc -> FuncName fn : acc) []
-  where sql = Utf8 $ "SELECT func FROM " <> tn <> " GROUP BY func"
+  where sql = Utf8 $ "SELECT func FROM funcs"
 
 doDelete :: Byteable k => Database -> Table -> FuncName -> k -> IO ()
 doDelete db (Table tn) (FuncName fn) jn = do
@@ -203,6 +220,21 @@ doDelete db (Table tn) (FuncName fn) jn = do
   void $ liftEither $ step stmt
   void $ finalize stmt
   where sql = Utf8 $ "DELETE FROM " <> tn <> " WHERE func=? and name=?"
+
+doRemoveFuncName :: Database -> FuncName -> IO ()
+doRemoveFuncName db (FuncName fn) = do
+  doRemove sql
+  doRemove sql0
+
+  where sql = Utf8 $ "DELETE FROM funcs WHERE func=?"
+        sql0 = Utf8 $ "DELETE FROM main WHERE func=?"
+
+        doRemove :: Utf8 -> IO ()
+        doRemove sql = do
+          stmt <- prepStmt db sql
+          bindBlob stmt 1 fn
+          void $ liftEither $ step stmt
+          void $ finalize stmt
 
 doMinSchedAt :: Database -> Table -> FuncName -> IO Int64
 doMinSchedAt db (Table tn) (FuncName fn) = do
