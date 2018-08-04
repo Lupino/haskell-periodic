@@ -125,21 +125,15 @@ prepStmt c q = do
       Right (Just s) -> return s
 
 doLookup :: Byteable k => Database -> Table -> FuncName -> k -> IO (Maybe Job)
-doLookup db (Table tn) fn jn = do
-  stmt <- prepStmt db sql
-  bindFnAndJn stmt fn jn
+doLookup db (Table tn) fn jn = queryStmt db sql (bindFnAndJn fn jn) $ \stmt -> do
   sr <- liftEither $ step stmt
-  ret <- case sr of
+  case sr of
     Done -> pure Nothing
     Row -> do
       bs <- columnBlob stmt 0
       case runParser bs of
         Left e    -> dbError e
         Right job -> pure $ Just job
-
-  void $ finalize stmt
-
-  pure ret
 
   where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=? AND name=? LIMIT 1"
 
@@ -149,7 +143,7 @@ doMember db tb fn jn = isJust <$> doLookup db tb fn jn
 doInsert :: Byteable k => Database -> Table -> FuncName -> k -> Job -> IO ()
 doInsert db (Table tn) fn jn job = do
   execStmt db sql $ \stmt -> do
-    bindFnAndJn stmt fn jn
+    bindFnAndJn fn jn stmt
     void $ bindBlob stmt 3 $ toBytes job
     void $ bindInt64 stmt 4 $ jSchedAt job
   doInsertFuncName db fn
@@ -167,23 +161,15 @@ execStmt db sql bindStmt = do
   void $ finalize stmt
 
 execFN :: Database -> Utf8 -> FuncName -> IO ()
-execFN db sql (FuncName fn) = execStmt db sql $ \stmt -> void $ bindBlob stmt 1 fn
+execFN db sql fn = execStmt db sql (`bindFN` fn)
 
-bindFnAndJn :: Byteable k => Statement -> FuncName -> k -> IO ()
-bindFnAndJn stmt (FuncName fn) jn = do
+bindFnAndJn :: Byteable k => FuncName -> k -> Statement -> IO ()
+bindFnAndJn (FuncName fn) jn stmt = do
   void $ bindBlob stmt 1 fn
   void $ bindBlob stmt 2 $ toBytes jn
 
 doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (ByteString -> a -> a) -> a -> IO a
-doFoldr_ db sql bindStmt f acc = do
-  stmt <- prepStmt db sql
-
-  bindStmt stmt
-
-  ret <- foldStmt stmt f acc
-
-  void $ finalize stmt
-  pure ret
+doFoldr_ db sql bindStmt f acc = queryStmt db sql bindStmt $ foldStmt f acc
 
 mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
 mkFoldFunc f bs acc =
@@ -191,14 +177,14 @@ mkFoldFunc f bs acc =
     Left _    -> acc
     Right job -> f job acc
 
-foldStmt :: Statement -> (ByteString -> a -> a) -> a -> IO a
-foldStmt stmt f acc = do
+foldStmt :: (ByteString -> a -> a) -> a -> Statement -> IO a
+foldStmt f acc stmt = do
   sr <- liftEither $ step stmt
   case sr of
     Done -> pure acc
     Row -> do
       bs <- columnBlob stmt 0
-      foldStmt stmt f $ f bs acc
+      foldStmt f (f bs acc) stmt
 
 doFoldr :: Database -> Table -> (Job -> a -> a) -> a -> IO a
 doFoldr db (Table tn) f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
@@ -218,12 +204,7 @@ doFuncList db =
   where sql = Utf8 "SELECT func FROM funcs"
 
 doDelete :: Byteable k => Database -> Table -> FuncName -> k -> IO ()
-doDelete db (Table tn) (FuncName fn) jn = do
-  stmt <- prepStmt db sql
-  void $ bindBlob stmt 1 fn
-  void $ bindBlob stmt 2 $ toBytes jn
-  void $ liftEither $ step stmt
-  void $ finalize stmt
+doDelete db (Table tn) fn jn = execStmt db sql $ bindFnAndJn fn jn
   where sql = Utf8 $ "DELETE FROM " <> tn <> " WHERE func=? and name=?"
 
 doRemoveFuncName :: Database -> FuncName -> IO ()
@@ -235,22 +216,28 @@ doRemoveFuncName db fn = do
         sql1 = Utf8 "DELETE FROM main WHERE func=?"
 
 doMinSchedAt :: Database -> Table -> FuncName -> IO Int64
-doMinSchedAt db (Table tn) = queryInt64 db sql
+doMinSchedAt db (Table tn) fn = queryStmt db sql (`bindFN` fn) stepInt64
   where sql = Utf8 $ "SELECT sched_at FROM " <> tn <> " WHERE func=? ORDER BY sched_at ASC LIMIT 1"
 
 doSize :: Database -> Table -> FuncName -> IO Int64
-doSize db (Table tn) = queryInt64 db sql
+doSize db (Table tn) fn = queryStmt db sql (`bindFN` fn) stepInt64
   where sql = Utf8 $ "SELECT COUNT(*) FROM " <> tn <> " WHERE func=?"
 
-queryInt64 :: Database -> Utf8 -> FuncName -> IO Int64
-queryInt64 db sql (FuncName fn) = do
-  stmt <- prepStmt db sql
-  void $ bindBlob stmt 1 fn
+bindFN :: Statement -> FuncName -> IO ()
+bindFN stmt (FuncName fn) = void $ bindBlob stmt 1 fn
+
+stepInt64 :: Statement -> IO Int64
+stepInt64 stmt = do
   sr <- liftEither $ step stmt
 
-  ret <- case sr of
+  case sr of
     Done -> pure 0
     Row  -> columnInt64 stmt 0
 
+queryStmt :: Database -> Utf8 -> (Statement -> IO ()) -> (Statement -> IO a) -> IO a
+queryStmt db sql bindStmt stepStmt = do
+  stmt <- prepStmt db sql
+  bindStmt stmt
+  ret <- stepStmt stmt
   void $ finalize stmt
   pure ret
