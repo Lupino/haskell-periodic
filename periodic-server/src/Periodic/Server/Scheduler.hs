@@ -573,7 +573,7 @@ schedLaterJob jh later step = do
 
 status :: MonadIO m => SchedT m [FuncStat]
 status = do
-  mapM_ adjustFuncStat =<< transactReadOnly (\p -> P.funcList p)
+  mapM_ adjustFuncStat =<< transactReadOnly P.funcList
   liftIO . FL.elems =<< asks sFuncStatList
 
 revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
