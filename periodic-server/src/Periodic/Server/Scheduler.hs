@@ -312,7 +312,7 @@ pollJob_ taskList funcList = do
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly $ \m _ ->
-    Persist.foldrM' m funcList (foldFunc maxPatch check now) PSQ.empty
+    Persist.foldr' m funcList (foldFunc maxPatch check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
 
@@ -474,8 +474,8 @@ removeJob job = do
 
 dumpJob :: MonadIO m => SchedT m [Job]
 dumpJob = transactReadOnly $ \m p -> do
-  js <- Persist.foldrM m (:) []
-  js' <- Persist.foldrM p (:) []
+  js <- Persist.foldr m (:) []
+  js' <- Persist.foldr p (:) []
   return $ js ++ js'
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
@@ -573,7 +573,7 @@ revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 revertProcessQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
-  handles <- transactReadOnly $ \_ p -> Persist.foldrM p (foldFunc now tout) []
+  handles <- transactReadOnly $ \_ p -> Persist.foldr p (foldFunc now tout) []
   mapM_ (failJob . jHandle) handles
 
   where foldFunc :: Int64 -> Int64 -> Job -> [Job] -> [Job]

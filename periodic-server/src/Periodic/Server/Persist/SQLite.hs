@@ -5,7 +5,7 @@ module Periodic.Server.Persist.SQLite
   ( initSQLite
   ) where
 
-import           Prelude                 hiding (lookup)
+import           Prelude                 hiding (foldr, lookup)
 
 import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 import           Control.Monad           (void)
@@ -49,8 +49,8 @@ initSQLite path = do
           , size = doSize db mainTableName
           , minSchedAt = doMinSchedAt db mainTableName
           , funcList = doFuncList db mainTableName
-          , foldrM = doFoldrM db mainTableName
-          , foldrM' = doFoldrM' db mainTableName
+          , foldr = doFoldr db mainTableName
+          , foldr' = doFoldr' db mainTableName
           }
         , proc = Persister
           { member = doMember db procTableName
@@ -60,8 +60,8 @@ initSQLite path = do
           , size = doSize db procTableName
           , minSchedAt = doMinSchedAt db procTableName
           , funcList = doFuncList db procTableName
-          , foldrM = doFoldrM db procTableName
-          , foldrM' = doFoldrM' db procTableName
+          , foldr = doFoldr db procTableName
+          , foldr' = doFoldr' db procTableName
           }
         , transact = doTransact db
         , transactReadOnly = doTransact db
@@ -152,8 +152,8 @@ doInsert db (Table tn) (FuncName fn) jn job = do
   void $ finalize stmt
   where sql = Utf8 $ "INSERT OR REPLACE INTO " <> tn <> " VALUES (?, ?, ?, ?)"
 
-doFoldrM_ :: Database -> Utf8 -> (Statement -> IO ()) -> (Job -> a -> a) -> a -> IO a
-doFoldrM_ db sql stepStmt f acc = do
+doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (Job -> a -> a) -> a -> IO a
+doFoldr_ db sql stepStmt f acc = do
   stmt <- prepStmt db sql
 
   stepStmt stmt
@@ -178,17 +178,17 @@ foldStmt stmt f acc = do
       bs <- columnBlob stmt 0
       foldStmt stmt f $ f bs acc
 
-doFoldrM :: Database -> Table -> (Job -> a -> a) -> a -> IO a
-doFoldrM db (Table tn) = doFoldrM_ db sql (const $ pure ())
+doFoldr :: Database -> Table -> (Job -> a -> a) -> a -> IO a
+doFoldr db (Table tn) = doFoldr_ db sql (const $ pure ())
   where sql = Utf8 $ "SELECT value FROM " <> tn
 
-doFoldrM' :: Database -> Table -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldrM' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
+doFoldr' :: Database -> Table -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+doFoldr' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
   where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=?"
 
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 (FuncName fn) acc0 =
-          doFoldrM_ db sql (\stmt -> void $ bindBlob stmt 1 fn) f0 acc0
+          doFoldr_ db sql (\stmt -> void $ bindBlob stmt 1 fn) f0 acc0
 
 doFuncList :: Database -> Table -> IO [FuncName]
 doFuncList db (Table tn) = do

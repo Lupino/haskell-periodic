@@ -9,7 +9,7 @@ module Periodic.Server.Persist
   , persist
   ) where
 
-import           Prelude            hiding (lookup)
+import           Prelude            hiding (foldr, lookup)
 
 import           Data.Byteable      (Byteable (..))
 import           Data.Int           (Int64)
@@ -23,8 +23,8 @@ data Persister = Persister
   , size       :: FuncName -> IO Int64
   , minSchedAt :: FuncName -> IO Int64
   , funcList   :: IO [FuncName]
-  , foldrM     :: forall a . (Job -> a -> a) -> a -> IO a
-  , foldrM'    :: forall a . [FuncName] -> (Job -> a -> a) -> a -> IO a
+  , foldr      :: forall a . (Job -> a -> a) -> a -> IO a
+  , foldr'     :: forall a . [FuncName] -> (Job -> a -> a) -> a -> IO a
   }
 
 persister :: Persister
@@ -36,8 +36,8 @@ persister = Persister
   , size = \_ -> pure 0
   , minSchedAt = \_ -> pure 0
   , funcList = pure []
-  , foldrM = \_ a -> pure a
-  , foldrM' = \_ _ a -> pure a
+  , foldr = \_ a -> pure a
+  , foldr' = \_ _ a -> pure a
   }
 
 data Persist = Persist
