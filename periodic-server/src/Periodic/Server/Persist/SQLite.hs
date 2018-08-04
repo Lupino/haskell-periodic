@@ -12,6 +12,7 @@ import           Control.Monad           (void)
 import           Control.Monad.Catch
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString, intercalate)
+import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust)
 import           Data.String             (fromString)
@@ -151,34 +152,43 @@ doInsert db (Table tn) (FuncName fn) jn job = do
   void $ finalize stmt
   where sql = Utf8 $ "INSERT OR REPLACE INTO " <> tn <> " VALUES (?, ?, ?, ?)"
 
-doFoldrM_ :: Database -> Utf8 -> (Job -> a -> a) -> a -> IO a
-doFoldrM_ db sql f acc = do
+doFoldrM_ :: Database -> Utf8 -> (Statement -> IO ()) -> (Job -> a -> a) -> a -> IO a
+doFoldrM_ db sql stepStmt f acc = do
   stmt <- prepStmt db sql
 
-  ret <- go stmt f acc
+  stepStmt stmt
+
+  ret <- foldStmt stmt (foldFunc f) acc
 
   void $ finalize stmt
   pure ret
 
-  where go :: Statement -> (Job -> a -> a) -> a -> IO a
-        go stmt f0 acc0 = do
-          sr <- liftEither $ step stmt
-          case sr of
-            Done -> pure acc0
-            Row -> do
-              bs <- columnBlob stmt 0
-              case runParser bs of
-                Left e    -> dbError e
-                Right job -> go stmt f0 $ f0 job acc0
+  where foldFunc :: (Job -> a -> a) -> ByteString -> a -> a
+        foldFunc f0 bs acc0 =
+          case runParser bs of
+            Left e    -> acc0
+            Right job -> f0 job acc0
+
+foldStmt :: Statement -> (ByteString -> a -> a) -> a -> IO a
+foldStmt stmt f acc = do
+  sr <- liftEither $ step stmt
+  case sr of
+    Done -> pure acc
+    Row -> do
+      bs <- columnBlob stmt 0
+      foldStmt stmt f $ f bs acc
 
 doFoldrM :: Database -> Table -> (Job -> a -> a) -> a -> IO a
-doFoldrM db (Table tn) = doFoldrM_ db sql
+doFoldrM db (Table tn) = doFoldrM_ db sql (const $ pure ())
   where sql = Utf8 $ "SELECT value FROM " <> tn
 
 doFoldrM' :: Database -> Table -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldrM' db (Table tn) fns = doFoldrM_ db sql
-  where fnsql = intercalate "\",\"" $ map unFN fns
-        sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func IN (\"" <> fnsql <> "\")"
+doFoldrM' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
+  where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=?"
+
+        foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
+        foldFunc  f0 (FuncName fn) acc0 =
+          doFoldrM_ db sql (\stmt -> void $ bindBlob stmt 1 fn) f0 acc0
 
 doFuncList :: Database -> Table -> IO [FuncName]
 doFuncList db (Table tn) = do
