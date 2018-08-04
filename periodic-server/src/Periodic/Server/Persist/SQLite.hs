@@ -105,25 +105,6 @@ createFuncTable db = void . exec db $ Utf8 $
     <> "func CHAR(256) NOT NULL,"
     <> " PRIMARY KEY (func))"
 
-dbError :: String -> IO a
-dbError = throwM . userError . ("Database error: " ++)
-
-liftEither :: Show a => IO (Either a b) -> IO b
-liftEither a = do
-  er <- a
-  case er of
-    (Left e)  -> dbError (show e)
-    (Right r) -> return r
-{-# INLINE liftEither #-}
-
-prepStmt :: Database -> Utf8 -> IO Statement
-prepStmt c q = do
-    r <- prepare c q
-    case r of
-      Left e         -> dbError (show e)
-      Right Nothing  -> dbError "Statement prep failed"
-      Right (Just s) -> return s
-
 doLookup :: Byteable k => Database -> Table -> FuncName -> k -> IO (Maybe Job)
 doLookup db (Table tn) fn jn =
   listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc f) []
@@ -146,39 +127,6 @@ doInsert db (Table tn) fn jn job = do
 doInsertFuncName :: Database -> FuncName -> IO ()
 doInsertFuncName db = execFN db sql
   where sql = Utf8 "INSERT OR REPLACE INTO funcs VALUES (?)"
-
-execStmt :: Database -> Utf8 -> (Statement -> IO ()) -> IO ()
-execStmt db sql bindStmt = do
-  stmt <- prepStmt db sql
-  bindStmt stmt
-  void $ liftEither $ step stmt
-  void $ finalize stmt
-
-execFN :: Database -> Utf8 -> FuncName -> IO ()
-execFN db sql fn = execStmt db sql (`bindFN` fn)
-
-bindFnAndJn :: Byteable k => FuncName -> k -> Statement -> IO ()
-bindFnAndJn fn jn stmt = do
-  bindFN stmt fn
-  void $ bindBlob stmt 2 $ toBytes jn
-
-doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (ByteString -> a -> a) -> a -> IO a
-doFoldr_ db sql bindStmt f acc = queryStmt db sql bindStmt $ foldStmt f acc
-
-mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
-mkFoldFunc f bs acc =
-  case runParser bs of
-    Left _    -> acc
-    Right job -> f job acc
-
-foldStmt :: (ByteString -> a -> a) -> a -> Statement -> IO a
-foldStmt f acc stmt = do
-  sr <- liftEither $ step stmt
-  case sr of
-    Done -> pure acc
-    Row -> do
-      bs <- columnBlob stmt 0
-      foldStmt f (f bs acc) stmt
 
 doFoldr :: Database -> Table -> (Job -> a -> a) -> a -> IO a
 doFoldr db (Table tn) f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
@@ -217,16 +165,38 @@ doSize :: Database -> Table -> FuncName -> IO Int64
 doSize db (Table tn) fn = queryStmt db sql (`bindFN` fn) stepInt64
   where sql = Utf8 $ "SELECT COUNT(*) FROM " <> tn <> " WHERE func=?"
 
+
+dbError :: String -> IO a
+dbError = throwM . userError . ("Database error: " ++)
+
+liftEither :: Show a => IO (Either a b) -> IO b
+liftEither a = do
+  er <- a
+  case er of
+    (Left e)  -> dbError (show e)
+    (Right r) -> return r
+{-# INLINE liftEither #-}
+
+prepStmt :: Database -> Utf8 -> IO Statement
+prepStmt c q = do
+    r <- prepare c q
+    case r of
+      Left e         -> dbError (show e)
+      Right Nothing  -> dbError "Statement prep failed"
+      Right (Just s) -> return s
+
 bindFN :: Statement -> FuncName -> IO ()
 bindFN stmt (FuncName fn) = void $ bindBlob stmt 1 fn
 
-stepInt64 :: Statement -> IO Int64
-stepInt64 stmt = do
-  sr <- liftEither $ step stmt
+execStmt :: Database -> Utf8 -> (Statement -> IO ()) -> IO ()
+execStmt db sql bindStmt = do
+  stmt <- prepStmt db sql
+  bindStmt stmt
+  void $ liftEither $ step stmt
+  void $ finalize stmt
 
-  case sr of
-    Done -> pure 0
-    Row  -> columnInt64 stmt 0
+execFN :: Database -> Utf8 -> FuncName -> IO ()
+execFN db sql fn = execStmt db sql (`bindFN` fn)
 
 queryStmt :: Database -> Utf8 -> (Statement -> IO ()) -> (Statement -> IO a) -> IO a
 queryStmt db sql bindStmt stepStmt = do
@@ -235,3 +205,34 @@ queryStmt db sql bindStmt stepStmt = do
   ret <- stepStmt stmt
   void $ finalize stmt
   pure ret
+
+bindFnAndJn :: Byteable k => FuncName -> k -> Statement -> IO ()
+bindFnAndJn fn jn stmt = do
+  bindFN stmt fn
+  void $ bindBlob stmt 2 $ toBytes jn
+
+mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
+mkFoldFunc f bs acc =
+  case runParser bs of
+    Left _    -> acc
+    Right job -> f job acc
+
+foldStmt :: (ByteString -> a -> a) -> a -> Statement -> IO a
+foldStmt f acc stmt = do
+  sr <- liftEither $ step stmt
+  case sr of
+    Done -> pure acc
+    Row -> do
+      bs <- columnBlob stmt 0
+      foldStmt f (f bs acc) stmt
+
+doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (ByteString -> a -> a) -> a -> IO a
+doFoldr_ db sql bindStmt f acc = queryStmt db sql bindStmt $ foldStmt f acc
+
+stepInt64 :: Statement -> IO Int64
+stepInt64 stmt = do
+  sr <- liftEither $ step stmt
+
+  case sr of
+    Done -> pure 0
+    Row  -> columnInt64 stmt 0
