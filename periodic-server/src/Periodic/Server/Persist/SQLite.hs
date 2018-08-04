@@ -194,20 +194,12 @@ doFuncList :: Database -> Table -> IO [FuncName]
 doFuncList db (Table tn) = do
   stmt <- prepStmt db sql
 
-  ret <- go stmt []
+  ret <- foldStmt stmt (\fn acc -> FuncName fn:acc) []
 
   void $ finalize stmt
   pure ret
 
   where sql = Utf8 $ "SELECT func FROM " <> tn <> " GROUP BY func"
-        go :: Statement -> [FuncName] -> IO [FuncName]
-        go stmt acc = do
-          sr <- liftEither $ step stmt
-          case sr of
-            Done -> pure acc
-            Row -> do
-              fn <- columnBlob stmt 0
-              go stmt (FuncName fn:acc)
 
 doDelete :: Byteable k => Database -> Table -> FuncName -> k -> IO ()
 doDelete db (Table tn) (FuncName fn) jn = do
