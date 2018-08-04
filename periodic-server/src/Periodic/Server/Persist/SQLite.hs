@@ -152,22 +152,22 @@ doInsert db (Table tn) (FuncName fn) jn job = do
   void $ finalize stmt
   where sql = Utf8 $ "INSERT OR REPLACE INTO " <> tn <> " VALUES (?, ?, ?, ?)"
 
-doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (Job -> a -> a) -> a -> IO a
+doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (ByteString -> a -> a) -> a -> IO a
 doFoldr_ db sql stepStmt f acc = do
   stmt <- prepStmt db sql
 
   stepStmt stmt
 
-  ret <- foldStmt stmt (foldFunc f) acc
+  ret <- foldStmt stmt f acc
 
   void $ finalize stmt
   pure ret
 
-  where foldFunc :: (Job -> a -> a) -> ByteString -> a -> a
-        foldFunc f0 bs acc0 =
-          case runParser bs of
-            Left e    -> acc0
-            Right job -> f0 job acc0
+mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
+mkFoldFunc f bs acc =
+  case runParser bs of
+    Left e    -> acc
+    Right job -> f job acc
 
 foldStmt :: Statement -> (ByteString -> a -> a) -> a -> IO a
 foldStmt stmt f acc = do
@@ -179,7 +179,7 @@ foldStmt stmt f acc = do
       foldStmt stmt f $ f bs acc
 
 doFoldr :: Database -> Table -> (Job -> a -> a) -> a -> IO a
-doFoldr db (Table tn) = doFoldr_ db sql (const $ pure ())
+doFoldr db (Table tn) f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
   where sql = Utf8 $ "SELECT value FROM " <> tn
 
 doFoldr' :: Database -> Table -> [FuncName] -> (Job -> a -> a) -> a -> IO a
@@ -188,17 +188,11 @@ doFoldr' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
 
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 (FuncName fn) acc0 =
-          doFoldr_ db sql (\stmt -> void $ bindBlob stmt 1 fn) f0 acc0
+          doFoldr_ db sql (\stmt -> void $ bindBlob stmt 1 fn) (mkFoldFunc f0) acc0
 
 doFuncList :: Database -> Table -> IO [FuncName]
-doFuncList db (Table tn) = do
-  stmt <- prepStmt db sql
-
-  ret <- foldStmt stmt (\fn acc -> FuncName fn:acc) []
-
-  void $ finalize stmt
-  pure ret
-
+doFuncList db (Table tn) =
+  doFoldr_ db sql (const $ pure ()) (\fn acc -> FuncName fn : acc) []
   where sql = Utf8 $ "SELECT func FROM " <> tn <> " GROUP BY func"
 
 doDelete :: Byteable k => Database -> Table -> FuncName -> k -> IO ()
