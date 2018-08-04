@@ -13,7 +13,7 @@ import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
-import           Data.Maybe              (isJust)
+import           Data.Maybe              (isJust, listToMaybe)
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist (Persist (..), Persister (..))
 import           Periodic.Types.Internal (runParser)
@@ -125,17 +125,11 @@ prepStmt c q = do
       Right (Just s) -> return s
 
 doLookup :: Byteable k => Database -> Table -> FuncName -> k -> IO (Maybe Job)
-doLookup db (Table tn) fn jn = queryStmt db sql (bindFnAndJn fn jn) $ \stmt -> do
-  sr <- liftEither $ step stmt
-  case sr of
-    Done -> pure Nothing
-    Row -> do
-      bs <- columnBlob stmt 0
-      case runParser bs of
-        Left e    -> dbError e
-        Right job -> pure $ Just job
-
+doLookup db (Table tn) fn jn =
+  listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc f) []
   where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=? AND name=? LIMIT 1"
+        f :: Job -> [Job] -> [Job]
+        f job acc = job : acc
 
 doMember :: Byteable k => Database -> Table -> FuncName -> k -> IO Bool
 doMember db tb fn jn = isJust <$> doLookup db tb fn jn
@@ -164,8 +158,8 @@ execFN :: Database -> Utf8 -> FuncName -> IO ()
 execFN db sql fn = execStmt db sql (`bindFN` fn)
 
 bindFnAndJn :: Byteable k => FuncName -> k -> Statement -> IO ()
-bindFnAndJn (FuncName fn) jn stmt = do
-  void $ bindBlob stmt 1 fn
+bindFnAndJn fn jn stmt = do
+  bindFN stmt fn
   void $ bindBlob stmt 2 $ toBytes jn
 
 doFoldr_ :: Database -> Utf8 -> (Statement -> IO ()) -> (ByteString -> a -> a) -> a -> IO a
@@ -195,8 +189,8 @@ doFoldr' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
   where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=?"
 
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
-        foldFunc  f0 (FuncName fn) =
-          doFoldr_ db sql (\stmt -> void $ bindBlob stmt 1 fn) (mkFoldFunc f0)
+        foldFunc  f0 fn =
+          doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f0)
 
 doFuncList :: Database -> IO [FuncName]
 doFuncList db =
