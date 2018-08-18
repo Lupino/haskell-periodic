@@ -6,29 +6,31 @@ module Main
     main
   ) where
 
-import           Control.Monad          (void, when)
-import           Control.Monad.IO.Class (liftIO)
-import           Data.Binary            (decodeFile, encodeFile)
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString.Char8  as B (pack, putStr, readFile, unpack)
-import qualified Data.ByteString.Lazy   as LB (readFile)
-import           Data.Int               (Int64)
-import           Data.List              (isPrefixOf, transpose)
-import           Data.Maybe             (fromMaybe)
+import           Control.Monad                 (void, when)
+import           Control.Monad.IO.Class        (liftIO)
+import           Data.Binary                   (decodeFile, encodeFile)
+import           Data.ByteString               (ByteString)
+import qualified Data.ByteString.Char8         as B (pack, putStr, readFile,
+                                                     unpack)
+import qualified Data.ByteString.Lazy          as LB (readFile)
+import           Data.Int                      (Int64)
+import           Data.List                     (isPrefixOf, transpose)
+import           Data.Maybe                    (fromMaybe)
 import           Periodic.Client
-import           Periodic.Socket        (getService)
-import           Periodic.Transport     (Transport)
+import           Periodic.Socket               (getHost, getService)
+import           Periodic.Transport            (Transport)
 import           Periodic.Transport.TLS
-import           Periodic.Transport.XOR (makeXORTransport)
-import           Periodic.Types         (Workload (..))
-import           System.Environment     (getArgs, lookupEnv)
-import           System.Exit            (exitSuccess)
-import           Text.Read              (readMaybe)
+import qualified Periodic.Transport.WebSockets as WS (makeClientTransport)
+import           Periodic.Transport.XOR        (makeXORTransport)
+import           Periodic.Types                (Workload (..))
+import           System.Environment            (getArgs, lookupEnv)
+import           System.Exit                   (exitSuccess)
+import           Text.Read                     (readMaybe)
 
-import           Data.String            (fromString)
+import           Data.String                   (fromString)
 import           Data.UnixTime
-import           System.IO.Unsafe       (unsafePerformIO)
-import qualified Text.PrettyPrint.Boxes as T
+import           System.IO.Unsafe              (unsafePerformIO)
+import qualified Text.PrettyPrint.Boxes        as T
 
 
 data Command = Status
@@ -59,6 +61,7 @@ parseCommand _          = Help
 data Options = Options { host     :: String
                        , xorFile  :: FilePath
                        , useTls   :: Bool
+                       , useWs    :: Bool
                        , hostName :: String
                        , certKey  :: FilePath
                        , cert     :: FilePath
@@ -69,6 +72,7 @@ options :: Maybe String -> Maybe String -> Options
 options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , xorFile = fromMaybe "" f
                       , useTls = False
+                      , useWs = False
                       , hostName = "localhost"
                       , certKey = "client-key.pem"
                       , cert = "client.pem"
@@ -81,6 +85,7 @@ parseOptions ("-H":x:xs)         opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)     opt = parseOptions xs opt { host      = x }
 parseOptions ("--xor":x:xs)      opt = parseOptions xs opt { xorFile   = x }
 parseOptions ("--tls":xs)        opt = parseOptions xs opt { useTls = True }
+parseOptions ("--ws":xs)        opt  = parseOptions xs opt { useWs = True }
 parseOptions ("--hostname":x:xs) opt = parseOptions xs opt { hostName = x }
 parseOptions ("--cert-key":x:xs) opt = parseOptions xs opt { certKey = x }
 parseOptions ("--cert":x:xs)     opt = parseOptions xs opt { cert = x }
@@ -91,7 +96,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic - Periodic task system client"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--xor FILE|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] command [options]"
+  putStrLn "Usage: periodic [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] command [options]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "     status   Show status"
@@ -110,6 +115,7 @@ printHelp = do
   putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
   putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
   putStrLn "     --tls      Use tls transport"
+  putStrLn "     --ws       Use websockets transport"
   putStrLn "     --hostname Host name"
   putStrLn "     --cert-key Private key associated"
   putStrLn "     --cert     Public certificate (X.509 format)"
@@ -243,6 +249,8 @@ makeTransport Options{..} transport =
   if useTls then do
     prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
     makeTLSTransport prms transport
+  else if useWs then
+    WS.makeClientTransport (fromMaybe "0.0.0.0" $ getHost host) (getService host) transport
   else makeTransport' xorFile transport
 
 makeTransport' :: FilePath -> Transport -> IO Transport
