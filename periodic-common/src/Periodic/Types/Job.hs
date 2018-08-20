@@ -144,20 +144,46 @@ instance Byteable Job where
 instance Parser Job where
   runParser = parseBinary
 
+
+data JVer = V0 | V1
+
+toVer :: Int -> JVer
+toVer 0 = V0
+toVer 1 = V1
+toVer _ = V0
+
+fromVer :: JVer -> Int
+fromVer V0 = 0
+fromVer V1 = 1
+
+calcVer :: Job -> JVer
+calcVer (Job {jCount = 0}) = V1
+calcVer _                  = V0
+
+
 instance Binary Job where
   get = do
     jFuncName <- get
     jName <- get
     jWorkload <- get
     jSchedAt <- getInt64be
-    jCount <- fromIntegral <$> getInt32be
+    ver <- toVer . fromIntegral <$> getWord8
+    jCount <- case ver of
+                V0 -> pure 0
+                V1 -> fromIntegral <$> getInt32be
     return Job {..}
-  put Job {..} = do
+  put j@Job {..} = do
     put jFuncName
     put jName
     put jWorkload
     putInt64be jSchedAt
-    putInt32be $ fromIntegral jCount
+    let ver = calcVer j
+
+    putWord8 $ fromIntegral $ fromVer ver
+
+    case ver of
+      V0 -> pure ()
+      V1 -> putInt32be $ fromIntegral jCount
 
 newJob :: FuncName -> JobName -> Job
 newJob jFuncName jName = Job { jWorkload = Workload B.empty
