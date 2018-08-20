@@ -12,7 +12,7 @@ module Periodic.Job
   , counter
 
   , workDone
-  , workData
+  , workDone_
   , workFail
   , schedLater
   , schedLater'
@@ -20,7 +20,7 @@ module Periodic.Job
 
 import           Control.Monad.Catch          (MonadMask)
 import           Control.Monad.IO.Class       (MonadIO (..))
-import           Data.ByteString              (ByteString)
+import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
 import           Periodic.Node
@@ -60,17 +60,15 @@ initJobConfig = JobConfig
 
 workDone
   :: (MonadIO m, MonadMask m)
-  =>  JobT m ()
-workDone = do
-  h <- handle <$> env
-  withAgentT $ send (WorkDone h)
+  => JobT m ()
+workDone = workDone_ empty
 
-workData
+workDone_
   :: (MonadIO m, MonadMask m)
   => ByteString -> JobT m ()
-workData w = do
+workDone_ w = do
   h <- handle <$> env
-  withAgentT $ send (WorkData h w)
+  withAgentT $ send (WorkDone h w)
 
 workFail
   :: (MonadIO m, MonadMask m)

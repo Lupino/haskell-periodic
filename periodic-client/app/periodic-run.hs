@@ -17,7 +17,7 @@ import qualified Data.Text                      as T (unpack)
 import           Data.Text.Encoding             (decodeUtf8With)
 import           Data.Text.Encoding.Error       (ignore)
 import           Periodic.Job                   (JobT, name, schedLater,
-                                                 workData, workDone, workFail,
+                                                 workDone, workDone_, workFail,
                                                  workload)
 import           Periodic.Socket                (getHost, getService)
 import           Periodic.Transport             (Transport)
@@ -158,7 +158,7 @@ processWorker Options{..} cmd argv = do
   liftIO $ LB.hPut stderr err
   case code of
     ExitFailure _ -> workFail
-    ExitSuccess | useData -> workData (LB.toStrict out)
+    ExitSuccess | useData -> workDone_ (LB.toStrict out)
                 | LB.null err -> workDone
                 | otherwise -> do
       let lastLine = last $ LB.lines err

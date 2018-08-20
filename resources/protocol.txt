@@ -72,7 +72,6 @@ header is:
                         23  CONFIG_SET    Client
                         24  CONFIG        Client
                         25  RUN_JOB       Client
-                        26  WORK_DATA     Worker
 
 ## Client/Worker Requests
 These request types may be sent by either a client or a worker:
@@ -240,15 +239,11 @@ These request types may only be sent by a worker:
         This is to notify the server that the job completed successfully.
         Arguments:
         - ? byte handle
+        - ? byte data
     WORK_FAIL
         This is to notify the server that the job failed.
         Arguments:
         - ? byte handle
-    WORK_DATA
-        This is to notify the server that the job failed.
-        Arguments:
-        - ? byte handle
-        - ? byte data
     SCHED_LATER
         This is to notify the server to do the job on next time.
         Arguments:

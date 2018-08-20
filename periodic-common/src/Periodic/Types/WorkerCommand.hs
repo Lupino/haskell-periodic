@@ -18,9 +18,8 @@ import           Data.ByteString.Lazy    (toStrict)
 data WorkerCommand =
     GrabJob
   | SchedLater JobHandle Int64 Int
-  | WorkDone JobHandle
+  | WorkDone JobHandle ByteString
   | WorkFail JobHandle
-  | WorkData JobHandle ByteString
   | Sleep
   | Ping
   | CanDo FuncName
@@ -45,16 +44,15 @@ instance Binary WorkerCommand where
         later <- getInt64be
         step <- fromIntegral <$> getInt16be
         pure (SchedLater jh later step)
-      3 -> WorkDone <$> get
+      3 -> do
+        jh <- get
+        WorkDone jh . toStrict <$> getRemainingLazyByteString
       4 -> WorkFail <$> get
       11 -> pure Sleep
       9 -> pure Ping
       7 -> CanDo <$> get
       8 -> CantDo <$> get
       21 -> Broadcast <$> get
-      26 -> do
-        jh <- get
-        WorkData jh . toStrict <$> getRemainingLazyByteString
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
@@ -63,9 +61,10 @@ instance Binary WorkerCommand where
     put jh
     putInt64be later
     putInt16be $ fromIntegral step
-  put (WorkDone jh) = do
+  put (WorkDone jh w) = do
     putWord8 3
     put jh
+    putByteString w
   put (WorkFail jh) = do
     putWord8 4
     put jh
@@ -80,7 +79,3 @@ instance Binary WorkerCommand where
   put (Broadcast fn) = do
     putWord8 21
     put fn
-  put (WorkData jh w) = do
-    putWord8 26
-    put jh
-    putByteString w
