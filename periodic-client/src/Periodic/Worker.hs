@@ -15,6 +15,7 @@ module Periodic.Worker
   , close
   ) where
 
+import           Control.Concurrent              (threadDelay)
 import           Control.Monad.Catch             (MonadCatch, MonadMask, catch)
 import           Control.Monad.IO.Class          (MonadIO (..))
 import           Control.Monad.Trans.Control     (MonadBaseControl)
@@ -39,8 +40,8 @@ import qualified Periodic.IOHashMap              as HM (delete, insert, lookup)
 
 import           Control.Concurrent.Async.Lifted (async, waitAnyCancel)
 import           Control.Exception               (SomeException)
-import           Control.Monad                   (forever, replicateM, void,
-                                                  when)
+import           Control.Monad                   (forever, replicateM, unless,
+                                                  void, when)
 import           Periodic.Node
 
 import           System.Log.Logger               (errorM)
@@ -68,6 +69,9 @@ runWorkerT f h m = do
     env0 <- liftIO $ initEnv taskList
 
     runNodeT env0 $ do
+      void $ async $ forever $ do
+        liftIO $ threadDelay $ 100 * 1000 * 1000
+        checkHealth
       void $ async startMainLoop
       m
 
@@ -158,3 +162,12 @@ work_ = do
                               , show e
                               ]
               workFail
+
+checkHealth
+  :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+  => WorkerT m ()
+checkHealth = do
+  ret <- timeout 10000000 ping
+  case ret of
+    Nothing -> close
+    Just r  -> unless r close
