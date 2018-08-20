@@ -10,14 +10,14 @@ import           Data.Binary.Put         (putWord32be)
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString.Lazy    (toStrict)
 import           Periodic.Types.Internal
-import           Periodic.Types.Job      (FuncName, Job)
+import           Periodic.Types.Job      (FuncName, Job, JobName)
 
 data ClientCommand =
     SubmitJob Job
   | Status
   | Ping
   | DropFunc FuncName
-  | RemoveJob Job
+  | RemoveJob FuncName JobName
   | ConfigGet ConfigKey
   | ConfigSet ConfigKey Int
   | Dump
@@ -41,7 +41,9 @@ instance Binary ClientCommand where
       14 -> pure Status
       9  -> pure Ping
       15 -> DropFunc <$> get
-      17 -> RemoveJob <$> get
+      17 -> do
+        fn <- get
+        RemoveJob fn <$> get
       20 -> pure Shutdown
       22 -> ConfigGet <$> get
       23 -> do
@@ -61,9 +63,10 @@ instance Binary ClientCommand where
   put (DropFunc func) = do
     putWord8 15
     put func
-  put (RemoveJob job) = do
+  put (RemoveJob fn jn) = do
     putWord8 17
-    put job
+    put fn
+    put jn
   put Shutdown        = putWord8 20
   put (ConfigGet key) = do
     putWord8 22

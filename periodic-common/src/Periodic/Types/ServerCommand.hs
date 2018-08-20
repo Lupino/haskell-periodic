@@ -20,7 +20,7 @@ data ServerCommand =
   | Pong
   | Unknown
   | Success
-  | Config ConfigKey Int
+  | Config Int
 
   deriving (Show)
 
@@ -43,9 +43,8 @@ instance Binary ServerCommand where
       12 -> pure Unknown
       16 -> pure Success
       24 -> do
-        key <- get
         val <- getWord32be
-        pure . Config key $ fromIntegral val
+        pure . Config $ fromIntegral val
       _ -> error $ "Error ServerCommand " ++ show tp
 
   put Noop               = putWord8 0
@@ -57,7 +56,6 @@ instance Binary ServerCommand where
   put Pong               = putWord8 10
   put Unknown            = putWord8 12
   put Success            = putWord8 16
-  put (Config k v)       = do
+  put (Config v)       = do
     putWord8 24
-    put k
     putWord32be $ fromIntegral v

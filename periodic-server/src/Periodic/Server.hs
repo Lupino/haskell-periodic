@@ -30,7 +30,7 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe       (runMaybeT)
 import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 import           Data.ByteString                 (ByteString)
-import           Data.Either                     (fromRight, isLeft)
+import           Data.Either                     (isLeft)
 import           Data.String                     (fromString)
 import           Network.Socket                  (Socket, accept)
 import qualified Network.Socket                  as Socket (close)

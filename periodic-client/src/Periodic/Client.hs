@@ -16,7 +16,6 @@ module Periodic.Client
   , submitJob_
   , submitJob
   , runJob
-  , removeJob_
   , removeJob
   , dropFunc
   , status
@@ -134,17 +133,12 @@ dropFunc func = withAgentT $ do
   send (DropFunc func)
   isSuccess
 
-removeJob_
-  :: (MonadIO m, MonadMask m)
-  => Job -> ClientT m Bool
-removeJob_ j = withAgentT $ do
-  send (RemoveJob j)
-  isSuccess
-
 removeJob
   :: (MonadIO m, MonadMask m)
   => FuncName -> JobName -> ClientT m Bool
-removeJob f n = removeJob_ $ newJob f n
+removeJob f n = withAgentT $ do
+  send (RemoveJob f n)
+  isSuccess
 
 isSuccess :: MonadIO m => AgentT m Bool
 isSuccess = do
@@ -169,9 +163,9 @@ configGet k = withAgentT $ do
   send (ConfigGet (ConfigKey k))
   ret <- receive
   case ret of
-    Left _             -> return 0
-    Right (Config _ v) -> return v
-    Right _            -> return 0
+    Left _           -> return 0
+    Right (Config v) -> return v
+    Right _          -> return 0
 
 configSet
   :: (MonadIO m, MonadMask m)

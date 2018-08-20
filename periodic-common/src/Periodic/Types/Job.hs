@@ -12,6 +12,7 @@ module Periodic.Types.Job
   , hashJobName
   , jHandle
   , unHandle
+  , jobHandle
   ) where
 
 import           Data.Byteable           (Byteable (..))
@@ -200,7 +201,10 @@ hashJobName = toStrict . encode . toWord64 . hash
 jHandle :: Job -> JobHandle
 jHandle Job{ jFuncName = fn
            , jName = jn
-           } = JobHandle fn $ hashJobName jn
+           } = jobHandle fn jn
 
 unHandle :: JobHandle -> (FuncName, ByteString)
-unHandle (JobHandle fn  jn) = (fn, jn)
+unHandle (JobHandle fn jn) = (fn, jn)
+
+jobHandle :: FuncName -> JobName -> JobHandle
+jobHandle fn jn = JobHandle fn $ hashJobName jn
