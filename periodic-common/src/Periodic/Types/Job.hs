@@ -158,8 +158,9 @@ fromVer V0 = 0
 fromVer V1 = 1
 
 calcVer :: Job -> JVer
-calcVer (Job {jCount = 0}) = V1
-calcVer _                  = V0
+calcVer (Job {jCount = count})
+  | count > 0 = V1
+  | otherwise = V0
 
 
 instance Binary Job where
