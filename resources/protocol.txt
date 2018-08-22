@@ -33,6 +33,29 @@ will then execute it.
 All communication between workers or clients and the periodic server
 are binary.
 
+## Client type
+
+Once connected the client send it's type, and server will respond the connction id.
+Request:
+    4 byte magic code   - This is either "\0REQ" for requests or "\0RES"
+                          for responses.
+    4 byte size         - A big-endian (network-order) integer containing
+                          the size of the data being sent.
+    1 byte command      - A big-endian (network-order) integer containing
+                          an enumerated packet command. Possible values are:
+                        #   Name             Type
+                        1   TYPE_CLIENT      Client
+                        2   TYPE_WORKER      Worker
+
+Response:
+    4 byte magic code       - This is either "\0REQ" for requests or "\0RES"
+                              for responses.
+    4 byte size             - A big-endian (network-order) integer containing
+                              the size of the data being sent.
+    ? byte connection id    - A binary connection id
+
+
+
 ## Binary Packet
 
 Requests and responses are encapsulated by a binary packet. A binary
@@ -42,8 +65,8 @@ header is:
                           for responses.
     4 byte size         - A big-endian (network-order) integer containing
                           the size of the data being sent.
-    4 byte  message id  - A client unique message id.
-    1 byte  command     - A big-endian (network-order) integer containing
+    4 byte message id   - A client unique message id.
+    1 byte command      - A big-endian (network-order) integer containing
                           an enumerated packet command. Possible values are:
                         #   Name          Type
                         0   NOOP          Client/Worker
