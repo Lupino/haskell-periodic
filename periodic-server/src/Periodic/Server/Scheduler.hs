@@ -38,7 +38,7 @@ module Periodic.Server.Scheduler
 
 import           Control.Exception               (SomeException, bracket_, try)
 import           Control.Monad                   (forever, mzero, unless, void,
-                                                  when, (>=>))
+                                                  when)
 import           Data.Int                        (Int64)
 import           Data.Maybe                      (fromJust, fromMaybe, isJust)
 import           Periodic.Agent                  (AgentEnv', aAlive, runAgentT',
@@ -75,15 +75,11 @@ import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 import           System.IO                       (readFile, writeFile)
 import           Text.Read                       (readMaybe)
 
-import           Periodic.Server.Persist         (Persist (main, proc),
-                                                  Persister)
+import           Periodic.Server.Persist         (Persist (main, proc))
 import qualified Periodic.Server.Persist         as P
 
-import           Data.Binary                     (Binary)
 import           Data.ByteString                 (ByteString)
 import           Data.Foldable                   (forM_)
-import           Data.Typeable                   (Typeable)
-import           GHC.Generics                    (Generic)
 
 import           Data.HashPSQ                    (HashPSQ)
 import qualified Data.HashPSQ                    as PSQ
@@ -580,12 +576,17 @@ revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 revertProcessQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
-  handles <- transactReadOnly $ \p -> P.foldr (proc p) (foldFunc now tout) []
+  handles <- transactReadOnly $ \p -> P.foldr (proc p) (foldFunc (check now tout)) []
   mapM_ (failJob . jHandle) handles
 
-  where foldFunc :: Int64 -> Int64 -> Job -> [Job] -> [Job]
-        foldFunc t1 tout job acc | jSchedAt job + tout < t1 = job : acc
-                                 | otherwise = acc
+  where foldFunc :: (Job -> Bool) -> Job -> [Job] -> [Job]
+        foldFunc f job acc | f job = job : acc
+                           | otherwise = acc
+
+        check :: Int64 -> Int64 -> Job -> Bool
+        check now t0 (Job {jSchedAt = sc, jTimeout = t1})
+          | t1 > 0 = sc + fromIntegral t1 < now
+          | otherwise = sc + fromIntegral t0 < now
 
 shutdown :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 shutdown = do

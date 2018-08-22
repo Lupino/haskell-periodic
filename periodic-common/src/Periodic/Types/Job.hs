@@ -136,6 +136,7 @@ data Job = Job { jFuncName :: FuncName
                , jWorkload :: Workload
                , jSchedAt  :: Int64
                , jCount    :: Int
+               , jTimeout  :: Int
                }
   deriving (Show)
 
@@ -146,19 +147,25 @@ instance Parser Job where
   runParser = parseBinary
 
 
-data JVer = V0 | V1
+data JVer = V0 | V1 | V2 | V3
 
 toVer :: Int -> JVer
 toVer 0 = V0
 toVer 1 = V1
+toVer 2 = V2
+toVer 3 = V3
 toVer _ = V0
 
 fromVer :: JVer -> Int
 fromVer V0 = 0
 fromVer V1 = 1
+fromVer V2 = 2
+fromVer V3 = 3
 
 calcVer :: Job -> JVer
-calcVer (Job {jCount = count})
+calcVer (Job {jCount = count, jTimeout = to})
+  | count > 0 && to > 0 = V3
+  | to > 0 = V2
   | count > 0 = V1
   | otherwise = V0
 
@@ -170,9 +177,19 @@ instance Binary Job where
     jWorkload <- get
     jSchedAt <- getInt64be
     ver <- toVer . fromIntegral <$> getWord8
-    jCount <- case ver of
-                V0 -> pure 0
-                V1 -> fromIntegral <$> getInt32be
+    (jCount, jTimeout) <-
+      case ver of
+        V0 -> pure (0, 0)
+        V1 -> do
+          v <- fromIntegral <$> getInt32be
+          pure (v, 0)
+        V2 -> do
+          v <- fromIntegral <$> getInt32be
+          pure (0, v)
+        V3 -> do
+          v0 <- fromIntegral <$> getInt32be
+          v1 <- fromIntegral <$> getInt32be
+          pure (v0, v1)
     return Job {..}
   put j@Job {..} = do
     put jFuncName
@@ -186,11 +203,16 @@ instance Binary Job where
     case ver of
       V0 -> pure ()
       V1 -> putInt32be $ fromIntegral jCount
+      V2 -> putInt32be $ fromIntegral jTimeout
+      V3 -> do
+        putInt32be $ fromIntegral jCount
+        putInt32be $ fromIntegral jTimeout
 
 newJob :: FuncName -> JobName -> Job
 newJob jFuncName jName = Job { jWorkload = Workload B.empty
                              , jSchedAt = 0
                              , jCount = 0
+                             , jTimeout = 0
                              , ..
                              }
 
