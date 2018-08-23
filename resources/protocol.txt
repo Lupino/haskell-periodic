@@ -118,44 +118,12 @@ These request types may only be sent by a client:
         A client issues one of these when a job needs to be run. The
         server will respond with a SUCCESS packet.
         Arguments:
-        - 1 byte func size
-        - ? byte func name
-        - 1 byte name size
-        - ? byte name
-        - 4 byte workload size
-        - ? byte workload
-        - 8 byte sched time (unix time, int64)
-        - 1 byte job version
-            - #  version
-            - 0  Ver0
-            - 1  Ver1
-
-        Version Spec:
-            Ver0:
-            - None
-            Ver1:
-            - 4 byte run count           this assign by worker
+        - Job binary packet
    RUN_JOB
         A client issues one of these when a job needs to be run. The
         server will respond with a binary packet.
         Arguments:
-        - 1 byte func size
-        - ? byte func name
-        - 1 byte name size
-        - ? byte name
-        - 4 byte workload size
-        - ? byte workload
-        - 8 byte sched time (unix time, int64)
-        - 1 byte job version
-            - #  version
-            - 0  Ver0
-            - 1  Ver1
-
-        Version Spec:
-            Ver0:
-            - None
-            Ver1:
-            - 4 byte run count           this assign by worker
+        - Job binary packet
     STATUS
         This sends back a list of all registered functions.  Next to
         each function is the number of jobs in the queue, the number of
@@ -293,20 +261,31 @@ These response types may only be sent to a worker:
         the handle, and the worker should run the given function with
         the argument.
         Arguments:
-        - 1 byte func size
-        - ? byte func name
-        - 1 byte name size
-        - ? byte name
-        - 4 byte workload size
-        - ? byte workload
-        - 8 byte sched time (unix time, int64)
-        - 1 byte job version
-            - #  version
-            - 0  Ver0
-            - 1  Ver1
+        - Job binary packet
 
-        Version Spec:
-            Ver0:
-            - None
-            Ver1:
-            - 4 byte run count           this assign by worker
+## Job binary packets
+Job is encode with a binary packet:
+    - 1 byte func size
+    - ? byte func name
+    - 1 byte name size
+    - ? byte name
+    - 4 byte workload size
+    - ? byte workload
+    - 8 byte sched time (unix time, int64)
+    - 1 byte job version
+        - #  version
+        - 0  Ver0
+        - 1  Ver1
+        - 2  Ver2
+        - 3  Ver3
+
+    Version Spec:
+        Ver0:
+        - None
+        Ver1:
+        - 4 byte run count           this assign by worker
+        Ver2:
+        - 4 byte timeout
+        Ver3:
+        - 4 byte run count           this assign by worker
+        - 4 byte timeout
