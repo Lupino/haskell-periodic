@@ -7,12 +7,22 @@ module Periodic.Types.Job
   , JobName (..)
   , Workload (..)
   , JobHandle
-  , Job (..)
-  , newJob
-  , hashJobName
-  , jHandle
+  , Job
+  , initJob
+  , setWorkload
+  , setSchedAt
+  , setCount
+  , setTimeout
+  , getFuncName
+  , getName
+  , getWorkload
+  , getSchedAt
+  , getCount
+  , getTimeout
+  , getHandle
   , unHandle
   , jobHandle
+  , hashJobName
   ) where
 
 import           Data.Byteable           (Byteable (..))
@@ -208,23 +218,52 @@ instance Binary Job where
         putInt32be $ fromIntegral jCount
         putInt32be $ fromIntegral jTimeout
 
-newJob :: FuncName -> JobName -> Job
-newJob jFuncName jName = Job { jWorkload = Workload B.empty
-                             , jSchedAt = 0
-                             , jCount = 0
-                             , jTimeout = 0
-                             , ..
-                             }
+initJob :: FuncName -> JobName -> Job
+initJob jFuncName jName = Job
+  { jWorkload = Workload B.empty
+  , jSchedAt = 0
+  , jCount = 0
+  , jTimeout = 0
+  , ..
+  }
+
+setSchedAt :: Int64 -> Job -> Job
+setSchedAt schedAt job = job {jSchedAt = schedAt}
+
+setWorkload :: Workload -> Job -> Job
+setWorkload w job = job {jWorkload = w}
+
+setCount :: Int -> Job -> Job
+setCount c job = job {jCount = c}
+
+setTimeout :: Int -> Job -> Job
+setTimeout t job = job {jTimeout = t}
+
+getFuncName :: Job -> FuncName
+getFuncName = jFuncName
+
+getName :: Job -> JobName
+getName = jName
+
+getSchedAt :: Job -> Int64
+getSchedAt = jSchedAt
+
+getWorkload :: Job -> Workload
+getWorkload = jWorkload
+
+getCount :: Job -> Int
+getCount = jCount
+
+getTimeout :: Job -> Int
+getTimeout = jTimeout
+
+getHandle :: Job -> JobHandle
+getHandle job = jobHandle (getFuncName job) (getName job)
 
 hashJobName :: JobName -> ByteString
 hashJobName = toStrict . encode . toWord64 . hash
   where toWord64 :: Int -> Word64
         toWord64 = fromIntegral
-
-jHandle :: Job -> JobHandle
-jHandle Job{ jFuncName = fn
-           , jName = jn
-           } = jobHandle fn jn
 
 unHandle :: JobHandle -> (FuncName, ByteString)
 unHandle (JobHandle fn jn) = (fn, jn)

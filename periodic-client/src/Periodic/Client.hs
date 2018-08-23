@@ -112,8 +112,7 @@ submitJob
   => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> ClientT m Bool
 submitJob fn jn w later = do
   schedAt <- (+fromMaybe 0 later) <$> liftIO getEpochTime
-  submitJob_ job {jWorkload = fromMaybe "" w, jSchedAt = schedAt}
-  where job = newJob fn jn
+  submitJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
 runJob_ :: (MonadIO m, MonadMask m) => Job -> ClientT m ByteString
 runJob_ j = withAgentT $ do
@@ -125,8 +124,7 @@ runJob
   => FuncName -> JobName -> Maybe Workload -> ClientT m ByteString
 runJob fn jn w = do
   schedAt <- liftIO getEpochTime
-  runJob_ job{jWorkload = fromMaybe "" w, jSchedAt = schedAt}
-  where job = newJob fn jn
+  runJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
 dropFunc
   :: (MonadIO m, MonadMask m)

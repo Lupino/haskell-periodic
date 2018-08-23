@@ -17,7 +17,7 @@ import           Data.Maybe              (isJust, listToMaybe)
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist (Persist (..), Persister (..))
 import           Periodic.Types.Internal (runParser)
-import           Periodic.Types.Job      (FuncName (..), Job (jSchedAt))
+import           Periodic.Types.Job      (FuncName (..), Job, getSchedAt)
 import           System.Log.Logger       (errorM)
 
 newtype Table = Table ByteString
@@ -120,7 +120,7 @@ doInsert db (Table tn) fn jn job = do
   execStmt db sql $ \stmt -> do
     bindFnAndJn fn jn stmt
     void $ bindBlob stmt 3 $ toBytes job
-    void $ bindInt64 stmt 4 $ jSchedAt job
+    void $ bindInt64 stmt 4 $ getSchedAt job
   doInsertFuncName db fn
   where sql = Utf8 $ "INSERT OR REPLACE INTO " <> tn <> " VALUES (?, ?, ?, ?)"
 

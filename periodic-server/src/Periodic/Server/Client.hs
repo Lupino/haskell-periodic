@@ -34,7 +34,7 @@ import           Periodic.Node                hiding (liftC)
 import           Periodic.Server.Scheduler
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..))
-import           Periodic.Types.Job           (newJob)
+import           Periodic.Types.Job           (initJob)
 import           Periodic.Types.ServerCommand
 import           Periodic.Utils               (getEpochTime)
 
@@ -101,7 +101,7 @@ handleAgentT lastVist = do
       lift $ dropFunc fn
       send Success
     Right (RemoveJob fn jn) -> do
-      lift $ removeJob $ newJob fn jn
+      lift $ removeJob $ initJob fn jn
       send Success
     Right Shutdown -> lift shutdown
 

@@ -9,7 +9,8 @@ module Periodic.Job
   , name_
   , func_
   , workload_
-  , counter
+  , count
+  , timeout
 
   , workDone
   , workDone_
@@ -24,13 +25,11 @@ import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (send)
 import           Periodic.Node
-import           Periodic.Types               (FromBS (..), FuncName (..),
-                                               JobHandle, JobName (..),
-                                               Workload (..))
-import qualified Periodic.Types.Job           as J
+import           Periodic.Types               (FromBS (..))
+import           Periodic.Types.Job
 import           Periodic.Types.WorkerCommand
 
-data JobConfig = JobConfig { job :: J.Job, handle :: JobHandle }
+data JobConfig = JobConfig { job :: Job, handle :: JobHandle }
 
 type JobT m = NodeT JobConfig m
 
@@ -38,24 +37,27 @@ name :: (FromBS a, Show a, Monad m) => JobT m a
 name = fromBS . unJN <$> name_
 
 name_ :: Monad m => JobT m JobName
-name_ = J.jName . job <$> env
+name_ = getName . job <$> env
 
 func :: (FromBS a, Show a, Monad m) => JobT m a
 func = fromBS . unFN <$> func_
 
 func_ :: Monad m => JobT m FuncName
-func_ = J.jFuncName . job <$> env
+func_ = getFuncName . job <$> env
 
 workload :: (FromBS a, Show a, Monad m) => JobT m a
 workload = fromBS . unWL <$> workload_
 
 workload_ :: Monad m => JobT m Workload
-workload_ = J.jWorkload . job <$> env
+workload_ = getWorkload . job <$> env
 
-counter :: Monad m => JobT m Int
-counter = J.jCount . job <$> env
+count :: Monad m => JobT m Int
+count = getCount . job <$> env
 
-initJobConfig :: J.Job -> JobHandle -> JobConfig
+timeout :: Monad m => JobT m Int
+timeout = getTimeout . job <$> env
+
+initJobConfig :: Job -> JobHandle -> JobConfig
 initJobConfig = JobConfig
 
 workDone

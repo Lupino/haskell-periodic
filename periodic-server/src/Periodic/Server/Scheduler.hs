@@ -308,7 +308,7 @@ pollJob_ taskList funcList = do
   now <- liftIO getEpochTime
   next <- (+ (100 + now)) <$> pollDelay
   handles <- liftIO $ FL.keys taskList
-  let check job = notElem (jHandle job) handles && (jSchedAt job < next)
+  let check job = notElem (getHandle job) handles && (getSchedAt job < next)
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly $ \p ->
@@ -319,7 +319,7 @@ pollJob_ taskList funcList = do
   when (PSQ.size jobs >= maxPatch - 20) $ pushChanList (PollJob1 10)
 
   where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
-        foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (jHandle job) (now - jSchedAt job) job acc
+        foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (getHandle job) (now - getSchedAt job) job acc
                                  | otherwise = acc
           where trimPSQ :: HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
                 trimPSQ q | PSQ.size q > s = trimPSQ $ PSQ.deleteMin q
@@ -328,15 +328,17 @@ pollJob_ taskList funcList = do
         checkJob
           :: (MonadIO m, MonadBaseControl IO m)
           => TaskList m -> Job -> SchedT m ()
-        checkJob tl job@Job{..} = do
+        checkJob tl job = do
           w <- findTask tl job
           case w of
             Nothing -> do
-              isProc <- transactReadOnly $ \p -> P.member (proc p) jFuncName (hashJobName jName)
+              isProc <- transactReadOnly $ \p -> P.member (proc p) fn (hashJobName jn)
               unless isProc $ reSchedJob tl job
             Just w0 -> do
-              r <- canRun jFuncName
+              r <- canRun fn
               unless r $ cancel w0
+          where fn = getFuncName job
+                jn = getName job
 
 pushChanList :: MonadIO m => Action -> SchedT m ()
 pushChanList act = do
@@ -346,17 +348,20 @@ pushChanList act = do
     writeTVar cl (act:l)
 
 pushJob :: MonadIO m => Job -> SchedT m ()
-pushJob job@Job{..} = do
-  exists <- transactReadOnly $ \p -> P.member (main p) jFuncName jName
+pushJob job = do
+  exists <- transactReadOnly $ \p -> P.member (main p) fn jn
   if exists then doPushJob
             else do
-              isProc <- transactReadOnly $ \p -> P.member (proc p) jFuncName (hashJobName jName)
+              isProc <- transactReadOnly $ \p -> P.member (proc p) fn (hashJobName jn)
               unless isProc doPushJob
 
-  where doPushJob :: MonadIO m => SchedT m ()
+  where fn = getFuncName job
+        jn = getName job
+
+        doPushJob :: MonadIO m => SchedT m ()
         doPushJob = do
           pushChanList (Add job)
-          transact $ \p -> P.insert (main p) jFuncName jName job
+          transact $ \p -> P.insert (main p) fn jn job
 
 reSchedJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
@@ -365,14 +370,14 @@ reSchedJob taskList job = do
 
   delay <- (+100) <$> pollDelay
   next <- liftIO $ (+ delay) <$> getEpochTime
-  when (jSchedAt job < next) $ do
-    r <- canRun $ jFuncName job
+  when (getSchedAt job < next) $ do
+    r <- canRun $ getFuncName job
     when r $ do
       w' <- schedJob taskList job
-      liftIO $ FL.insert taskList (jHandle job) w'
+      liftIO $ FL.insert taskList (getHandle job) w'
 
 findTask :: MonadIO m => TaskList m -> Job -> SchedT m (Maybe (Task m))
-findTask taskList job = liftIO $ FL.lookup taskList (jHandle job)
+findTask taskList job = liftIO $ FL.lookup taskList (getHandle job)
 
 canRun :: MonadIO m => FuncName -> SchedT m Bool
 canRun fn = asks sFuncStatList >>= liftIO . flip canRun_ fn
@@ -391,14 +396,14 @@ schedJob
 schedJob taskList = async . schedJob_ taskList
 
 schedJob_ :: MonadIO m => TaskList m -> Job -> SchedT m ()
-schedJob_ taskList job@Job{..} = do
+schedJob_ taskList job = do
   SchedEnv{..} <- ask
-  r <- canRun jFuncName
+  r <- canRun fn
   when r $ do
     now <- liftIO getEpochTime
-    when (jSchedAt > now) . liftIO . threadDelay . fromIntegral $ (jSchedAt - now) * 1000000
+    when (schedAt > now) . liftIO . threadDelay . fromIntegral $ (schedAt - now) * 1000000
     FuncStat{..} <- liftIO . atomically $ do
-      st <- FL.lookupSTM sFuncStatList jFuncName
+      st <- FL.lookupSTM sFuncStatList fn
       case st of
         Nothing                  -> retry
         Just FuncStat{sWorker=0} -> retry
@@ -406,21 +411,27 @@ schedJob_ taskList job@Job{..} = do
     if sBroadcast then popAgentListThen
                   else popAgentThen taskList
 
-  where popAgentThen
+  where fn = getFuncName job
+        jn = getName job
+        hjn = hashJobName jn
+        schedAt = getSchedAt job
+        jh = getHandle job
+
+        popAgentThen
           :: MonadIO m => TaskList m -> SchedT m ()
         popAgentThen tl = do
           SchedEnv{..} <- ask
-          (jq, env0) <- liftIO $ atomically $ popAgentSTM sGrabQueue jFuncName
+          (jq, env0) <- liftIO $ atomically $ popAgentSTM sGrabQueue fn
           alive <- liftIO $ runAgentT' env0 aAlive
           if alive then do
-            liftIO $ IL.insert jq (jHandle job)
+            liftIO $ IL.insert jq (getHandle job)
             nextSchedAt <- liftIO getEpochTime
-            transact $ \p -> P.insert (proc p) jFuncName (hashJobName jName) job {jSchedAt = nextSchedAt}
+            transact $ \p -> P.insert (proc p) fn hjn $ setSchedAt nextSchedAt job
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                transact $ \p -> P.delete (proc p) jFuncName (hashJobName jName)
-                liftIO $ IL.delete jq (jHandle job)
+                transact $ \p -> P.delete (proc p) fn hjn
+                liftIO $ IL.delete jq jh
                 schedJob_ tl job
               Right _ -> endSchedJob
           else schedJob_ tl job
@@ -428,7 +439,7 @@ schedJob_ taskList job@Job{..} = do
         popAgentListThen :: MonadIO m => SchedT m ()
         popAgentListThen = do
           SchedEnv{..} <- ask
-          agents <- liftIO $ popAgentList sGrabQueue jFuncName
+          agents <- liftIO $ popAgentList sGrabQueue fn
           mapM_ (doSubmitJob . snd) agents
           unless (null agents) endSchedJob -- wait to resched the broadcast job
 
@@ -438,7 +449,7 @@ schedJob_ taskList job@Job{..} = do
           liftIO . try $ assignJob agent job
 
         endSchedJob :: MonadIO m => SchedT m ()
-        endSchedJob = transact $ \p -> P.delete (main p) jFuncName jName
+        endSchedJob = transact $ \p -> P.delete (main p) fn jn
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
@@ -468,9 +479,9 @@ removeJob job = do
 
   pushChanList (Remove job)
   pushResult jh ""
-  where jn = jName job
-        fn = jFuncName job
-        jh = jHandle job
+  where jn = getName job
+        fn = getFuncName job
+        jh = getHandle job
 
 dumpJob :: MonadIO m => SchedT m [Job]
 dumpJob = transactReadOnly $ \p -> do
@@ -522,14 +533,14 @@ pushGrab funcList handleList ag = do
 
 assignJob :: AgentEnv' -> Job -> IO ()
 assignJob env0 job =
-  runAgentT' env0 $ send (JobAssign (jHandle job) job)
+  runAgentT' env0 $ send (JobAssign (getHandle job) job)
 
 failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
 failJob jh = do
   job <- transactReadOnly $ \p -> P.lookup (proc p) fn jn
   when (isJust job) $ do
     nextSchedAt <- liftIO getEpochTime
-    retryJob ((fromJust job) {jSchedAt = nextSchedAt})
+    retryJob $ setSchedAt nextSchedAt $ fromJust job
 
   where (fn, jn) = unHandle jh
 
@@ -541,8 +552,8 @@ retryJob job = do
 
   pushChanList (Add job)
 
-  where  fn = jFuncName job
-         jn = jName job
+  where  fn = getFuncName job
+         jn = getName job
 
 
 
@@ -563,7 +574,7 @@ schedLaterJob jh later step = do
     let job' = fromJust job
 
     nextSchedAt <- liftIO $ (+) later <$> getEpochTime
-    retryJob job' {jSchedAt = nextSchedAt , jCount = jCount job' + step}
+    retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
 
   where (fn, jn) = unHandle jh
 
@@ -577,16 +588,16 @@ revertProcessQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
   handles <- transactReadOnly $ \p -> P.foldr (proc p) (foldFunc (check now tout)) []
-  mapM_ (failJob . jHandle) handles
+  mapM_ (failJob . getHandle) handles
 
   where foldFunc :: (Job -> Bool) -> Job -> [Job] -> [Job]
         foldFunc f job acc | f job = job : acc
                            | otherwise = acc
 
         check :: Int64 -> Int64 -> Job -> Bool
-        check now t0 (Job {jSchedAt = sc, jTimeout = t1})
-          | t1 > 0 = sc + fromIntegral t1 < now
-          | otherwise = sc + fromIntegral t0 < now
+        check now t0 job
+          | getTimeout job > 0 = getSchedAt job + fromIntegral (getTimeout job) < now
+          | otherwise = getSchedAt job + fromIntegral t0 < now
 
 shutdown :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 shutdown = do
@@ -612,7 +623,7 @@ waitResult state job = do
                Nothing        -> pure ""
             else pure ""
 
-  where jh = jHandle job
+  where jh = getHandle job
 
 pushResult
   :: MonadIO m
