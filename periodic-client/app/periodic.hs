@@ -10,8 +10,8 @@ import           Control.Monad                 (void, when)
 import           Control.Monad.IO.Class        (liftIO)
 import           Data.Binary                   (decodeFile, encodeFile)
 import           Data.ByteString               (ByteString)
-import qualified Data.ByteString.Char8         as B (pack, putStr, readFile,
-                                                     unpack)
+import qualified Data.ByteString.Char8         as B (lines, pack, putStr,
+                                                     readFile, split, unpack)
 import qualified Data.ByteString.Lazy          as LB (readFile)
 import           Data.Int                      (Int64)
 import           Data.List                     (isPrefixOf, transpose)
@@ -337,7 +337,7 @@ doRunJob (x:y:xs) =
         getFile fn = Just . Workload <$> B.readFile fn
 
 doStatus = do
-  st <- map formatTime . unpackBS <$> status
+  st <- map formatTime . unpackBS . map (B.split ',') . B.lines <$> status
   liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]

@@ -33,7 +33,6 @@ import           Control.Monad.Trans.Control  (MonadBaseControl,
                                                liftBaseDiscard)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
-import qualified Data.ByteString.Char8        as B (lines, split)
 import           Periodic.Agent               (AgentT, receive, receive_, send)
 import           Periodic.Connection          (ConnEnv, initClientConnEnv,
                                                runConnectionT)
@@ -150,11 +149,10 @@ isSuccess = do
 
 status
   :: (MonadIO m, MonadMask m)
-  => ClientT m [[ByteString]]
+  => ClientT m ByteString
 status = withAgentT $ do
   send Status
-  ret <- receive_
-  return . map (B.split ',') $ B.lines ret
+  receive_
 
 configGet
   :: (MonadIO m, MonadMask m)
