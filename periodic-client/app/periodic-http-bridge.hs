@@ -135,10 +135,7 @@ makeTransport' p transport  = do
 application :: ClientEnv ->  ScottyM ()
 application clientEnv = do
   get "/periodic/status/" $ statusHandler clientEnv
-  post "/periodic/submit/:func_name/:job_name/:sched_at/:timeout/" $ submitJobHandler clientEnv
-  post "/periodic/submit/:func_name/:job_name/:sched_at/" $ submitJobHandler clientEnv
   post "/periodic/submit/:func_name/:job_name/" $ submitJobHandler clientEnv
-  post "/periodic/run/:func_name/:job_name/:timeout/" $ runJobHandler clientEnv
   post "/periodic/run/:func_name/:job_name/" $ runJobHandler clientEnv
   post "/periodic/remove/:func_name/:job_name/" $ removeJobHandler clientEnv
   post "/periodic/drop/:func_name/" $ dropFuncHandler clientEnv
