@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module Periodic.Transport.WebSockets
   ( makeServerTransport
   , makeClientTransport
@@ -16,7 +17,7 @@ mkStream transport =
     (do
         bs <- recvData transport 8192
         return $ if BC.null bs then Nothing else Just bs)
-    (\mbBl -> case mbBl of
+    (\case
         Nothing -> return ()
         Just bl -> sendData transport $ BL.toStrict bl)
 

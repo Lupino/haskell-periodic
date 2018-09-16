@@ -93,12 +93,12 @@ main = do
 
   startServer (makeTransport opts) storePath =<< listen host
 
-makeTransport Options{..} sock =
-  if useTls then do
+makeTransport Options{..} sock
+  | useTls = do
     prms <- makeServerParams' cert [] certKey caStore
     makeTLSTransport prms =<< makeSocketTransport sock
-  else if useWs then WS.makeServerTransport =<< makeSocketTransport sock
-  else makeTransport' xorFile sock
+  | useWs = WS.makeServerTransport =<< makeSocketTransport sock
+  | otherwise = makeTransport' xorFile sock
 
 makeTransport' [] sock = makeSocketTransport sock
 makeTransport' p sock  = do

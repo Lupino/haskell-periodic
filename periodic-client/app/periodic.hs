@@ -245,13 +245,13 @@ main = do
   runClientT clientEnv $ processCommand cmd argv
 
 makeTransport :: Options -> Transport -> IO Transport
-makeTransport Options{..} transport =
-  if useTls then do
+makeTransport Options{..} transport
+  | useTls = do
     prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
     makeTLSTransport prms transport
-  else if useWs then
+  | useWs =
     WS.makeClientTransport (fromMaybe "0.0.0.0" $ getHost host) (getService host) transport
-  else makeTransport' xorFile transport
+  | otherwise = makeTransport' xorFile transport
 
 makeTransport' :: FilePath -> Transport -> IO Transport
 makeTransport' [] transport = return transport

@@ -173,7 +173,7 @@ fromVer V2 = 2
 fromVer V3 = 3
 
 calcVer :: Job -> JVer
-calcVer (Job {jCount = count, jTimeout = to})
+calcVer Job{jCount = count, jTimeout = to}
   | count > 0 && to > 0 = V3
   | to > 0 = V2
   | count > 0 = V1
