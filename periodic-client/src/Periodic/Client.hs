@@ -15,6 +15,7 @@ module Periodic.Client
   , ping
   , submitJob_
   , submitJob
+  , runJob_
   , runJob
   , removeJob
   , dropFunc
@@ -115,7 +116,7 @@ submitJob fn jn w later = do
 
 runJob_ :: (MonadIO m, MonadMask m) => Job -> ClientT m ByteString
 runJob_ j = withAgentT $ do
-  send (RunJob j)
+  send (RunJob $ setSchedAt 0 j)
   receive_
 
 runJob

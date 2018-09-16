@@ -24,8 +24,7 @@ import           Periodic.Transport              (Transport)
 import           Periodic.Transport.TLS
 import qualified Periodic.Transport.WebSockets   as WS (makeClientTransport)
 import           Periodic.Transport.XOR          (makeXORTransport)
-import           Periodic.Types                  (FuncName, JobName,
-                                                  Workload (..))
+import           Periodic.Types.Job
 import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitSuccess)
 import           Web.Scotty                      (ActionM, ScottyM, body, get,
@@ -136,8 +135,10 @@ makeTransport' p transport  = do
 application :: ClientEnv ->  ScottyM ()
 application clientEnv = do
   get "/periodic/status/" $ statusHandler clientEnv
-  post "/periodic/submit/:func_name/:job_name/:later/" $ submitJobHandler clientEnv
+  post "/periodic/submit/:func_name/:job_name/:sched_at/:timeout/" $ submitJobHandler clientEnv
+  post "/periodic/submit/:func_name/:job_name/:sched_at/" $ submitJobHandler clientEnv
   post "/periodic/submit/:func_name/:job_name/" $ submitJobHandler clientEnv
+  post "/periodic/run/:func_name/:job_name/:timeout/" $ runJobHandler clientEnv
   post "/periodic/run/:func_name/:job_name/" $ runJobHandler clientEnv
   post "/periodic/remove/:func_name/:job_name/" $ removeJobHandler clientEnv
   post "/periodic/drop/:func_name/" $ dropFuncHandler clientEnv
@@ -148,6 +149,14 @@ paramJob = do
   jn <- fromString <$> param "job_name"
   return (fn, jn)
 
+paramJob_ :: ActionM Job
+paramJob_ = do
+  (fn, jn) <- paramJob
+  schedAt <- param "sched_at" `rescue` const (return 0)
+  timeout <- param "timeout" `rescue` const (return 0)
+  wb <- Workload . LB.toStrict <$> body
+  pure $ setSchedAt schedAt $ setTimeout timeout $ setWorkload wb $ initJob fn jn
+
 sampleRet :: Bool -> ActionM ()
 sampleRet r = do
   WS.status $ if r then status204 else status500
@@ -155,12 +164,8 @@ sampleRet r = do
 
 submitJobHandler :: ClientEnv -> ActionM ()
 submitJobHandler clientEnv = do
-  (fn, jn) <- paramJob
-  later <- param "later" `rescue` const (return 0)
-  wb <- Workload . LB.toStrict <$> body
-  r <- liftIO
-         $ runClientT clientEnv
-         $ submitJob fn jn (Just wb) (Just later)
+  job <- paramJob_
+  r <- liftIO $ runClientT clientEnv $ submitJob_ job
   sampleRet r
 
 removeJobHandler :: ClientEnv -> ActionM ()
@@ -171,9 +176,8 @@ removeJobHandler clientEnv = do
 
 runJobHandler :: ClientEnv -> ActionM ()
 runJobHandler clientEnv = do
-  (fn, jn) <- paramJob
-  wb <- Workload . LB.toStrict <$> body
-  r <- liftIO $ runClientT clientEnv $ runJob fn jn (Just wb)
+  job <- paramJob_
+  r <- liftIO $ runClientT clientEnv $ runJob_ job
   raw $ LB.fromStrict r
 
 dropFuncHandler :: ClientEnv -> ActionM ()
