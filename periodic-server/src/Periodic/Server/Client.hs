@@ -89,6 +89,7 @@ handleAgentT lastVist = do
       lift $ pushJob job
       send Success
     Right (RunJob job) -> do
+      lift $ prepareWait job
       lift $ pushJob job
       state <- liftC Conn.statusTVar
       w <- lift $ waitResult state job

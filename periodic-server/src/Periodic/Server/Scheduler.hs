@@ -33,6 +33,7 @@ module Periodic.Server.Scheduler
   , keepalive
   , setConfigInt
   , getConfigInt
+  , prepareWait
   , waitResult
   ) where
 
@@ -609,10 +610,17 @@ shutdown = do
     return t
   when alive . void . async $ liftIO sCleanup
 
+prepareWait :: MonadIO m => Job -> SchedT m ()
+prepareWait job = do
+  wl <- asks sWaitList
+  liftIO $ FL.insert wl jh Nothing
+  where jh = getHandle job
+
+
 waitResult :: MonadIO m => TVar Bool -> Job -> SchedT m ByteString
 waitResult state job = do
   wl <- asks sWaitList
-  liftIO $ bracket_ (FL.insert wl jh Nothing) (FL.delete wl jh)
+  liftIO $ bracket_ (return ()) (FL.delete wl jh)
          $ atomically $ do
            st <- readTVar state
            if st then do
