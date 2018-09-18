@@ -37,7 +37,7 @@ module Periodic.Server.Scheduler
   , waitResult
   ) where
 
-import           Control.Exception               (SomeException, bracket_, try)
+import           Control.Exception               (SomeException, try)
 import           Control.Monad                   (forever, mzero, unless, void,
                                                   when)
 import           Data.Int                        (Int64)
@@ -88,7 +88,7 @@ import           System.Log.Logger               (errorM)
 
 data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
 
-type WaitList = IOHashMap JobHandle (Maybe ByteString)
+type WaitList = IOHashMap JobHandle (Int64, Maybe ByteString)
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
@@ -96,6 +96,7 @@ data SchedEnv = SchedEnv
   , sTaskTimeout  :: TVar Int -- the task do timeout
   , sMaxPatch     :: TVar Int -- max poll patch size
   , sKeepalive    :: TVar Int
+  , sExpiration   :: TVar Int -- run job cache expiration
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
@@ -151,6 +152,7 @@ initSchedEnv sStorePath sPersist sCleanup = do
   sTaskTimeout  <- newTVarIO 600
   sMaxPatch     <- newTVarIO 250
   sKeepalive    <- newTVarIO 300
+  sExpiration   <- newTVarIO 300
   pure SchedEnv{..}
 
 startSchedT
@@ -162,12 +164,14 @@ startSchedT = do
   taskList <- liftIO newIOHashMap
   runTask_ sPollDelay $ pushChanList PollJob
   runTask 0 $ runChanJob taskList
+  runTask 100 purgeExpired
 
   loadInt "poll-delay" sPollDelay
   loadInt "revert-delay" sRevertDelay
   loadInt "timeout" sTaskTimeout
   loadInt "keepalive" sKeepalive
   loadInt "max-patch" sMaxPatch
+  loadInt "expiration" sExpiration
 
 loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
 loadInt fn ref = do
@@ -196,6 +200,7 @@ setConfigInt key val = do
     "timeout"      -> saveInt "timeout" val sTaskTimeout
     "keepalive"    -> saveInt "keepalive" val sKeepalive
     "max-patch"    -> saveInt "max-patch" val sMaxPatch
+    "expiration"   -> saveInt "expiration" val sExpiration
     _              -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT m Int
@@ -207,6 +212,7 @@ getConfigInt key = do
     "timeout"      -> liftIO $ readTVarIO sTaskTimeout
     "keepalive"    -> liftIO $ readTVarIO sKeepalive
     "max-patch"    -> liftIO $ readTVarIO sMaxPatch
+    "expiration"   -> liftIO $ readTVarIO sExpiration
     _              -> pure 0
 
 keepalive :: Monad m => SchedT m (TVar Int)
@@ -600,6 +606,22 @@ revertProcessQueue = do
           | getTimeout job > 0 = getSchedAt job + fromIntegral (getTimeout job) < now
           | otherwise = getSchedAt job + fromIntegral t0 < now
 
+purgeExpired :: MonadIO m => SchedT m ()
+purgeExpired = do
+  now <- liftIO getEpochTime
+  wl <- asks sWaitList
+  ex <- liftIO . fmap fromIntegral . readTVarIO =<< asks sExpiration
+  liftIO $ atomically $ do
+    ks <- FL.foldrWithKeySTM wl (foldFunc (check (now - ex))) []
+    mapM_ (FL.deleteSTM wl) ks
+
+  where foldFunc :: ((Int64, Maybe ByteString) -> Bool) -> JobHandle -> (Int64, Maybe ByteString) -> [JobHandle] -> [JobHandle]
+        foldFunc f jh v acc | f v = jh : acc
+                           | otherwise = acc
+
+        check :: Int64 -> (Int64, Maybe ByteString) -> Bool
+        check t0 (t, _) = t < t0
+
 shutdown :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 shutdown = do
   SchedEnv{..} <- ask
@@ -613,23 +635,27 @@ shutdown = do
 prepareWait :: MonadIO m => Job -> SchedT m ()
 prepareWait job = do
   wl <- asks sWaitList
-  liftIO $ FL.insert wl jh Nothing
-  where jh = getHandle job
+  now <- liftIO getEpochTime
+  liftIO $ FL.alter wl (updateWL now) jh
+  where updateWL :: Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString)
+        updateWL now Nothing       = Just (now, Nothing)
+        updateWL now (Just (_, v)) = Just (now, v)
+
+        jh = getHandle job
 
 
 waitResult :: MonadIO m => TVar Bool -> Job -> SchedT m ByteString
 waitResult state job = do
   wl <- asks sWaitList
-  liftIO $ bracket_ (return ()) (FL.delete wl jh)
-         $ atomically $ do
-           st <- readTVar state
-           if st then do
-             w0 <- FL.lookupSTM wl jh
-             case w0 of
-               Just (Just w1) -> pure w1
-               Just Nothing   -> retry
-               Nothing        -> pure ""
-            else pure ""
+  liftIO $ atomically $ do
+    st <- readTVar state
+    if st then do
+      w0 <- FL.lookupSTM wl jh
+      case w0 of
+        Just (_, Just w1) -> pure w1
+        Just (_, Nothing) -> retry
+        Nothing           -> pure ""
+     else pure ""
 
   where jh = getHandle job
 
@@ -638,7 +664,8 @@ pushResult
   => JobHandle -> ByteString -> SchedT m ()
 pushResult jh w = do
   wl <- asks sWaitList
-  liftIO $ FL.alter wl updateWL jh
-  where updateWL :: Maybe (Maybe ByteString) -> Maybe (Maybe ByteString)
-        updateWL Nothing  = Nothing
-        updateWL (Just _) = Just (Just w)
+  now <- liftIO getEpochTime
+  liftIO $ FL.alter wl (updateWL now) jh
+  where updateWL :: Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString)
+        updateWL _ Nothing    = Nothing
+        updateWL now (Just _) = Just (now, Just w)

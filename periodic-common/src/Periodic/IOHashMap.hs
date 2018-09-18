@@ -17,6 +17,8 @@ module Periodic.IOHashMap
   , toList
 
   , lookupSTM
+  , foldrWithKeySTM
+  , deleteSTM
   ) where
 
 import           Prelude                     hiding (lookup, null)
@@ -73,3 +75,9 @@ toList (IOHashMap h) = HM.toList <$> readTVarIO h
 
 lookupSTM :: (Eq a, Hashable a) => IOHashMap a b -> a -> STM (Maybe b)
 lookupSTM (IOHashMap h) k = HM.lookup k <$> readTVar h
+
+foldrWithKeySTM :: IOHashMap a b -> (a -> b -> c -> c) -> c -> STM c
+foldrWithKeySTM (IOHashMap h) f acc = HM.foldrWithKey f acc <$> readTVar h
+
+deleteSTM :: (Eq a, Hashable a) => IOHashMap a b -> a -> STM ()
+deleteSTM (IOHashMap h) k = modifyTVar' h $ HM.delete k
