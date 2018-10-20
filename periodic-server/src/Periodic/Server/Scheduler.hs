@@ -659,16 +659,12 @@ shutdown = do
   when alive . void . async $ liftIO sCleanup
 
 prepareWait :: MonadIO m => Job -> SchedT m ()
-prepareWait job = do
-  wl <- asks sWaitList
-  now <- liftIO getEpochTime
-  liftIO $ FL.alter wl (updateWL now) jh
+prepareWait job = pushResult_ updateWL jh
   where updateWL :: Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString)
         updateWL now Nothing       = Just (now, Nothing)
         updateWL now (Just (_, v)) = Just (now, v)
 
         jh = getHandle job
-
 
 waitResult :: MonadIO m => TVar Bool -> Job -> SchedT m ByteString
 waitResult state job = do
@@ -688,10 +684,16 @@ waitResult state job = do
 pushResult
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT m ()
-pushResult jh w = do
-  wl <- asks sWaitList
-  now <- liftIO getEpochTime
-  liftIO $ FL.alter wl (updateWL now) jh
+pushResult jh w = pushResult_ updateWL jh
   where updateWL :: Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString)
         updateWL _ Nothing    = Nothing
         updateWL now (Just _) = Just (now, Just w)
+
+pushResult_
+  :: MonadIO m
+  => (Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString))
+  -> JobHandle -> SchedT m ()
+pushResult_ f jh = do
+  wl <- asks sWaitList
+  now <- liftIO getEpochTime
+  liftIO $ FL.alter wl (f now) jh
