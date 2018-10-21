@@ -86,7 +86,7 @@ import           Data.HashPSQ                    (HashPSQ)
 import qualified Data.HashPSQ                    as PSQ
 import           System.Log.Logger               (errorM)
 
-data Action = Add Job | Remove Job | Cancel | PollJob | PollJob1 Int
+data Action = Add Job | Remove Job | Cancel | PollJob | TryPoll JobHandle
 
 type WaitList = IOHashMap JobHandle (Int64, Maybe ByteString)
 
@@ -266,17 +266,21 @@ runChanJob taskList = do
           :: (MonadIO m, MonadBaseControl IO m)
           => TaskList m -> Action -> SchedT m ()
         doChanJob tl (Add job)    = reSchedJob tl job
-        doChanJob tl (Remove job) = findTask tl job >>= mapM_ (cancel . snd)
+        doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
         doChanJob tl Cancel       = mapM_ (cancel . snd) =<< liftIO (FL.elems tl)
         doChanJob tl PollJob      = pollJob tl
-        doChanJob _ (PollJob1 d)  =
-          void $ async $ do
-            liftIO $ threadDelay $ d * 1000000 -- 1 seconds
-            pushChanList PollJob
+        doChanJob tl (TryPoll jh) = removeTaskAndTryPoll tl jh
 
 
 pollDelay :: (MonadIO m, Num a) => SchedT m a
 pollDelay = liftIO . fmap fromIntegral . readTVarIO =<< asks sPollDelay
+
+removeTaskAndTryPoll :: MonadIO m => TaskList m -> JobHandle -> SchedT m ()
+removeTaskAndTryPoll taskList jh = do
+  liftIO $ FL.delete taskList jh
+  maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
+  size <- liftIO $ FL.size taskList
+  when (size < maxPatch) $ pushChanList PollJob
 
 pollJob
   :: (MonadIO m, MonadBaseControl IO m)
@@ -319,11 +323,9 @@ pollJob_ taskList funcList = do
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly $ \p ->
-    P.foldr' (main p) funcList (foldFunc maxPatch check now) PSQ.empty
+    P.foldr' (main p) funcList (foldFunc (maxPatch * 2) check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
-
-  when (PSQ.size jobs >= maxPatch - 20) $ pushChanList (PollJob1 10)
 
   where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
         foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (getHandle job) (now - getSchedAt job) job acc
@@ -341,7 +343,7 @@ pollJob_ taskList funcList = do
             Nothing -> do
               isProc <- transactReadOnly $ \p -> P.member (proc p) fn (hashJobName jn)
               unless isProc $ reSchedJob tl job
-            Just (_, w0) -> do
+            Just w0 -> do
               r <- canRun fn
               unless r $ cancel w0
           where fn = getFuncName job
@@ -373,7 +375,7 @@ pushJob job = do
 reSchedJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
   w <- findTask taskList job
-  forM_ w (cancel . snd)
+  forM_ w cancel
 
   delay <- (+100) <$> pollDelay
   next <- liftIO $ (+ delay) <$> getEpochTime
@@ -387,30 +389,31 @@ reSchedJob taskList job = do
         check tl = do
           maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
           size <- liftIO $ FL.size tl
-          if size < maxPatch then return True
+          if size < maxPatch * 2 then return True
           else do
             lastTask <- findLastTask tl
             case lastTask of
               Nothing -> return True
-              Just (sc, w) ->
+              Just (sc, jh, w) ->
                 if sc < getSchedAt job then return False
                 else do
                   cancel w
+                  liftIO $ FL.delete taskList jh
                   return True
 
-findTask :: MonadIO m => TaskList m -> Job -> SchedT m (Maybe (Int64, Task m))
-findTask taskList job = liftIO $ FL.lookup taskList (getHandle job)
+findTask :: MonadIO m => TaskList m -> Job -> SchedT m (Maybe (Task m))
+findTask taskList job = liftIO $ fmap snd <$> FL.lookup taskList (getHandle job)
 
-findLastTask :: MonadIO m => TaskList m -> SchedT m (Maybe (Int64, Task m))
+findLastTask :: MonadIO m => TaskList m -> SchedT m (Maybe (Int64, JobHandle, Task m))
 findLastTask tl = liftIO . atomically $ FL.foldrWithKeySTM tl f Nothing
   where f :: JobHandle
           -> (Int64, a)
-          -> Maybe (Int64, a)
-          -> Maybe (Int64, a)
-        f _ (sc, t) Nothing = Just (sc, t)
-        f _ (sc, t) (Just (sc1, t1))
-          | sc > sc1 = Just (sc, t)
-          | otherwise = Just (sc1, t1)
+          -> Maybe (Int64, JobHandle, a)
+          -> Maybe (Int64, JobHandle, a)
+        f jh (sc, t) Nothing = Just (sc, jh, t)
+        f jh (sc, t) (Just (sc1, jh1, t1))
+          | sc > sc1 = Just (sc, jh, t)
+          | otherwise = Just (sc1, jh1, t1)
 
 canRun :: MonadIO m => FuncName -> SchedT m Bool
 canRun fn = asks sFuncStatList >>= liftIO . flip canRun_ fn
@@ -482,7 +485,9 @@ schedJob_ taskList job = do
           liftIO . try $ assignJob agent job
 
         endSchedJob :: MonadIO m => SchedT m ()
-        endSchedJob = transact $ \p -> P.delete (main p) fn jn
+        endSchedJob = do
+          transact $ \p -> P.delete (main p) fn jn
+          pushChanList (TryPoll jh)
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
