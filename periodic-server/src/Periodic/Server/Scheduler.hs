@@ -97,6 +97,8 @@ data SchedEnv = SchedEnv
   , sMaxPatch     :: TVar Int -- max poll patch size
   , sKeepalive    :: TVar Int
   , sExpiration   :: TVar Int -- run job cache expiration
+  , sAutoPoll     :: TVar Bool
+  , sPolled       :: TVar Bool
   , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
@@ -153,6 +155,8 @@ initSchedEnv sStorePath sPersist sCleanup = do
   sMaxPatch     <- newTVarIO 250
   sKeepalive    <- newTVarIO 300
   sExpiration   <- newTVarIO 300
+  sAutoPoll     <- newTVarIO False
+  sPolled       <- newTVarIO False
   pure SchedEnv{..}
 
 startSchedT
@@ -278,18 +282,27 @@ pollDelay = liftIO . fmap fromIntegral . readTVarIO =<< asks sPollDelay
 removeTaskAndTryPoll :: MonadIO m => TaskList m -> JobHandle -> SchedT m ()
 removeTaskAndTryPoll taskList jh = do
   liftIO $ FL.delete taskList jh
-  maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
-  size <- liftIO $ FL.size taskList
-  when (size < maxPatch) $ pushChanList PollJob
+  polled <- asks sPolled
+  isPolled <- liftIO $ readTVarIO polled
+  autoPoll <- liftIO . readTVarIO =<< asks sAutoPoll
+  when (isPolled && autoPoll) $ do
+    maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
+    size <- liftIO $ FL.size taskList
+    when (size < maxPatch) $ do
+      liftIO . atomically $ writeTVar polled False
+      pushChanList PollJob
 
 pollJob
   :: (MonadIO m, MonadBaseControl IO m)
   => TaskList m -> SchedT m ()
 pollJob taskList = do
+  polled <- asks sPolled
+  liftIO . atomically $ writeTVar polled False
   mapM_ checkPoll =<< liftIO (FL.toList taskList)
   stList <- asks sFuncStatList
   funcList <- liftIO $ foldr foldFunc [] <$> FL.toList stList
   pollJob_ taskList funcList
+  liftIO . atomically $ writeTVar polled True
 
   where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
@@ -326,6 +339,9 @@ pollJob_ taskList funcList = do
     P.foldr' (main p) funcList (foldFunc (maxPatch * 2) check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
+
+  autoPoll <- asks sAutoPoll
+  liftIO . atomically $ writeTVar autoPoll (length jobs > maxPatch)
 
   where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
         foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (getHandle job) (now - getSchedAt job) job acc
