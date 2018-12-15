@@ -2,7 +2,7 @@
 , data-default-class, exceptions, hslogger, http-types
 , lifted-async, lifted-base, monad-control, periodic-common
 , process-extras, resource-pool, scotty, stdenv, streaming-commons
-, text, transformers, unix-time, warp
+, text, transformers, unix-time, warp, configureFlags
 }:
 mkDerivation {
   pname = "periodic-client";
@@ -10,6 +10,8 @@ mkDerivation {
   src = ../periodic-client;
   isLibrary = true;
   isExecutable = true;
+  enableSharedExecutables = false;
+  enableSharedLibraries = false;
   libraryHaskellDepends = [
     base byteable bytestring exceptions hslogger lifted-async
     lifted-base monad-control periodic-common resource-pool
@@ -22,4 +24,5 @@ mkDerivation {
   ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
+  configureFlags = configureFlags;
 }
