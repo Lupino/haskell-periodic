@@ -2,7 +2,7 @@
 , direct-sqlite, directory, exceptions, filepath, hslogger
 , lifted-async, monad-control, mtl, network, periodic-common
 , psqueues, stdenv, stm, transformers, transformers-base
-, unordered-containers, configureFlags
+, unordered-containers
 }:
 mkDerivation {
   pname = "periodicd";
@@ -21,5 +21,4 @@ mkDerivation {
   executableHaskellDepends = [ base bytestring periodic-common ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
-  configureFlags = configureFlags;
 }

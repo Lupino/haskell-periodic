@@ -2,7 +2,7 @@
 , data-default-class, exceptions, hslogger, http-types
 , lifted-async, lifted-base, monad-control, periodic-common
 , process-extras, resource-pool, scotty, stdenv, streaming-commons
-, text, transformers, unix-time, warp, configureFlags
+, text, transformers, unix-time, warp
 }:
 mkDerivation {
   pname = "periodic-client";
@@ -24,5 +24,4 @@ mkDerivation {
   ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
-  configureFlags = configureFlags;
 }
