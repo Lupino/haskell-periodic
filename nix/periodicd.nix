@@ -2,9 +2,10 @@
 , direct-sqlite, directory, exceptions, filepath, hslogger
 , lifted-async, monad-control, mtl, network, periodic-common
 , psqueues, stdenv, stm, transformers, transformers-base
-, unordered-containers
+, unordered-containers, static ? false
 }:
-mkDerivation {
+let config = import ./config.nix {static = static;};
+in mkDerivation {
   pname = "periodicd";
   version = "1.1.2.0";
   src = ../periodic-server;
@@ -21,4 +22,5 @@ mkDerivation {
   executableHaskellDepends = [ base bytestring periodic-common ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
+  configureFlags = config.configureFlags;
 }
