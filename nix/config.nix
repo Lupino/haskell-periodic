@@ -9,6 +9,6 @@ let
     "--extra-lib-dirs=${pkgs.zlib.static}/lib"
   ] else [];
 in {
-  configureFlags = [];
+  configureFlags = configureFlags;
   pkgs = pkgs;
 }
