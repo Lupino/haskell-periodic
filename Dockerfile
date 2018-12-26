@@ -1,18 +1,12 @@
-FROM nixos/nix
+FROM alpine:3.8
+RUN apk update && \
+    apk add wget && \
+    wget https://github.com/Lupino/haskell-periodic/releases/download/v1.1.2.0/periodic-linux-v1.1.2.0.tar.bz2 && \
+    apk del wget && \
+    tar xvf periodic-linux-v1.1.2.0.tar.bz2 && \
+    rm periodic-linux-v1.1.2.0.tar.bz2 && \
+    mv periodic* /usr/bin
 
-RUN nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
-RUN nix-channel --update
-
-COPY . /data
-
-WORKDIR /data
-
-RUN nix-build -A periodicd -o periodicd-build
-RUN nix-build -A periodic-client -o periodic-client-build
-
-FROM alpine:latest
-COPY --from=0 /data/periodicd-build/bin/* /usr/bin/
-COPY --from=0 /data/periodic-client-build/bin/* /usr/bin/
 WORKDIR /data
 
 ENTRYPOINT ["/usr/bin/periodicd"]
