@@ -8,6 +8,8 @@ RUN apk update && \
     mv periodic-http-bridge /usr/bin && \
     rm periodic*
 
-WORKDIR /data
-
 ENTRYPOINT ["/usr/bin/periodic-http-bridge"]
+
+EXPOSE 8080
+
+CMD ["--http-host", "0.0.0.0", "--http-port", "8080"]
