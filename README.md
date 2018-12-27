@@ -75,15 +75,18 @@ As you can see, the client and worker APIs (along with the periodic server) deal
 Quick start
 ----------
 
-### Install
+### Install with [stack](http://haskellstack.org/)
 
     git clone https://github.com/Lupino/haskell-periodic.git
     cd haskell-periodic
+
+#### Install with [stack](http://haskellstack.org/)
+
     stack install
 
-    periodicd -h
-    periodic help
+#### Install with [nix](https://nixos.org/nix/)
 
+    nix-env -f default.nix -i periodicd periodic-client
 
 ### Start periodic server
 
