@@ -6,6 +6,7 @@ RUN apk update && \
     apk del wget && \
     tar xvf periodic-linux-$VERSION.tar.bz2 && \
     mv periodic-run /usr/bin && \
+    mv periodic /usr/bin && \
     rm periodic*
 
 WORKDIR /data
