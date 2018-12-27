@@ -34,38 +34,40 @@ import           System.Process.ByteString.Lazy (readProcessWithExitCode)
 import           Text.Read                      (readMaybe)
 
 
-data Options = Options { host      :: String
-                       , xorFile   :: FilePath
-                       , useTls    :: Bool
-                       , useWs     :: Bool
-                       , hostName  :: String
-                       , certKey   :: FilePath
-                       , cert      :: FilePath
-                       , caStore   :: FilePath
-                       , thread    :: Int
-                       , notify    :: Bool
-                       , useData   :: Bool
-                       , useStdout :: Bool
-                       , useName   :: Bool
-                       , showHelp  :: Bool
-                       }
+data Options = Options
+  { host      :: String
+  , xorFile   :: FilePath
+  , useTls    :: Bool
+  , useWs     :: Bool
+  , hostName  :: String
+  , certKey   :: FilePath
+  , cert      :: FilePath
+  , caStore   :: FilePath
+  , thread    :: Int
+  , notify    :: Bool
+  , useData   :: Bool
+  , useStdout :: Bool
+  , useName   :: Bool
+  , showHelp  :: Bool
+  }
 
-options :: Maybe String -> Maybe String -> Options
-options h f = Options { host      = fromMaybe "unix:///tmp/periodic.sock" h
-                      , xorFile   = fromMaybe "" f
-                      , useTls    = False
-                      , useWs     = False
-                      , hostName  = "localhost"
-                      , certKey   = "client-key.pem"
-                      , cert      = "client.pem"
-                      , caStore   = "ca.pem"
-                      , thread    = 1
-                      , notify    = False
-                      , useData   = False
-                      , useStdout = True
-                      , useName   = True
-                      , showHelp  = False
-                      }
+options :: Maybe Int -> Maybe String -> Maybe String -> Options
+options t h f = Options
+  { host      = fromMaybe "unix:///tmp/periodic.sock" h
+  , xorFile   = fromMaybe "" f
+  , useTls    = False
+  , useWs     = False
+  , hostName  = "localhost"
+  , certKey   = "client-key.pem"
+  , cert      = "client.pem"
+  , caStore   = "ca.pem"
+  , thread    = fromMaybe 1 t
+  , notify    = False
+  , useData   = False
+  , useStdout = True
+  , useName   = True
+  , showHelp  = False
+  }
 
 parseOptions :: [String] -> Options -> (Options, String, String, [String])
 parseOptions ("-H":x:xs)         opt = parseOptions xs opt { host      = x }
@@ -104,7 +106,7 @@ printHelp = do
   putStrLn "     --cert-key  Private key associated"
   putStrLn "     --cert      Public certificate (X.509 format)"
   putStrLn "     --ca        trusted certificates"
-  putStrLn "     --thread    worker thread"
+  putStrLn "     --thread    worker thread [$THREAD]"
   putStrLn "     --broadcast is broadcast worker"
   putStrLn "     --data      send work data to client"
   putStrLn "     --no-stdout hidden the stdout"
@@ -117,8 +119,9 @@ main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
   f <- lookupEnv "XOR_FILE"
+  t <- fmap read <$> lookupEnv "THREAD"
 
-  (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options h f) <$> getArgs
+  (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h f) <$> getArgs
 
   when showHelp printHelp
 
