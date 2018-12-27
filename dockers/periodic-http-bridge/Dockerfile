@@ -5,14 +5,9 @@ RUN apk update && \
     wget https://github.com/Lupino/haskell-periodic/releases/download/$VERSION/periodic-linux-$VERSION.tar.bz2 && \
     apk del wget && \
     tar xvf periodic-linux-$VERSION.tar.bz2 && \
-    rm periodic-linux-$VERSION.tar.bz2 && \
-    mv periodic* /usr/bin
+    mv periodic-http-bridge /usr/bin && \
+    rm periodic*
 
 WORKDIR /data
 
-VOLUME /data
-
-ENV PERIODIC_PORT tcp://:5000
-EXPOSE 5000
-
-ENTRYPOINT ["/usr/bin/periodicd"]
+ENTRYPOINT ["/usr/bin/periodic-http-bridge"]
