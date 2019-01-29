@@ -11,7 +11,6 @@ module Periodic.Socket
 import           Control.Exception (bracketOnError, throwIO)
 import           Control.Monad     (when)
 import           Data.List         (isPrefixOf)
-import           Network.BSD       (getProtocolNumber)
 import           Network.Socket    hiding (connect, listen)
 import qualified Network.Socket    as S (connect, listen)
 import           Periodic.Utils    (tryIO)
@@ -41,9 +40,7 @@ firstSuccessful = go Nothing
 
 connectTo :: Maybe HostName -> ServiceName -> IO Socket
 connectTo host serv = do
-    proto <- getProtocolNumber "tcp"
     let hints = defaultHints { addrFlags = [AI_ADDRCONFIG]
-                             , addrProtocol = proto
                              , addrSocketType = Stream }
     addrs <- getAddrInfo (Just hints) host (Just serv)
     firstSuccessful $ map tryToConnect addrs
@@ -81,13 +78,12 @@ listenOnFile path =
 
 listenOn :: Maybe HostName -> ServiceName -> IO Socket
 listenOn host serv = do
-  proto <- getProtocolNumber "tcp"
   -- We should probably specify addrFamily = AF_INET6 and the filter
   -- code below should be removed. AI_ADDRCONFIG is probably not
   -- necessary. But this code is well-tested. So, let's keep it.
   let hints = defaultHints { addrFlags = [AI_ADDRCONFIG, AI_PASSIVE]
                            , addrSocketType = Stream
-                           , addrProtocol = proto }
+                           }
   addrs <- getAddrInfo (Just hints) host (Just serv)
   -- Choose an IPv6 socket if exists.  This ensures the socket can
   -- handle both IPv4 and IPv6 if v6only is false.
