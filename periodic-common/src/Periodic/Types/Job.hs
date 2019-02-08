@@ -105,8 +105,7 @@ instance Parser JobHandle where
 instance Binary JobHandle where
   get = do
     fn <- get
-    jn <- get
-    return $ JobHandle fn jn
+    JobHandle fn <$> get
   put (JobHandle fn jn) = do
     put fn
     put jn
@@ -260,4 +259,4 @@ unHandle :: JobHandle -> (FuncName, JobName)
 unHandle (JobHandle fn jn) = (fn, jn)
 
 jobHandle :: FuncName -> JobName -> JobHandle
-jobHandle fn jn = JobHandle fn jn
+jobHandle = JobHandle
