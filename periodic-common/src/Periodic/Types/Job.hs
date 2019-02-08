@@ -30,7 +30,6 @@ import qualified Data.ByteString.Char8   as B (empty, length)
 import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
-import           Data.Word               (Word64)
 import           GHC.Generics            (Generic)
 
 import           Data.String             (IsString (..))
@@ -105,14 +104,12 @@ instance Parser JobHandle where
 
 instance Binary JobHandle where
   get = do
-    size <- getWord8
-    fn <- getByteString $ fromIntegral size
-    jn <- toStrict <$> getRemainingLazyByteString
-    return $ JobHandle (FuncName fn) (JobName jn)
-  put (JobHandle (FuncName fn) (JobName jn)) = do
-    putWord8 . fromIntegral $ B.length fn
-    putByteString fn
-    putByteString jn
+    fn <- get
+    jn <- get
+    return $ JobHandle fn jn
+  put (JobHandle fn jn) = do
+    put fn
+    put jn
 
 newtype Workload  = Workload {unWL :: ByteString}
   deriving (Generic, Eq, Ord, Show)
