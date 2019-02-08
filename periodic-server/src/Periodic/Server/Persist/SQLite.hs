@@ -15,18 +15,11 @@ import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust, listToMaybe)
 import           Database.SQLite3.Direct
-import           Periodic.Server.Persist (Persist (..), Persister (..))
+import           Periodic.Server.Persist
 import           Periodic.Types.Internal (runParser)
 import           Periodic.Types.Job      (FuncName (..), Job, getSchedAt)
 import           System.Log.Logger       (errorM)
 
-newtype Table = Table ByteString
-
-mainTableName :: Table
-mainTableName = Table "main"
-
-procTableName :: Table
-procTableName = Table "proc"
 
 initSQLite :: Utf8 -> IO Persist
 initSQLite path = do
@@ -35,34 +28,21 @@ initSQLite path = do
     Left (e, _) -> dbError $ show e
     Right db -> do
       beginTx db
-      createTable db mainTableName
-      createTable db procTableName
+      createJobTable db
       createFuncTable db
       commitTx db
       pure $ Persist
-        { main = Persister
-          { member = doMember db mainTableName
-          , lookup = doLookup db mainTableName
-          , insert = doInsert db mainTableName
-          , delete = doDelete db mainTableName
-          , size = doSize db mainTableName
-          , foldr = doFoldr db mainTableName
-          , foldr' = doFoldr' db mainTableName
-          }
-        , proc = Persister
-          { member = doMember db procTableName
-          , lookup = doLookup db procTableName
-          , insert = doInsert db procTableName
-          , delete = doDelete db procTableName
-          , size = doSize db procTableName
-          , foldr = doFoldr db procTableName
-          , foldr' = doFoldr' db procTableName
-          }
-
+        { member = doMember db
+        , lookup = doLookup db
+        , insert = doInsert db
+        , delete = doDelete db
+        , size = doSize db
+        , foldr = doFoldr db
+        , foldr' = doFoldr' db
         , insertFuncName = doInsertFuncName db
         , removeFuncName = doRemoveFuncName db
         , funcList = doFuncList db
-        , minSchedAt = doMinSchedAt db mainTableName
+        , minSchedAt = doMinSchedAt db Pending
         , transact = doTransact db
         , transactReadOnly = doTransact db
         }
@@ -90,12 +70,13 @@ doTransact db io = do
       commitTx db
       pure v
 
-createTable :: Database -> Table -> IO ()
-createTable db (Table tn) = void . exec db $ Utf8 $
-  "CREATE TABLE IF NOT EXISTS " <> tn <> " ("
+createJobTable :: Database -> IO ()
+createJobTable db = void . exec db $ Utf8 $
+  "CREATE TABLE IF NOT EXISTS jobs ("
     <> "func CHAR(256) NOT NULL,"
     <> " name CHAR(256) NOT NULL,"
     <> " value BLOB,"
+    <> " state  INTEGER DEFAULT 0,"
     <> " sched_at INTEGER DEFAULT 0,"
     <> " PRIMARY KEY (func, name))"
 
@@ -105,36 +86,37 @@ createFuncTable db = void . exec db $ Utf8 $
     <> "func CHAR(256) NOT NULL,"
     <> " PRIMARY KEY (func))"
 
-doLookup :: Byteable k => Database -> Table -> FuncName -> k -> IO (Maybe Job)
-doLookup db (Table tn) fn jn =
+doLookup :: Byteable k => Database -> State -> FuncName -> k -> IO (Maybe Job)
+doLookup db state fn jn =
   listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc f) []
-  where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=? AND name=? LIMIT 1"
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND name=? AND state=" <> stateName state <> " LIMIT 1"
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
 
-doMember :: Byteable k => Database -> Table -> FuncName -> k -> IO Bool
-doMember db tb fn jn = isJust <$> doLookup db tb fn jn
+doMember :: Byteable k => Database -> State -> FuncName -> k -> IO Bool
+doMember db st fn jn = isJust <$> doLookup db st fn jn
 
-doInsert :: Byteable k => Database -> Table -> FuncName -> k -> Job -> IO ()
-doInsert db (Table tn) fn jn job = do
+doInsert :: Byteable k => Database -> State -> FuncName -> k -> Job -> IO ()
+doInsert db state fn jn job = do
   execStmt db sql $ \stmt -> do
     bindFnAndJn fn jn stmt
-    void $ bindBlob stmt 3 $ toBytes job
-    void $ bindInt64 stmt 4 $ getSchedAt job
+    void $ bindBlob  stmt 3 $ toBytes job
+    void $ bindInt64 stmt 4 $ stateName' state
+    void $ bindInt64 stmt 5 $ getSchedAt job
   doInsertFuncName db fn
-  where sql = Utf8 $ "INSERT OR REPLACE INTO " <> tn <> " VALUES (?, ?, ?, ?)"
+  where sql = Utf8 $ "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?)"
 
 doInsertFuncName :: Database -> FuncName -> IO ()
 doInsertFuncName db = execFN db sql
   where sql = Utf8 "INSERT OR REPLACE INTO funcs VALUES (?)"
 
-doFoldr :: Database -> Table -> (Job -> a -> a) -> a -> IO a
-doFoldr db (Table tn) f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
-  where sql = Utf8 $ "SELECT value FROM " <> tn
+doFoldr :: Database -> State -> (Job -> a -> a) -> a -> IO a
+doFoldr db state f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE state=" <> stateName state
 
-doFoldr' :: Database -> Table -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldr' db (Table tn) fns f acc = F.foldrM (foldFunc f) acc fns
-  where sql = Utf8 $ "SELECT value FROM " <> tn <> " WHERE func=?"
+doFoldr' :: Database -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+doFoldr' db state fns f acc = F.foldrM (foldFunc f) acc fns
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state=" <> stateName state
 
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 fn =
@@ -145,9 +127,9 @@ doFuncList db =
   doFoldr_ db sql (const $ pure ()) (\fn acc -> FuncName fn : acc) []
   where sql = Utf8 "SELECT func FROM funcs"
 
-doDelete :: Byteable k => Database -> Table -> FuncName -> k -> IO ()
-doDelete db (Table tn) fn jn = execStmt db sql $ bindFnAndJn fn jn
-  where sql = Utf8 $ "DELETE FROM " <> tn <> " WHERE func=? and name=?"
+doDelete :: Byteable k => Database -> State -> FuncName -> k -> IO ()
+doDelete db state fn jn = execStmt db sql $ bindFnAndJn fn jn
+  where sql = Utf8 $ "DELETE FROM jobs WHERE func=? AND name=? AND state=" <> stateName state
 
 doRemoveFuncName :: Database -> FuncName -> IO ()
 doRemoveFuncName db fn = do
@@ -157,13 +139,13 @@ doRemoveFuncName db fn = do
   where sql0 = Utf8 "DELETE FROM funcs WHERE func=?"
         sql1 = Utf8 "DELETE FROM main WHERE func=?"
 
-doMinSchedAt :: Database -> Table -> FuncName -> IO Int64
-doMinSchedAt db (Table tn) fn = queryStmt db sql (`bindFN` fn) stepInt64
-  where sql = Utf8 $ "SELECT sched_at FROM " <> tn <> " WHERE func=? ORDER BY sched_at ASC LIMIT 1"
+doMinSchedAt :: Database -> State -> FuncName -> IO Int64
+doMinSchedAt db state fn = queryStmt db sql (`bindFN` fn) stepInt64
+  where sql = Utf8 $ "SELECT sched_at FROM jobs WHERE func=? AND state=" <> stateName state <> " ORDER BY sched_at ASC LIMIT 1"
 
-doSize :: Database -> Table -> FuncName -> IO Int64
-doSize db (Table tn) fn = queryStmt db sql (`bindFN` fn) stepInt64
-  where sql = Utf8 $ "SELECT COUNT(*) FROM " <> tn <> " WHERE func=?"
+doSize :: Database -> State -> FuncName -> IO Int64
+doSize db state fn = queryStmt db sql (`bindFN` fn) stepInt64
+  where sql = Utf8 $ "SELECT COUNT(*) FROM jobs WHERE func=? AND state=" <> stateName state
 
 
 dbError :: String -> IO a

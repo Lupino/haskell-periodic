@@ -76,7 +76,7 @@ import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
 import           System.IO                       (readFile, writeFile)
 import           Text.Read                       (readMaybe)
 
-import           Periodic.Server.Persist         (Persist (main, proc))
+import           Periodic.Server.Persist         (Persist, State (..))
 import qualified Periodic.Server.Persist         as P
 
 import           Data.ByteString                 (ByteString)
@@ -336,7 +336,7 @@ pollJob_ taskList funcList = do
 
   maxPatch <- liftIO . readTVarIO =<< asks sMaxPatch
   jobs <- transactReadOnly $ \p ->
-    P.foldr' (main p) funcList (foldFunc (maxPatch * 2) check now) PSQ.empty
+    P.foldr' p Pending funcList (foldFunc (maxPatch * 2) check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
 
@@ -357,7 +357,7 @@ pollJob_ taskList funcList = do
           w <- findTask tl job
           case w of
             Nothing -> do
-              isProc <- transactReadOnly $ \p -> P.member (proc p) fn (hashJobName jn)
+              isProc <- transactReadOnly $ \p -> P.member p Running fn jn
               unless isProc $ reSchedJob tl job
             Just w0 -> do
               r <- canRun fn
@@ -374,10 +374,10 @@ pushChanList act = do
 
 pushJob :: MonadIO m => Job -> SchedT m ()
 pushJob job = do
-  exists <- transactReadOnly $ \p -> P.member (main p) fn jn
+  exists <- transactReadOnly $ \p -> P.member p Pending fn jn
   if exists then doPushJob
             else do
-              isProc <- transactReadOnly $ \p -> P.member (proc p) fn (hashJobName jn)
+              isProc <- transactReadOnly $ \p -> P.member p Running fn jn
               unless isProc doPushJob
 
   where fn = getFuncName job
@@ -386,7 +386,7 @@ pushJob job = do
         doPushJob :: MonadIO m => SchedT m ()
         doPushJob = do
           pushChanList (Add job)
-          transact $ \p -> P.insert (main p) fn jn job
+          transact $ \p -> P.insert p Pending fn jn job
 
 reSchedJob :: (MonadIO m, MonadBaseControl IO m) => TaskList m -> Job -> SchedT m ()
 reSchedJob taskList job = do
@@ -465,7 +465,6 @@ schedJob_ taskList job = do
 
   where fn = getFuncName job
         jn = getName job
-        hjn = hashJobName jn
         schedAt = getSchedAt job
         jh = getHandle job
 
@@ -478,11 +477,11 @@ schedJob_ taskList job = do
           if alive then do
             liftIO $ IL.insert jq (getHandle job)
             nextSchedAt <- liftIO getEpochTime
-            transact $ \p -> P.insert (proc p) fn hjn $ setSchedAt nextSchedAt job
+            transact $ \p -> P.insert p Running fn jn $ setSchedAt nextSchedAt job
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                transact $ \p -> P.delete (proc p) fn hjn
+                transact $ \p -> P.delete p Running fn jn
                 liftIO $ IL.delete jq jh
                 schedJob_ tl job
               Right _ -> endSchedJob
@@ -502,14 +501,14 @@ schedJob_ taskList job = do
 
         endSchedJob :: MonadIO m => SchedT m ()
         endSchedJob = do
-          transact $ \p -> P.delete (main p) fn jn
+          transact $ \p -> P.delete p Pending fn jn
           pushChanList (TryPoll jh)
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
   (size, sizePQ, sc) <- transactReadOnly $ \p -> do
-    size <- P.size (main p) fn
-    sizePQ <- P.size (proc p) fn
+    size <- P.size p Pending fn
+    sizePQ <- P.size p Running fn
     sc <- P.minSchedAt p fn
     pure (size, sizePQ, sc)
 
@@ -528,8 +527,8 @@ adjustFuncStat fn = do
 removeJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
 removeJob job = do
   transact $ \p -> do
-    P.delete (proc p) fn (hashJobName jn)
-    P.delete (main p) fn jn
+    P.delete p Running fn jn
+    P.delete p Pending fn jn
 
   pushChanList (Remove job)
   pushResult jh ""
@@ -539,8 +538,8 @@ removeJob job = do
 
 dumpJob :: MonadIO m => SchedT m [Job]
 dumpJob = transactReadOnly $ \p -> do
-  js <- P.foldr (main p) (:) []
-  js' <- P.foldr (proc p) (:) []
+  js <- P.foldr p Pending (:) []
+  js' <- P.foldr p Running (:) []
   return $ js ++ js'
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
@@ -591,7 +590,7 @@ assignJob env0 job =
 
 failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
 failJob jh = do
-  job <- transactReadOnly $ \p -> P.lookup (proc p) fn jn
+  job <- transactReadOnly $ \p -> P.lookup p Running fn jn
   when (isJust job) $ do
     nextSchedAt <- liftIO getEpochTime
     retryJob $ setSchedAt nextSchedAt $ fromJust job
@@ -601,8 +600,8 @@ failJob jh = do
 retryJob :: MonadIO m => Job -> SchedT m ()
 retryJob job = do
   transact $ \p -> do
-    P.delete (proc p) fn (hashJobName jn)
-    P.insert (main p) fn jn job
+    P.delete p Running fn jn
+    P.insert p Pending fn jn job
 
   pushChanList (Add job)
 
@@ -615,7 +614,7 @@ doneJob
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT m ()
 doneJob jh w = do
-  transact $ \p -> P.delete (proc p) fn jn
+  transact $ \p -> P.delete p Running fn jn
   pushResult jh w
   where (fn, jn) = unHandle jh
 
@@ -623,7 +622,7 @@ schedLaterJob
   :: (MonadIO m, MonadBaseControl IO m)
   => JobHandle -> Int64 -> Int -> SchedT m ()
 schedLaterJob jh later step = do
-  job <- transactReadOnly $ \p -> P.lookup (proc p) fn jn
+  job <- transactReadOnly $ \p -> P.lookup p Running fn jn
   when (isJust job) $ do
     let job' = fromJust job
 
@@ -641,7 +640,7 @@ revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
 revertProcessQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
-  handles <- transactReadOnly $ \p -> P.foldr (proc p) (foldFunc (check now tout)) []
+  handles <- transactReadOnly $ \p -> P.foldr p Running (foldFunc (check now tout)) []
   mapM_ (failJob . getHandle) handles
 
   where foldFunc :: (Job -> Bool) -> Job -> [Job] -> [Job]
