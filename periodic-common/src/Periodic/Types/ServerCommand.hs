@@ -21,6 +21,7 @@ data ServerCommand =
   | Unknown
   | Success
   | Config Int
+  | Acquired Bool
 
   deriving (Show)
 
@@ -43,16 +44,25 @@ instance Binary ServerCommand where
       24 -> do
         val <- getWord32be
         pure . Config $ fromIntegral val
+      26 -> do
+        v <- getWord8
+        pure $ Acquired $ if v == 1 then True else False
       _ -> error $ "Error ServerCommand " ++ show tp
 
-  put Noop               = putWord8 0
+  put Noop            = putWord8 0
   put (JobAssign job) = do
     putWord8 5
     put job
-  put NoJob              = putWord8 6
-  put Pong               = putWord8 10
-  put Unknown            = putWord8 12
-  put Success            = putWord8 16
-  put (Config v)       = do
+  put NoJob           = putWord8 6
+  put Pong            = putWord8 10
+  put Unknown         = putWord8 12
+  put Success         = putWord8 16
+  put (Config v)      = do
     putWord8 24
     putWord32be $ fromIntegral v
+  put (Acquired True)    = do
+    putWord8 26
+    putWord8 1
+  put (Acquired False)    = do
+    putWord8 26
+    putWord8 0
