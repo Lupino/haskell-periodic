@@ -481,7 +481,6 @@ schedJob_ taskList job = do
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                transact $ \p -> P.delete p Running fn jn
                 liftIO $ IL.delete jq jh
                 schedJob_ tl job
               Right _ -> endSchedJob
@@ -500,9 +499,7 @@ schedJob_ taskList job = do
           liftIO . try $ assignJob agent job
 
         endSchedJob :: MonadIO m => SchedT m ()
-        endSchedJob = do
-          transact $ \p -> P.delete p Pending fn jn
-          pushChanList (TryPoll jh)
+        endSchedJob = pushChanList (TryPoll jh)
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
@@ -526,9 +523,7 @@ adjustFuncStat fn = do
 
 removeJob :: (MonadIO m, MonadBaseControl IO m) => Job -> SchedT m ()
 removeJob job = do
-  transact $ \p -> do
-    P.delete p Running fn jn
-    P.delete p Pending fn jn
+  transact $ \p -> P.delete p fn jn
 
   pushChanList (Remove job)
   pushResult jh ""
@@ -599,9 +594,7 @@ failJob jh = do
 
 retryJob :: MonadIO m => Job -> SchedT m ()
 retryJob job = do
-  transact $ \p -> do
-    P.delete p Running fn jn
-    P.insert p Pending fn jn job
+  transact $ \p -> P.insert p Pending fn jn job
 
   pushChanList (Add job)
 
@@ -614,7 +607,7 @@ doneJob
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT m ()
 doneJob jh w = do
-  transact $ \p -> P.delete p Running fn jn
+  transact $ \p -> P.delete p fn jn
   pushResult jh w
   where (fn, jn) = unHandle jh
 

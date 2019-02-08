@@ -104,7 +104,7 @@ doInsert db state fn jn job = do
     void $ bindInt64 stmt 4 $ stateName' state
     void $ bindInt64 stmt 5 $ getSchedAt job
   doInsertFuncName db fn
-  where sql = Utf8 $ "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?)"
+  where sql = Utf8 "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?)"
 
 doInsertFuncName :: Database -> FuncName -> IO ()
 doInsertFuncName db = execFN db sql
@@ -127,9 +127,9 @@ doFuncList db =
   doFoldr_ db sql (const $ pure ()) (\fn acc -> FuncName fn : acc) []
   where sql = Utf8 "SELECT func FROM funcs"
 
-doDelete :: Byteable k => Database -> State -> FuncName -> k -> IO ()
-doDelete db state fn jn = execStmt db sql $ bindFnAndJn fn jn
-  where sql = Utf8 $ "DELETE FROM jobs WHERE func=? AND name=? AND state=" <> stateName state
+doDelete :: Byteable k => Database -> FuncName -> k -> IO ()
+doDelete db fn jn = execStmt db sql $ bindFnAndJn fn jn
+  where sql = Utf8 "DELETE FROM jobs WHERE func=? AND name=?"
 
 doRemoveFuncName :: Database -> FuncName -> IO ()
 doRemoveFuncName db fn = do

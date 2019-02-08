@@ -32,7 +32,7 @@ data Persist = Persist
   { member :: forall k . Byteable k => State -> FuncName -> k -> IO Bool
   , lookup :: forall k . Byteable k => State -> FuncName -> k -> IO (Maybe Job)
   , insert :: forall k . Byteable k => State -> FuncName -> k -> Job -> IO ()
-  , delete :: forall k . Byteable k => State -> FuncName -> k -> IO ()
+  , delete :: forall k . Byteable k => FuncName -> k -> IO ()
   , size   :: State -> FuncName -> IO Int64
   , foldr  :: forall a . State -> (Job -> a -> a) -> a -> IO a
   , foldr' :: forall a . State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
@@ -49,7 +49,7 @@ persist = Persist
   { member = \_ _ _ -> pure False
   , lookup = \_ _ _ -> pure Nothing
   , insert = \_ _ _ _ -> pure ()
-  , delete = \_ _ _ -> pure ()
+  , delete = \_ _ -> pure ()
   , size = \_ _ -> pure 0
   , foldr = \_ _ a -> pure a
   , foldr' = \_ _ _ a -> pure a
