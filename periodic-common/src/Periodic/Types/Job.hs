@@ -22,7 +22,6 @@ module Periodic.Types.Job
   , getHandle
   , unHandle
   , jobHandle
-  , hashJobName
   ) where
 
 import           Data.Byteable           (Byteable (..))
@@ -93,7 +92,7 @@ instance Binary JobName where
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
 
-data JobHandle = JobHandle FuncName ByteString
+data JobHandle = JobHandle FuncName JobName
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable JobHandle
@@ -107,11 +106,11 @@ instance Parser JobHandle where
 instance Binary JobHandle where
   get = do
     size <- getWord8
-    fn <- getByteString $ fromIntegral (size - 8)
-    jn <- getByteString 8
-    return $ JobHandle (FuncName fn) jn
-  put (JobHandle (FuncName fn) jn) = do
-    putWord8 . fromIntegral $ B.length fn + 8
+    fn <- getByteString $ fromIntegral size
+    jn <- toStrict <$> getRemainingLazyByteString
+    return $ JobHandle (FuncName fn) (JobName jn)
+  put (JobHandle (FuncName fn) (JobName jn)) = do
+    putWord8 . fromIntegral $ B.length fn
     putByteString fn
     putByteString jn
 
@@ -260,13 +259,8 @@ getTimeout = jTimeout
 getHandle :: Job -> JobHandle
 getHandle job = jobHandle (getFuncName job) (getName job)
 
-hashJobName :: JobName -> ByteString
-hashJobName = toStrict . encode . toWord64 . hash
-  where toWord64 :: Int -> Word64
-        toWord64 = fromIntegral
-
-unHandle :: JobHandle -> (FuncName, ByteString)
+unHandle :: JobHandle -> (FuncName, JobName)
 unHandle (JobHandle fn jn) = (fn, jn)
 
 jobHandle :: FuncName -> JobName -> JobHandle
-jobHandle fn jn = JobHandle fn $ hashJobName jn
+jobHandle fn jn = JobHandle fn jn
