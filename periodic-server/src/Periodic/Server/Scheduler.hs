@@ -481,6 +481,7 @@ schedJob_ taskList job = do
             r <- doSubmitJob env0
             case r of
               Left _ -> do
+                transact $ \p -> P.insert p Pending fn jn $ setSchedAt nextSchedAt job
                 liftIO $ IL.delete jq jh
                 schedJob_ tl job
               Right _ -> endSchedJob
