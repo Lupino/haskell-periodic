@@ -15,7 +15,7 @@ import           Data.ByteString.Lazy    (toStrict)
 
 data ServerCommand =
     Noop
-  | JobAssign JobHandle Job
+  | JobAssign Job
   | NoJob
   | Pong
   | Unknown
@@ -35,9 +35,7 @@ instance Binary ServerCommand where
     tp <- getWord8
     case tp of
       0 -> pure Noop
-      5 -> do
-        jh <- get
-        JobAssign jh <$> get
+      5 -> JobAssign <$> get
       6 -> pure NoJob
       10 -> pure Pong
       12 -> pure Unknown
@@ -48,9 +46,8 @@ instance Binary ServerCommand where
       _ -> error $ "Error ServerCommand " ++ show tp
 
   put Noop               = putWord8 0
-  put (JobAssign jh job) = do
+  put (JobAssign job) = do
     putWord8 5
-    put jh
     put job
   put NoJob              = putWord8 6
   put Pong               = putWord8 10
