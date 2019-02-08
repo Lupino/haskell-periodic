@@ -22,8 +22,7 @@ import           Control.Monad.Trans.Control     (MonadBaseControl)
 import           Data.Byteable                   (toBytes)
 import           Periodic.Agent                  (AgentEnv, readerSize, receive,
                                                   runAgentT, send)
-import           Periodic.Job                    (JobConfig, JobT, func_,
-                                                  initJobConfig, name, workFail)
+import           Periodic.Job                    (JobT, func_, name, workFail)
 import           Periodic.Socket                 (connect)
 import           Periodic.Transport              (Transport,
                                                   makeSocketTransport)
@@ -31,7 +30,7 @@ import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 
 import           Periodic.Types                  (ClientType (TypeWorker),
-                                                  FuncName)
+                                                  FuncName, Job)
 
 import           Periodic.Connection             (initClientConnEnv)
 import qualified Periodic.Connection             as Conn
@@ -113,7 +112,7 @@ removeFunc f = do
 
 grabJob
   :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
-  => AgentEnv -> WorkerT m (Maybe JobConfig)
+  => AgentEnv -> WorkerT m (Maybe Job)
 grabJob agentEnv = do
   pl <- liftC . runAgentT agentEnv $ do
     size <- readerSize
@@ -121,9 +120,9 @@ grabJob agentEnv = do
     timeout 10000000 receive
 
   case pl of
-    Nothing                         -> pure Nothing
-    Just (Right (JobAssign jh job)) -> pure (Just $ initJobConfig job jh)
-    _                               -> pure Nothing
+    Nothing                      -> pure Nothing
+    Just (Right (JobAssign job)) -> pure (Just job)
+    _                            -> pure Nothing
 
 
 work
