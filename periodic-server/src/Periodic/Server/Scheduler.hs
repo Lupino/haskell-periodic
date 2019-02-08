@@ -586,7 +586,7 @@ pushGrab funcList handleList ag = do
 
 assignJob :: AgentEnv' -> Job -> IO ()
 assignJob env0 job =
-  runAgentT' env0 $ send (JobAssign (getHandle job) job)
+  runAgentT' env0 $ send (JobAssign job)
 
 failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
 failJob jh = do
