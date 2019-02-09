@@ -7,7 +7,7 @@
 let config = import ./config.nix {static = static;};
 in mkDerivation {
   pname = "periodicd";
-  version = "1.1.2.0";
+  version = "1.1.3.0";
   src = ../periodic-server;
   isLibrary = true;
   isExecutable = true;
