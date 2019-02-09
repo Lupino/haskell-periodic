@@ -18,15 +18,17 @@ import           Data.ByteString    (ByteString)
 import           Data.Int           (Int64)
 import           Periodic.Types.Job (FuncName, Job)
 
-data State = Pending | Running
+data State = Pending | Running | Locking
 
 stateName :: State -> ByteString
 stateName Pending = "0"
 stateName Running = "1"
+stateName Locking = "2"
 
 stateName' :: State -> Int64
 stateName' Pending = 0
 stateName' Running = 1
+stateName' Locking = 2
 
 data Persist = Persist
   { member :: forall k . Byteable k => State -> FuncName -> k -> IO Bool

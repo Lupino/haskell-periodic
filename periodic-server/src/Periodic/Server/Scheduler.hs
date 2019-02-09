@@ -22,6 +22,8 @@ module Periodic.Server.Scheduler
   , failJob
   , doneJob
   , schedLaterJob
+  , acquireLock
+  , releaseLock
   , addFunc
   , removeFunc
   , broadcastFunc
@@ -51,6 +53,7 @@ import qualified Periodic.IOList                 as IL
 import qualified Periodic.Lock                   as L (Lock, new, with)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
+import           Periodic.Types.Internal         (LockName)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand    (ServerCommand (JobAssign))
 import           Periodic.Utils                  (getEpochTime)
@@ -84,11 +87,14 @@ import           Data.Foldable                   (forM_)
 
 import           Data.HashPSQ                    (HashPSQ)
 import qualified Data.HashPSQ                    as PSQ
+import qualified Data.List                       as L (delete, nub, uncons)
 import           System.Log.Logger               (errorM)
 
 data Action = Add Job | Remove Job | Cancel | PollJob | TryPoll JobHandle
 
 type WaitList = IOHashMap JobHandle (Int64, Maybe ByteString)
+
+type LockList = IOHashMap LockName ([JobHandle], [JobHandle])
 
 data SchedEnv = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
@@ -107,6 +113,7 @@ data SchedEnv = SchedEnv
   , sAlive        :: TVar Bool
   , sChanList     :: TVar [Action]
   , sWaitList     :: WaitList
+  , sLockList     :: LockList
   , sPersist      :: Persist
   }
 
@@ -145,6 +152,7 @@ initSchedEnv :: FilePath -> Persist -> IO () -> IO SchedEnv
 initSchedEnv sStorePath sPersist sCleanup = do
   sFuncStatList <- newIOHashMap
   sWaitList     <- newIOHashMap
+  sLockList     <- newIOHashMap
   sLocker       <- L.new
   sGrabQueue    <- newGrabQueue
   sAlive        <- newTVarIO True
@@ -374,11 +382,8 @@ pushChanList act = do
 
 pushJob :: MonadIO m => Job -> SchedT m ()
 pushJob job = do
-  exists <- transactReadOnly $ \p -> P.member p Pending fn jn
-  if exists then doPushJob
-            else do
-              isProc <- transactReadOnly $ \p -> P.member p Running fn jn
-              unless isProc doPushJob
+  isRunning <- transactReadOnly $ \p -> P.member p Running fn jn
+  unless isRunning doPushJob
 
   where fn = getFuncName job
         jn = getName job
@@ -586,6 +591,7 @@ assignJob env0 job =
 
 failJob :: (MonadIO m, MonadBaseControl IO m) => JobHandle -> SchedT m ()
 failJob jh = do
+  releaseLock' jh
   job <- transactReadOnly $ \p -> P.lookup p Running fn jn
   when (isJust job) $ do
     nextSchedAt <- liftIO getEpochTime
@@ -602,12 +608,11 @@ retryJob job = do
   where  fn = getFuncName job
          jn = getName job
 
-
-
 doneJob
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT m ()
 doneJob jh w = do
+  releaseLock' jh
   transact $ \p -> P.delete p fn jn
   pushResult jh w
   where (fn, jn) = unHandle jh
@@ -616,6 +621,7 @@ schedLaterJob
   :: (MonadIO m, MonadBaseControl IO m)
   => JobHandle -> Int64 -> Int -> SchedT m ()
 schedLaterJob jh later step = do
+  releaseLock' jh
   job <- transactReadOnly $ \p -> P.lookup p Running fn jn
   when (isJust job) $ do
     let job' = fromJust job
@@ -624,6 +630,76 @@ schedLaterJob jh later step = do
     retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
 
   where (fn, jn) = unHandle jh
+
+acquireLock
+  :: MonadIO m
+  => LockName -> Int -> JobHandle -> SchedT m Bool
+acquireLock name maxCount jh = do
+  lockList <- asks sLockList
+  j <- transactReadOnly $ \p -> P.lookup p Running fn jn
+  case j of
+    Nothing -> pure False
+    Just job -> do
+      r <- liftIO $ atomically $ do
+        l <- FL.lookupSTM lockList name
+        case l of
+          Nothing -> do
+            FL.insertSTM lockList name ([jh], [])
+            pure True
+          Just (acquired, locked) ->
+            if length acquired < maxCount then do
+              FL.insertSTM lockList name (L.nub $ acquired ++ [jh], locked)
+              pure True
+            else do
+              FL.insertSTM lockList name (acquired, L.nub $ locked ++ [jh])
+              pure False
+
+      when (not r) $ transact $ \p -> P.insert p Locking fn jn job
+
+      pure r
+
+  where (fn, jn) = unHandle jh
+
+releaseLock
+  :: MonadIO m
+  => LockName -> JobHandle -> SchedT m ()
+releaseLock name jh = do
+  lockList <- asks sLockList
+  h <- liftIO $ atomically $ do
+    l <- FL.lookupSTM lockList name
+    case l of
+      Nothing -> pure Nothing
+      Just (acquired, locked) ->
+        case L.uncons locked of
+          Nothing -> do
+            FL.insertSTM lockList name (L.delete jh acquired, [])
+            pure Nothing
+          Just (x, xs) -> do
+            FL.insertSTM lockList name (L.delete jh acquired, xs)
+            pure $ Just x
+
+  case h of
+    Nothing -> pure ()
+    Just hh -> do
+      let (fn, jn) = unHandle hh
+      j <- transactReadOnly $ \p -> P.lookup p Locking fn jn
+      case j of
+        Nothing  -> releaseLock name hh
+        Just job -> do
+          transact $ \p -> P.insert p Pending fn jn job
+          pushChanList (TryPoll hh)
+
+releaseLock'
+  :: MonadIO m
+  => JobHandle -> SchedT m ()
+releaseLock' jh = do
+  lockList <- asks sLockList
+  names <- liftIO $ atomically $ FL.foldrWithKeySTM lockList foldFunc []
+  mapM_ (flip releaseLock jh) names
+
+  where foldFunc :: LockName -> ([JobHandle], [JobHandle]) -> [LockName] -> [LockName]
+        foldFunc n (acquired, _) acc | elem jh acquired = n : acc
+                                     | otherwise = acc
 
 status :: MonadIO m => SchedT m [FuncStat]
 status = do

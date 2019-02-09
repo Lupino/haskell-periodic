@@ -132,3 +132,7 @@ handleAgentT WorkerConfig {..} = do
       unless has $ do
         lift $ broadcastFunc fn True
         liftIO $ insert wFuncList fn
+    Right (Acquire n c jh) -> do
+      r <- lift $ acquireLock n c jh
+      send $ Acquired r
+    Right (Release n jh) -> lift $ releaseLock n jh
