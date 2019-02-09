@@ -15,16 +15,23 @@ module Periodic.Job
   , workFail
   , schedLater
   , schedLater'
+
+  , acquireLock
+  , releaseLock
+
+  , withLock
   ) where
 
+import           Control.Monad                (when)
 import           Control.Monad.Catch          (MonadMask)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
-import           Periodic.Agent               (send)
+import           Periodic.Agent               (receive, send)
 import           Periodic.Node
-import           Periodic.Types               (FromBS (..))
+import           Periodic.Types               (FromBS (..), LockName)
 import           Periodic.Types.Job
+import           Periodic.Types.ServerCommand (ServerCommand (Acquired))
 import           Periodic.Types.WorkerCommand
 
 type JobT m = NodeT Job m
@@ -85,3 +92,31 @@ schedLater'
 schedLater' later step = do
   h <- getHandle <$> env
   withAgentT $ send (SchedLater h later step)
+
+acquireLock
+  :: (MonadIO m, MonadMask m)
+  => LockName -> Int -> JobT m Bool
+acquireLock n maxCount = do
+  h <- getHandle <$> env
+  withAgentT $ do
+    send (Acquire n maxCount h)
+    r <- receive
+    case r of
+      Right (Acquired v) -> pure v
+      _                  -> pure False
+
+releaseLock
+  :: (MonadIO m, MonadMask m)
+  => LockName -> JobT m ()
+releaseLock n = do
+  h <- getHandle <$> env
+  withAgentT $ send (Release n h)
+
+withLock
+  :: (MonadIO m, MonadMask m)
+  => LockName -> Int -> JobT m () -> JobT m ()
+withLock n maxCount j = do
+  acquired <- acquireLock n maxCount
+  when acquired $ do
+    j
+    releaseLock n
