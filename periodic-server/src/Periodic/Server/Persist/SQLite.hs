@@ -31,6 +31,7 @@ initSQLite path = do
       beginTx db
       createJobTable db
       createFuncTable db
+      allPending db
       commitTx db
       pure $ Persist
         { member = doMember db
@@ -86,6 +87,9 @@ createFuncTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS funcs ("
     <> "func CHAR(256) NOT NULL,"
     <> " PRIMARY KEY (func))"
+
+allPending :: Database -> IO ()
+allPending db = void . exec db $ Utf8 $ "UPDATE jobs SET state=0"
 
 doLookup :: Database -> State -> FuncName -> JobName -> IO (Maybe Job)
 doLookup db state fn jn =
@@ -147,7 +151,6 @@ doMinSchedAt db state fn = queryStmt db sql (`bindFN` fn) stepInt64
 doSize :: Database -> State -> FuncName -> IO Int64
 doSize db state fn = queryStmt db sql (`bindFN` fn) stepInt64
   where sql = Utf8 $ "SELECT COUNT(*) FROM jobs WHERE func=? AND state=" <> stateName state
-
 
 dbError :: String -> IO a
 dbError = throwM . userError . ("Database error: " ++)
