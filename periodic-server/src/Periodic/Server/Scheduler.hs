@@ -509,21 +509,23 @@ schedJob_ taskList job = do
 
 adjustFuncStat :: MonadIO m => FuncName -> SchedT m ()
 adjustFuncStat fn = do
-  (size, sizePQ, sc) <- transactReadOnly $ \p -> do
+  (size, sizePQ, sizeL, sc) <- transactReadOnly $ \p -> do
     size <- P.size p Pending fn
     sizePQ <- P.size p Running fn
+    sizeL <- P.size p Locking fn
     sc <- P.minSchedAt p fn
-    pure (size, sizePQ, sc)
+    pure (size, sizePQ, sizeL, sc)
 
   SchedEnv{..} <- ask
   schedAt <- if sc > 0 then pure sc else liftIO getEpochTime
 
-  liftIO $ FL.alter sFuncStatList (update (size + sizePQ) sizePQ schedAt) fn
+  liftIO $ FL.alter sFuncStatList (update (size + sizePQ + sizeL) sizePQ sizeL schedAt) fn
 
-  where update :: Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
-        update size sizePQ schedAt st =
+  where update :: Int64 -> Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
+        update size sizePQ sizeL schedAt st =
           Just ((fromMaybe (funcStat fn) st) { sJob = size
                                              , sProcess = sizePQ
+                                             , sLocking = sizeL
                                              , sSchedAt = schedAt
                                              })
 
