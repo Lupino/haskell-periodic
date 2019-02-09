@@ -9,7 +9,7 @@ import           Prelude                 hiding (foldr, lookup)
 
 import           Control.Monad           (void)
 import           Control.Monad.Catch
-import           Data.Byteable           (Byteable (..))
+import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
@@ -17,7 +17,8 @@ import           Data.Maybe              (isJust, listToMaybe)
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist
 import           Periodic.Types.Internal (runParser)
-import           Periodic.Types.Job      (FuncName (..), Job, getSchedAt)
+import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
+                                          getSchedAt)
 import           System.Log.Logger       (errorM)
 
 
@@ -86,17 +87,17 @@ createFuncTable db = void . exec db $ Utf8 $
     <> "func CHAR(256) NOT NULL,"
     <> " PRIMARY KEY (func))"
 
-doLookup :: Byteable k => Database -> State -> FuncName -> k -> IO (Maybe Job)
+doLookup :: Database -> State -> FuncName -> JobName -> IO (Maybe Job)
 doLookup db state fn jn =
   listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc f) []
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND name=? AND state=" <> stateName state <> " LIMIT 1"
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
 
-doMember :: Byteable k => Database -> State -> FuncName -> k -> IO Bool
+doMember :: Database -> State -> FuncName -> JobName -> IO Bool
 doMember db st fn jn = isJust <$> doLookup db st fn jn
 
-doInsert :: Byteable k => Database -> State -> FuncName -> k -> Job -> IO ()
+doInsert :: Database -> State -> FuncName -> JobName -> Job -> IO ()
 doInsert db state fn jn job = do
   execStmt db sql $ \stmt -> do
     bindFnAndJn fn jn stmt
@@ -127,7 +128,7 @@ doFuncList db =
   doFoldr_ db sql (const $ pure ()) (\fn acc -> FuncName fn : acc) []
   where sql = Utf8 "SELECT func FROM funcs"
 
-doDelete :: Byteable k => Database -> FuncName -> k -> IO ()
+doDelete :: Database -> FuncName -> JobName -> IO ()
 doDelete db fn jn = execStmt db sql $ bindFnAndJn fn jn
   where sql = Utf8 "DELETE FROM jobs WHERE func=? AND name=?"
 
@@ -188,10 +189,10 @@ queryStmt db sql bindStmt stepStmt = do
   void $ finalize stmt
   pure ret
 
-bindFnAndJn :: Byteable k => FuncName -> k -> Statement -> IO ()
-bindFnAndJn fn jn stmt = do
+bindFnAndJn :: FuncName -> JobName -> Statement -> IO ()
+bindFnAndJn fn (JobName jn) stmt = do
   bindFN stmt fn
-  void $ bindBlob stmt 2 $ toBytes jn
+  void $ bindBlob stmt 2 jn
 
 mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
 mkFoldFunc f bs acc =

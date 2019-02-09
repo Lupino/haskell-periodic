@@ -13,10 +13,9 @@ module Periodic.Server.Persist
 
 import           Prelude            hiding (foldr, lookup)
 
-import           Data.Byteable      (Byteable (..))
 import           Data.ByteString    (ByteString)
 import           Data.Int           (Int64)
-import           Periodic.Types.Job (FuncName, Job)
+import           Periodic.Types.Job (FuncName, Job, JobName)
 
 data State = Pending | Running | Locking
 
@@ -31,10 +30,10 @@ stateName' Running = 1
 stateName' Locking = 2
 
 data Persist = Persist
-  { member :: forall k . Byteable k => State -> FuncName -> k -> IO Bool
-  , lookup :: forall k . Byteable k => State -> FuncName -> k -> IO (Maybe Job)
-  , insert :: forall k . Byteable k => State -> FuncName -> k -> Job -> IO ()
-  , delete :: forall k . Byteable k => FuncName -> k -> IO ()
+  { member :: State -> FuncName -> JobName -> IO Bool
+  , lookup :: State -> FuncName -> JobName -> IO (Maybe Job)
+  , insert :: State -> FuncName -> JobName -> Job -> IO ()
+  , delete :: FuncName -> JobName -> IO ()
   , size   :: State -> FuncName -> IO Int64
   , foldr  :: forall a . State -> (Job -> a -> a) -> a -> IO a
   , foldr' :: forall a . State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
