@@ -16,6 +16,7 @@ module Periodic.IOHashMap
   , clear
   , toList
 
+  , insertSTM
   , lookupSTM
   , foldrWithKeySTM
   , deleteSTM
@@ -72,6 +73,9 @@ clear (IOHashMap h) = atomically . modifyTVar' h $ const HM.empty
 
 toList :: IOHashMap a b -> IO [(a, b)]
 toList (IOHashMap h) = HM.toList <$> readTVarIO h
+
+insertSTM :: (Eq a, Hashable a) => IOHashMap a b -> a -> b -> STM ()
+insertSTM (IOHashMap h) k v = modifyTVar' h $ HM.insert k v
 
 lookupSTM :: (Eq a, Hashable a) => IOHashMap a b -> a -> STM (Maybe b)
 lookupSTM (IOHashMap h) k = HM.lookup k <$> readTVar h
