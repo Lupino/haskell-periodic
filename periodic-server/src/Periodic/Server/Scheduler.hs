@@ -690,7 +690,7 @@ releaseLock name jh = do
         Nothing  -> releaseLock name hh
         Just job -> do
           transact $ \p -> P.insert p Pending fn jn job
-          pushChanList (TryPoll hh)
+          pushChanList (Add job)
 
 releaseLock'
   :: MonadIO m
