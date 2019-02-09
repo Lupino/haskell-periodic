@@ -339,7 +339,7 @@ doRunJob (x:y:xs) =
 
 doStatus = do
   st <- map formatTime . unpackBS . map (B.split ',') . B.lines <$> status
-  liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "SCHEDAT"]:st)
+  liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "LOCKING", "SCHEDAT"]:st)
 
 unpackBS :: [[ByteString]] -> [[String]]
 unpackBS = map (map B.unpack)
