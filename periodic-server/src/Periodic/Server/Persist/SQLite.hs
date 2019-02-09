@@ -142,7 +142,7 @@ doRemoveFuncName db fn = do
   execFN db sql1 fn
 
   where sql0 = Utf8 "DELETE FROM funcs WHERE func=?"
-        sql1 = Utf8 "DELETE FROM main WHERE func=?"
+        sql1 = Utf8 "DELETE FROM jobs WHERE func=?"
 
 doMinSchedAt :: Database -> State -> FuncName -> IO Int64
 doMinSchedAt db state fn = queryStmt db sql (`bindFN` fn) stepInt64
