@@ -16,6 +16,7 @@ import           Data.Binary.Put          (putByteString, putWord8)
 import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Char8    as B (length, pack, unpack)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
+import           Data.Hashable
 import           Data.Text                (Text)
 import qualified Data.Text                as T (unpack)
 import           Data.Text.Encoding       (decodeUtf8With)
@@ -64,6 +65,8 @@ instance Binary ConfigKey where
 
 newtype LockName = LockName ByteString
   deriving (Generic, Eq, Ord, Show)
+
+instance Hashable LockName
 
 instance Binary LockName where
   get = do
