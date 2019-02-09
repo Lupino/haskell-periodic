@@ -25,8 +25,8 @@ data WorkerCommand =
   | CanDo FuncName
   | CantDo FuncName
   | Broadcast FuncName
-  | Acquire LockName JobHandle
-  | Release LockName
+  | Acquire LockName Int JobHandle
+  | Release LockName JobHandle
 
   deriving (Show)
 
@@ -57,8 +57,11 @@ instance Binary WorkerCommand where
       21 -> Broadcast <$> get
       27 -> do
         n <- get
-        Acquire n <$> get
-      28 -> Release <$> get
+        c <- fromIntegral <$> getInt16be
+        Acquire n c <$> get
+      28 -> do
+        n <- get
+        Release n <$> get
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
@@ -85,10 +88,12 @@ instance Binary WorkerCommand where
   put (Broadcast fn) = do
     putWord8 21
     put fn
-  put (Acquire n jh) = do
+  put (Acquire n c jh) = do
     putWord8 27
     put n
+    putInt16be $ fromIntegral c
     put jh
-  put (Release n)    = do
+  put (Release n jh)    = do
     putWord8 28
     put n
+    put jh
