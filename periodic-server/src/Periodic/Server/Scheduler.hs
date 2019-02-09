@@ -541,9 +541,10 @@ removeJob job = do
 
 dumpJob :: MonadIO m => SchedT m [Job]
 dumpJob = transactReadOnly $ \p -> do
-  js <- P.foldr p Pending (:) []
-  js' <- P.foldr p Running (:) []
-  return $ js ++ js'
+  js0 <- P.foldr p Pending (:) []
+  js1 <- P.foldr p Running (:) []
+  js2 <- P.foldr p Locking (:) []
+  return $ js0 ++ js1 ++ js2
 
 alterFunc :: MonadIO m => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT m ()
 alterFunc n f = do
