@@ -241,6 +241,19 @@ These request types may only be sent by a worker:
         - ? byte handle
         - 8 byte time delay
         - 2 byte step counter
+    ACQUIRE
+        This is to acquire a lock from the server.
+        Arguments:
+        - 1 byte lock name size
+        - ? byte lock name
+        - 2 byte lock count
+        - ? byte handle
+    RELEASE
+        This is to release a lock to the server.
+        Arguments:
+        - 1 byte lock name size
+        - ? byte lock name
+        - ? byte handle
 
 ## Worker Responses
 These response types may only be sent to a worker:
@@ -262,6 +275,10 @@ These response types may only be sent to a worker:
         the argument.
         Arguments:
         - Job binary packet
+    ACQUIRED
+        This is to response to a ACQUIRE request. if true run the job, else skip.
+        Arguments:
+        - 1 byte 1 or 0
 
 ## Job binary packets
 Job is encode with a binary packet:
@@ -289,3 +306,10 @@ Job is encode with a binary packet:
         Ver3:
         - 4 byte run count           this assign by worker
         - 4 byte timeout
+
+## Job handle packets
+Job handle is encode with a binary packet:
+    - 1 byte func size
+    - ? byte func name
+    - 1 byte name size
+    - ? byte name
