@@ -66,3 +66,8 @@ instance Binary ServerCommand where
   put (Acquired False)    = do
     putWord8 26
     putWord8 0
+
+instance Validatable ServerCommand where
+  validate (JobAssign job) = validate job
+  validate (Config v)      = validateNum "ConfigValue" 0 0xFFFFFFFF v
+  validate _               = Right ()

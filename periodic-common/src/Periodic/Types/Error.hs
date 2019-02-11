@@ -9,6 +9,7 @@ data Error = MagicNotMatch
            | TransportClosed
            | TransportTimeout
            | DataTooLarge
+           | InValidError String
            | EmptyError
 
   deriving (Show, Eq, Ord)

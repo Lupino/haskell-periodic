@@ -8,6 +8,9 @@ module Periodic.Types.Internal
   , parseBinary
   , ConfigKey (..)
   , LockName (..)
+  , Validatable (..)
+  , validateLength
+  , validateNum
   ) where
 
 import           Data.Binary              (Binary (..), decodeOrFail)
@@ -76,3 +79,33 @@ instance Binary LockName where
   put (LockName dat) = do
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
+
+class Validatable a where
+  validate :: a -> Either String ()
+
+instance (Validatable a) => Validatable [a] where
+  validate [] = Right ()
+  validate (x:xs) = do
+    validate x
+    validate xs
+
+instance Validatable ByteString where
+  validate bs = validateLength "Data" 0 0xFFFFFFFF $ B.length bs
+
+validateLength :: String -> Int -> Int -> Int -> Either String ()
+validateLength n min' max' l
+  | l <= min' = Left $ n ++ " is to short"
+  | l >= max' = Left $ n ++ " is to long"
+  | otherwise = Right ()
+
+validateNum :: String -> Int -> Int -> Int -> Either String ()
+validateNum n min' max' l
+  | l <= min' = Left $ n ++ " is to small"
+  | l >= max' = Left $ n ++ " is to big"
+  | otherwise = Right ()
+
+instance Validatable LockName where
+  validate (LockName bs) = validateLength "LockName" 1 255 $ B.length bs
+
+instance Validatable ConfigKey where
+  validate (ConfigKey k) = validateLength "ConfigKey" 1 255 $ length k

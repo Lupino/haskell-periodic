@@ -82,3 +82,17 @@ instance Binary ClientCommand where
   put (RunJob job)    = do
     putWord8 25
     put job
+
+instance Validatable ClientCommand where
+  validate (SubmitJob job) = validate job
+  validate (DropFunc func) = validate func
+  validate (RemoveJob fn jn) = do
+    validate fn
+    validate jn
+  validate (ConfigGet key) = validate key
+  validate (ConfigSet k v) = do
+    validate k
+    validateNum "ConfigValue" 0 0xFFFFFFFF v
+  validate (Load jobs)     = validate jobs
+  validate (RunJob job)    = validate job
+  validate _               = Right ()

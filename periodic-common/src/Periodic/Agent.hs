@@ -32,6 +32,7 @@ module Periodic.Agent
   ) where
 
 import           Control.Concurrent.STM.TVar
+import           Control.Exception           (throwIO)
 import           Control.Monad.Base
 import           Control.Monad.IO.Class      (MonadIO (..))
 import           Control.Monad.Reader.Class  (MonadReader (ask), asks)
@@ -45,6 +46,7 @@ import qualified Data.ByteString             as B (concat, empty)
 import           Periodic.Connection         (ConnEnv, ConnectionT, connid',
                                               runConnectionT, statusTVar)
 import qualified Periodic.Connection         as Conn (send)
+import           Periodic.Types              (Error (..))
 import           Periodic.Types.Internal
 
 type AgentReader = TVar [ByteString]
@@ -96,8 +98,11 @@ send_ pl = do
   mid <- msgid
   liftC $ Conn.send $ B.concat [mid, pl]
 
-send :: (Byteable cmd, MonadIO m) => cmd -> AgentT m ()
-send = send_ . toBytes
+send :: (Byteable cmd, Validatable cmd, MonadIO m) => cmd -> AgentT m ()
+send cmd =
+  case validate cmd of
+    Right _ -> send_ $ toBytes cmd
+    Left e  -> liftIO $ throwIO $ InValidError e
 
 feed :: (MonadIO m) => ByteString -> AgentT m ()
 feed dat = do

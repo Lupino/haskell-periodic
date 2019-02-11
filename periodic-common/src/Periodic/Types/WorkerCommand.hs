@@ -13,6 +13,7 @@ import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
 import           Data.ByteString         (ByteString)
+import qualified Data.ByteString.Char8   as B (length)
 import           Data.ByteString.Lazy    (toStrict)
 
 data WorkerCommand =
@@ -97,3 +98,23 @@ instance Binary WorkerCommand where
     putWord8 28
     put n
     put jh
+
+instance Validatable WorkerCommand where
+  validate (SchedLater jh _ step) = do
+    validate jh
+    validateNum "Step" 0 0xFFFF step
+  validate (WorkDone jh w) = do
+    validate jh
+    validateLength "WorkData" 0 0xFFFFFFFF $ B.length w
+  validate (WorkFail jh) = validate jh
+  validate (CanDo fn) = validate fn
+  validate (CantDo fn) = validate fn
+  validate (Broadcast fn) = validate fn
+  validate (Acquire n c jh) = do
+    validate n
+    validateNum "LockCount" 1 0xFFFF c
+    validate jh
+  validate (Release n jh)    = do
+    validate n
+    validate jh
+  validate _               = Right ()

@@ -65,6 +65,9 @@ instance Binary FuncName where
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
 
+instance Validatable FuncName where
+  validate (FuncName n) = validateLength "FuncName" 1 255 $ B.length n
+
 newtype JobName   = JobName {unJN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
@@ -91,6 +94,9 @@ instance Binary JobName where
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
 
+instance Validatable JobName where
+  validate (JobName n) = validateLength "JobName" 1 255 $ B.length n
+
 data JobHandle = JobHandle FuncName JobName
   deriving (Generic, Eq, Ord, Show)
 
@@ -109,6 +115,11 @@ instance Binary JobHandle where
   put (JobHandle fn jn) = do
     put fn
     put jn
+
+instance Validatable JobHandle where
+  validate (JobHandle fn jn) = do
+    validate fn
+    validate jn
 
 newtype Workload  = Workload {unWL :: ByteString}
   deriving (Generic, Eq, Ord, Show)
@@ -135,6 +146,9 @@ instance Binary Workload where
   put (Workload dat) = do
     putWord32be . fromIntegral $ B.length dat
     putByteString dat
+
+instance Validatable Workload where
+  validate (Workload n) = validateLength "Workload" 0 0xFFFFFFFF $ B.length n
 
 data Job = Job { jFuncName :: FuncName
                , jName     :: JobName
@@ -212,6 +226,14 @@ instance Binary Job where
       V3 -> do
         putInt32be $ fromIntegral jCount
         putInt32be $ fromIntegral jTimeout
+
+instance Validatable Job where
+  validate (Job fn jn w _ c t) = do
+    validate fn
+    validate jn
+    validate w
+    validateNum "JobCount" 0 0xFFFFFFFF c
+    validateNum "JobTimeout" 0 0xFFFFFFFF t
 
 initJob :: FuncName -> JobName -> Job
 initJob jFuncName jName = Job
