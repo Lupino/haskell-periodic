@@ -46,7 +46,7 @@ instance Binary ServerCommand where
         pure . Config $ fromIntegral val
       26 -> do
         v <- getWord8
-        pure $ Acquired $ if v == 1 then True else False
+        pure $ Acquired $ v == 1
       _ -> error $ "Error ServerCommand " ++ show tp
 
   put Noop            = putWord8 0
