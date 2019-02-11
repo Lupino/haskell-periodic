@@ -48,6 +48,7 @@ import           Periodic.Connection         (ConnEnv, ConnectionT, connid',
 import qualified Periodic.Connection         as Conn (send)
 import           Periodic.Types              (Error (..))
 import           Periodic.Types.Internal
+import           System.Log.Logger           (errorM)
 
 type AgentReader = TVar [ByteString]
 type Msgid = ByteString
@@ -102,7 +103,9 @@ send :: (Byteable cmd, Validatable cmd, MonadIO m) => cmd -> AgentT m ()
 send cmd =
   case validate cmd of
     Right _ -> send_ $ toBytes cmd
-    Left e  -> liftIO $ throwIO $ InValidError e
+    Left e  -> do
+      liftIO $ errorM "Periodic.Agent" $ "InValidError " ++ e
+      liftIO $ throwIO $ InValidError e
 
 feed :: (MonadIO m) => ByteString -> AgentT m ()
 feed dat = do
