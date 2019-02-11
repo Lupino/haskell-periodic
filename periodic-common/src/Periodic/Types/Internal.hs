@@ -94,14 +94,14 @@ instance Validatable ByteString where
 
 validateLength :: String -> Int -> Int -> Int -> Either String ()
 validateLength n min' max' l
-  | l <= min' = Left $ n ++ " is to short"
-  | l >= max' = Left $ n ++ " is to long"
+  | l < min' = Left $ n ++ " is to short"
+  | l > max' = Left $ n ++ " is to long"
   | otherwise = Right ()
 
 validateNum :: String -> Int -> Int -> Int -> Either String ()
 validateNum n min' max' l
-  | l <= min' = Left $ n ++ " is to small"
-  | l >= max' = Left $ n ++ " is to big"
+  | l < min' = Left $ n ++ " is to small"
+  | l > max' = Left $ n ++ " is to big"
   | otherwise = Right ()
 
 instance Validatable LockName where
