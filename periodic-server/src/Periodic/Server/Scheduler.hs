@@ -657,7 +657,7 @@ acquireLock name maxCount jh = do
               FL.insertSTM lockList name (acquired, L.nub $ locked ++ [jh])
               pure False
 
-      when (not r) $ transact $ \p -> P.insert p Locking fn jn job
+      unless r $ transact $ \p -> P.insert p Locking fn jn job
 
       pure r
 
@@ -698,10 +698,10 @@ releaseLock'
 releaseLock' jh = do
   lockList <- asks sLockList
   names <- liftIO $ atomically $ FL.foldrWithKeySTM lockList foldFunc []
-  mapM_ (flip releaseLock jh) names
+  mapM_ (`releaseLock` jh) names
 
   where foldFunc :: LockName -> ([JobHandle], [JobHandle]) -> [LockName] -> [LockName]
-        foldFunc n (acquired, _) acc | elem jh acquired = n : acc
+        foldFunc n (acquired, _) acc | jh `elem` acquired = n : acc
                                      | otherwise = acc
 
 status :: MonadIO m => SchedT m [FuncStat]

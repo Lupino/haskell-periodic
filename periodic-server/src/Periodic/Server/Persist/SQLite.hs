@@ -89,7 +89,7 @@ createFuncTable db = void . exec db $ Utf8 $
     <> " PRIMARY KEY (func))"
 
 allPending :: Database -> IO ()
-allPending db = void . exec db $ Utf8 $ "UPDATE jobs SET state=0"
+allPending db = void . exec db $ Utf8 "UPDATE jobs SET state=0"
 
 doLookup :: Database -> State -> FuncName -> JobName -> IO (Maybe Job)
 doLookup db state fn jn =
