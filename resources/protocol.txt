@@ -41,6 +41,8 @@ Request:
                           for responses.
     4 byte size         - A big-endian (network-order) integer containing
                           the size of the data being sent.
+    4 byte crc32        - A big-endian (network-order) integer containing
+                          the crc32 of the data being sent.
     1 byte command      - A big-endian (network-order) integer containing
                           an enumerated packet command. Possible values are:
                         #   Name             Type
@@ -52,6 +54,8 @@ Response:
                               for responses.
     4 byte size             - A big-endian (network-order) integer containing
                               the size of the data being sent.
+    4 byte crc32        - A big-endian (network-order) integer containing
+                          the crc32 of the data being sent.
     ? byte connection id    - A binary connection id
 
 
@@ -65,6 +69,8 @@ header is:
                           for responses.
     4 byte size         - A big-endian (network-order) integer containing
                           the size of the data being sent.
+    4 byte crc32        - A big-endian (network-order) integer containing
+                          the crc32 of the data being sent.
     4 byte message id   - A client unique message id.
     1 byte command      - A big-endian (network-order) integer containing
                           an enumerated packet command. Possible values are:
