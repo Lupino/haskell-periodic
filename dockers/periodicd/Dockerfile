@@ -1,5 +1,5 @@
 FROM alpine:3.8
-ENV VERSION v1.1.3.0
+ENV VERSION v1.1.4.0
 RUN apk update && \
     apk add wget && \
     wget https://github.com/Lupino/haskell-periodic/releases/download/$VERSION/periodic-linux-$VERSION.tar.bz2 && \
