@@ -10,6 +10,7 @@ data Error = MagicNotMatch
            | TransportTimeout
            | DataTooLarge
            | InValidError String
+           | CRCNotMatch
            | EmptyError
 
   deriving (Show, Eq, Ord)

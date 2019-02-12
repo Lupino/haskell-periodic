@@ -37,6 +37,7 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Reader  (ReaderT, runReaderT)
 import           Data.Byteable               (toBytes)
 import qualified Data.ByteString             as B
+import           Data.Digest.CRC32           as CRC (digest)
 import qualified Periodic.Lock               as L (Lock, new, with)
 import           Periodic.Transport          (Transport (recvData, sendData))
 import qualified Periodic.Transport          as T (Transport (close))
@@ -111,8 +112,8 @@ receive :: MonadIO m => ConnectionT m B.ByteString
 receive = do
   connEnv@ConnEnv{..} <- ask
   liftIO $ L.with readLock $ do
-    hdr <- recv' connEnv 8
-    when (B.null hdr || B.length hdr < 8) $ throwIO TransportClosed
+    hdr <- recv' connEnv 12
+    when (B.null hdr || B.length hdr < 12) $ throwIO TransportClosed
     case runParser hdr of
       Left _ -> throwIO MagicNotMatch
       Right PacketHdr{..} ->
@@ -120,7 +121,9 @@ receive = do
           ret <- timeout 100000000 $ recv' connEnv packetSize
           case ret of
             Nothing -> throwIO TransportTimeout
-            Just bs -> return bs
+            Just bs ->
+              if CRC.digest bs == packetCRC then return bs
+                                            else throwIO CRCNotMatch
         else throwIO MagicNotMatch
 
 recv' :: ConnEnv -> Int -> IO B.ByteString
@@ -155,6 +158,7 @@ send dat = do
       { packetHdr = PacketHdr
         { packetMagic = responseMagic
         , packetSize = B.length dat
+        , packetCRC  = CRC.digest dat
         }
       , packetData = dat
       }

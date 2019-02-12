@@ -11,21 +11,25 @@ import           Data.Binary.Put
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import           Data.ByteString.Lazy    (toStrict)
+import           Data.Digest.CRC32       (CRC32 (..))
 import           Periodic.Types.Internal
 
 data PacketHdr = PacketHdr
   { packetMagic :: ByteString
   , packetSize  :: Int
+  , packetCRC   :: CRC32
   }
 
 instance Binary PacketHdr where
   get = do
     packetMagic <- getByteString 4
     packetSize <- fromIntegral <$> getWord32be
+    packetCRC <- CRC32 <$> getWord32be
     return PacketHdr{..}
   put PacketHdr{..} = do
     putByteString packetMagic
     putWord32be $ fromIntegral packetSize
+    putWord32be $ crc32 packetCRC
 
 instance Byteable PacketHdr where
   toBytes = toStrict . encode
