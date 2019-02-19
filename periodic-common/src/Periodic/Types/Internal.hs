@@ -20,6 +20,7 @@ import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Char8    as B (length, pack, unpack)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
 import           Data.Hashable
+import           Data.String              (IsString (..))
 import           Data.Text                (Text)
 import qualified Data.Text                as T (unpack)
 import           Data.Text.Encoding       (decodeUtf8With)
@@ -79,6 +80,9 @@ instance Binary LockName where
   put (LockName dat) = do
     putWord8 . fromIntegral $ B.length dat
     putByteString dat
+
+instance IsString LockName where
+  fromString = LockName . fromString
 
 class Validatable a where
   validate :: a -> Either String ()
