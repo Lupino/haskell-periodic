@@ -172,7 +172,7 @@ startSchedT
   => SchedT m ()
 startSchedT = do
   SchedEnv{..} <- ask
-  runTask_ sRevertDelay revertProcessQueue
+  runTask_ sRevertDelay revertRunningQueue
   taskList <- liftIO newIOHashMap
   runTask_ sPollDelay $ pushChanList PollJob
   runTask 0 $ runChanJob taskList
@@ -524,7 +524,7 @@ adjustFuncStat fn = do
   where update :: Int64 -> Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
         update size sizePQ sizeL schedAt st =
           Just ((fromMaybe (funcStat fn) st) { sJob = size
-                                             , sProcess = sizePQ
+                                             , sRunning = sizePQ
                                              , sLocking = sizeL
                                              , sSchedAt = schedAt
                                              })
@@ -709,8 +709,8 @@ status = do
   mapM_ adjustFuncStat =<< transactReadOnly P.funcList
   liftIO . FL.elems =<< asks sFuncStatList
 
-revertProcessQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
-revertProcessQueue = do
+revertRunningQueue :: (MonadIO m, MonadBaseControl IO m) => SchedT m ()
+revertRunningQueue = do
   now <- liftIO getEpochTime
   tout <- liftIO . fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
   handles <- transactReadOnly $ \p -> P.foldr p Running (foldFunc (check now tout)) []
