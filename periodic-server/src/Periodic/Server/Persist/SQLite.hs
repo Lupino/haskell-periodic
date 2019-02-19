@@ -14,6 +14,7 @@ import           Data.ByteString         (ByteString)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust, listToMaybe)
+import           Data.String             (fromString)
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist
 import           Periodic.Types.Internal (runParser)
@@ -39,6 +40,7 @@ initSQLite path = do
     Left (e, _) -> dbError $ show e
     Right db -> do
       beginTx db
+      createConfigTable db
       createJobTable db
       createFuncTable db
       allPending db
@@ -51,6 +53,8 @@ initSQLite path = do
         , size = doSize db
         , foldr = doFoldr db
         , foldr' = doFoldr' db
+        , configSet = doConfigSet db
+        , configGet = doConfigGet db
         , insertFuncName = doInsertFuncName db
         , removeFuncName = doRemoveFuncName db
         , funcList = doFuncList db
@@ -82,10 +86,17 @@ doTransact db io = do
       commitTx db
       pure v
 
+createConfigTable :: Database -> IO ()
+createConfigTable db = void . exec db $ Utf8 $
+  "CREATE TABLE IF NOT EXISTS configs ("
+    <> "name CHAR(256) NOT NULL,"
+    <> "value  INTEGER DEFAULT 0,"
+    <> "PRIMARY KEY (name))"
+
 createJobTable :: Database -> IO ()
 createJobTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS jobs ("
-    <> "func CHAR(256) NOT NULL,"
+    <> " func CHAR(256) NOT NULL,"
     <> " name CHAR(256) NOT NULL,"
     <> " value BLOB,"
     <> " state  INTEGER DEFAULT 0,"
@@ -95,7 +106,7 @@ createJobTable db = void . exec db $ Utf8 $
 createFuncTable :: Database -> IO ()
 createFuncTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS funcs ("
-    <> "func CHAR(256) NOT NULL,"
+    <> " func CHAR(256) NOT NULL,"
     <> " PRIMARY KEY (func))"
 
 allPending :: Database -> IO ()
@@ -161,6 +172,16 @@ doMinSchedAt db state fn = queryStmt db sql (`bindFN` fn) stepInt64
 doSize :: Database -> State -> FuncName -> IO Int64
 doSize db state fn = queryStmt db sql (`bindFN` fn) stepInt64
   where sql = Utf8 $ "SELECT COUNT(*) FROM jobs WHERE func=? AND state=" <> stateName state
+
+doConfigSet :: Database -> String -> Int -> IO ()
+doConfigSet db name v = execStmt db sql $ \stmt -> do
+    void $ bindText stmt 1 $ fromString name
+    void $ bindInt64 stmt 2 $ fromIntegral v
+  where sql = Utf8 "INSERT OR REPLACE INTO configs VALUES (?,?)"
+
+doConfigGet :: Database -> String -> IO (Maybe Int)
+doConfigGet db name = queryStmt db sql (\stmt -> void $ bindText stmt 1 $ fromString name) stepMaybeInt
+  where sql = Utf8 "SELECT value FROM configs WHERE name=?"
 
 dbError :: String -> IO a
 dbError = throwM . userError . ("Database error: " ++)
@@ -232,3 +253,10 @@ stepInt64 stmt = do
   case sr of
     Done -> pure 0
     Row  -> columnInt64 stmt 0
+
+stepMaybeInt :: Statement -> IO (Maybe Int)
+stepMaybeInt stmt = do
+  sr <- liftEither $ step stmt
+  case sr of
+    Done -> pure Nothing
+    Row  -> Just . fromIntegral <$> columnInt64 stmt 0

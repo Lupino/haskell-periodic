@@ -23,6 +23,8 @@ data Persist = Persist
   , size   :: State -> FuncName -> IO Int64
   , foldr  :: forall a . State -> (Job -> a -> a) -> a -> IO a
   , foldr' :: forall a . State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+  , configGet :: String -> IO (Maybe Int)
+  , configSet :: String -> Int -> IO ()
   , insertFuncName   :: FuncName -> IO ()
   , removeFuncName   :: FuncName -> IO ()
   , funcList         :: IO [FuncName]
@@ -40,6 +42,8 @@ persist = Persist
   , size = \_ _ -> pure 0
   , foldr = \_ _ a -> pure a
   , foldr' = \_ _ _ a -> pure a
+  , configGet = \_ -> pure Nothing
+  , configSet = \_ _ -> pure ()
   , insertFuncName = \_ -> pure ()
   , removeFuncName = \_ -> pure ()
   , funcList = pure []

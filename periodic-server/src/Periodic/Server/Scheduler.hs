@@ -57,9 +57,6 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand    (ServerCommand (JobAssign))
 import           Periodic.Utils                  (getEpochTime)
 
-import           System.Directory                (doesFileExist)
-import           System.FilePath                 ((</>))
-
 import           Control.Concurrent              (threadDelay)
 import           Control.Concurrent.Async.Lifted (Async, async, cancel, poll)
 import           Control.Concurrent.STM.TVar
@@ -74,9 +71,6 @@ import           Control.Monad.Trans.Class       (MonadTrans, lift)
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe       (runMaybeT)
 import           Control.Monad.Trans.Reader      (ReaderT, runReaderT)
-
-import           System.IO                       (readFile, writeFile)
-import           Text.Read                       (readMaybe)
 
 import           Periodic.Server.Persist         (Persist, State (..))
 import qualified Periodic.Server.Persist         as P
@@ -184,23 +178,17 @@ startSchedT = do
   loadInt "max-patch" sMaxPatch
   loadInt "expiration" sExpiration
 
-loadInt :: MonadIO m => FilePath -> TVar Int -> SchedT m ()
-loadInt fn ref = do
-  path <- (</> fn) <$> asks sStorePath
-  liftIO $ do
-    exists <- doesFileExist path
-    when exists $ do
-      v' <- readMaybe <$> readFile path
-      case v' of
-        Nothing -> pure ()
-        Just v  -> atomically $ writeTVar ref v
+loadInt :: MonadIO m => String -> TVar Int -> SchedT m ()
+loadInt name ref = do
+  v <- transactReadOnly $ flip P.configGet name
+  case v of
+    Nothing -> pure ()
+    Just v' -> liftIO . atomically $ writeTVar ref v'
 
-saveInt :: MonadIO m => FilePath -> Int -> TVar Int -> SchedT m ()
-saveInt fn v ref = do
-  path <- (</> fn) <$> asks sStorePath
-  liftIO $ do
-    writeFile path $ show v
-    atomically $ writeTVar ref v
+saveInt :: MonadIO m => String -> Int -> TVar Int -> SchedT m ()
+saveInt name v ref = do
+  transact $ \p -> P.configSet p name v
+  liftIO $ atomically $ writeTVar ref v
 
 setConfigInt :: MonadIO m => String -> Int -> SchedT m ()
 setConfigInt key val = do
