@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
 
 module Periodic.Server.Persist
@@ -11,7 +10,6 @@ module Periodic.Server.Persist
 
 import           Prelude            hiding (foldr, lookup)
 
-import           Data.ByteString    (ByteString)
 import           Data.Int           (Int64)
 import           Periodic.Types.Job (FuncName, Job, JobName)
 
