@@ -98,7 +98,6 @@ data SchedEnv = SchedEnv
   , sExpiration   :: TVar Int -- run job cache expiration
   , sAutoPoll     :: TVar Bool
   , sPolled       :: TVar Bool
-  , sStorePath    :: FilePath
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
   , sLocker       :: L.Lock
@@ -141,8 +140,8 @@ type TaskList m = IOHashMap JobHandle (Int64, Task m)
 runSchedT :: SchedEnv -> SchedT m a -> m a
 runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 
-initSchedEnv :: FilePath -> Persist -> IO () -> IO SchedEnv
-initSchedEnv sStorePath sPersist sCleanup = do
+initSchedEnv :: Persist -> IO () -> IO SchedEnv
+initSchedEnv sPersist sCleanup = do
   sFuncStatList <- newIOHashMap
   sWaitList     <- newIOHashMap
   sLockList     <- newIOHashMap

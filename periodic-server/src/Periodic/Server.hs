@@ -217,7 +217,7 @@ startServer mk path sock = do
   sEnv <- initServerEnv state mk sock
   createDirectoryIfMissing True path
   sqlite <- initSQLite $ fromString $ path ++ "/data.sqlite"
-  schedEnv <- initSchedEnv path sqlite $ atomically $ writeTVar state False
+  schedEnv <- initSchedEnv sqlite $ atomically $ writeTVar state False
 
   runSchedT schedEnv $ do
     startSchedT
