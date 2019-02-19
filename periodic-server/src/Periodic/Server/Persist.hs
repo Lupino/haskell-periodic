@@ -7,8 +7,6 @@ module Periodic.Server.Persist
   ( Persist (..)
   , persist
   , State (..)
-  , stateName
-  , stateName'
   ) where
 
 import           Prelude            hiding (foldr, lookup)
@@ -18,16 +16,6 @@ import           Data.Int           (Int64)
 import           Periodic.Types.Job (FuncName, Job, JobName)
 
 data State = Pending | Running | Locking
-
-stateName :: State -> ByteString
-stateName Pending = "0"
-stateName Running = "1"
-stateName Locking = "2"
-
-stateName' :: State -> Int64
-stateName' Pending = 0
-stateName' Running = 1
-stateName' Locking = 2
 
 data Persist = Persist
   { member :: State -> FuncName -> JobName -> IO Bool

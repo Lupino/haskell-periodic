@@ -21,6 +21,16 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
 import           System.Log.Logger       (errorM)
 
+stateName :: State -> ByteString
+stateName Pending = "0"
+stateName Running = "1"
+stateName Locking = "2"
+
+stateName' :: State -> Int64
+stateName' Pending = 0
+stateName' Running = 1
+stateName' Locking = 2
+
 
 initSQLite :: Utf8 -> IO Persist
 initSQLite path = do
