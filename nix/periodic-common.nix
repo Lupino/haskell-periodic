@@ -1,7 +1,7 @@
 { mkDerivation, base, binary, byteable, bytestring
 , data-default-class, directory, entropy, exceptions, hashable
 , hslogger, monad-control, mtl, network, pem, stdenv, stm, text
-, tls, transformers, transformers-base, unix-time, crc
+, tls, transformers, transformers-base, unix-time, vector
 , unordered-containers, websockets, x509, x509-store
 , x509-validation
 }:
@@ -12,7 +12,7 @@ mkDerivation {
   libraryHaskellDepends = [
     base binary byteable bytestring data-default-class directory
     entropy exceptions hashable hslogger monad-control mtl network pem
-    stm text tls transformers transformers-base unix-time crc
+    stm text tls transformers transformers-base unix-time vector
     unordered-containers websockets x509 x509-store x509-validation
   ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
