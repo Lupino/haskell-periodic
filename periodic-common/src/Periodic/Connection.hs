@@ -37,7 +37,7 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Reader  (ReaderT, runReaderT)
 import           Data.Byteable               (toBytes)
 import qualified Data.ByteString             as B
-import           Data.Digest.CRC32           as CRC (digest)
+import           Periodic.CRC32              as CRC (digest)
 import qualified Periodic.Lock               as L (Lock, new, with)
 import           Periodic.Transport          (Transport (recvData, sendData))
 import qualified Periodic.Transport          as T (Transport (close))

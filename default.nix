@@ -7,11 +7,7 @@ let
   haskellPackages = if compiler == "default"
                        then pkgs.haskellPackages
                        else pkgs.haskell.packages.${compiler};
-  periodic-common = haskellPackages.callPackage ./nix/periodic-common.nix {
-    crc =
-      let crc = haskellPackages.crc;
-      in pkgs.haskell.lib.dontCheck crc;
-  };
+  periodic-common = haskellPackages.callPackage ./nix/periodic-common.nix { };
 
 in {
   periodic-client = haskellPackages.callPackage ./nix/periodic-client.nix {

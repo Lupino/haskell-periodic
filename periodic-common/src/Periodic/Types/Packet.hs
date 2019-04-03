@@ -11,7 +11,7 @@ import           Data.Binary.Put
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import           Data.ByteString.Lazy    (toStrict)
-import           Data.Digest.CRC32       (CRC32 (..))
+import           Periodic.CRC32          (CRC32 (..))
 import           Periodic.Types.Internal
 
 data PacketHdr = PacketHdr
