@@ -37,6 +37,7 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Reader  (ReaderT, runReaderT)
 import           Data.Byteable               (toBytes)
 import qualified Data.ByteString             as B
+import           Data.Int                    (Int32)
 import           Periodic.CRC32              as CRC (digest)
 import qualified Periodic.Lock               as L (Lock, new, with)
 import           Periodic.Transport          (Transport (recvData, sendData))
@@ -47,7 +48,7 @@ import           System.Entropy              (getEntropy)
 import           System.Timeout              (timeout)
 
 maxLength :: Int
-maxLength = 0x7fffffff
+maxLength = fromIntegral (maxBound :: Int32)
 
 magicREQ :: B.ByteString
 magicREQ = "\x00REQ"
@@ -120,7 +121,7 @@ receive = do
       Left _ -> throwIO MagicNotMatch
       Right PacketHdr{..} ->
         if packetMagic == requestMagic then do
-          ret <- timeout 100000000 $ recv' connEnv packetSize
+          ret <- timeout 100000000 $ recv' connEnv $ fromIntegral packetSize
           case ret of
             Nothing -> throwIO TransportTimeout
             Just bs ->
@@ -159,7 +160,7 @@ send dat = do
     sendData transport $ toBytes Packet
       { packetHdr = PacketHdr
         { packetMagic = responseMagic
-        , packetSize = B.length dat
+        , packetSize = fromIntegral $ B.length dat
         , packetCRC  = CRC.digest dat
         }
       , packetData = dat

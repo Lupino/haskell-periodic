@@ -11,12 +11,13 @@ import           Data.Binary.Put
 import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import           Data.ByteString.Lazy    (toStrict)
+import           Data.Int                (Int32)
 import           Periodic.CRC32          (CRC32 (..))
 import           Periodic.Types.Internal
 
 data PacketHdr = PacketHdr
   { packetMagic :: ByteString
-  , packetSize  :: Int
+  , packetSize  :: Int32
   , packetCRC   :: CRC32
   }
 
