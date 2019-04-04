@@ -1,7 +1,5 @@
 module Periodic.Utils
-  (
-    maxLength
-  , tryIO
+  ( tryIO
   , getEpochTime
   ) where
 
@@ -10,9 +8,6 @@ import           Foreign.C.Types   (CTime (..))
 
 import           Data.Int          (Int64)
 import           Data.UnixTime     (getUnixTime, toEpochTime)
-
-maxLength :: Int
-maxLength = 0x7fffffff
 
 tryIO :: IO a -> IO (Either IOException a)
 tryIO m = catch (fmap Right m) (return . Left)

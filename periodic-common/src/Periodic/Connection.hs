@@ -43,9 +43,11 @@ import           Periodic.Transport          (Transport (recvData, sendData))
 import qualified Periodic.Transport          as T (Transport (close))
 import           Periodic.Types              (Error (..), runParser)
 import           Periodic.Types.Packet
-import           Periodic.Utils              (maxLength)
 import           System.Entropy              (getEntropy)
 import           System.Timeout              (timeout)
+
+maxLength :: Int
+maxLength = 0x7fffffff
 
 magicREQ :: B.ByteString
 magicREQ = "\x00REQ"
