@@ -148,7 +148,7 @@ instance Binary Workload where
     putByteString dat
 
 instance Validatable Workload where
-  validate (Workload n) = validateLength "Workload" 0 0xFFFFFFFF $ B.length n
+  validate (Workload n) = validateLength "Workload" 0 maxBound $ B.length n
 
 data Job = Job { jFuncName :: FuncName
                , jName     :: JobName
@@ -232,8 +232,8 @@ instance Validatable Job where
     validate fn
     validate jn
     validate w
-    validateNum "JobCount" 0 0xFFFFFFFF c
-    validateNum "JobTimeout" 0 0xFFFFFFFF t
+    validateNum "JobCount" 0 maxBound c
+    validateNum "JobTimeout" 0 maxBound t
 
 initJob :: FuncName -> JobName -> Job
 initJob jFuncName jName = Job

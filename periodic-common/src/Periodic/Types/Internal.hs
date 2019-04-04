@@ -20,6 +20,7 @@ import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Char8    as B (length, pack, unpack)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
 import           Data.Hashable
+import           Data.Int                 (Int32)
 import           Data.String              (IsString (..))
 import           Data.Text                (Text)
 import qualified Data.Text                as T (unpack)
@@ -94,15 +95,16 @@ instance (Validatable a) => Validatable [a] where
     validate xs
 
 instance Validatable ByteString where
-  validate bs = validateLength "Data" 0 0xFFFFFFFF $ B.length bs
+  validate bs = validateLength "Data" 0 maxBound $ B.length bs
 
-validateLength :: String -> Int -> Int -> Int -> Either String ()
-validateLength n min' max' l
+validateLength :: String -> Int32 -> Int32 -> Int -> Either String ()
+validateLength n min' max' l'
   | l < min' = Left $ n ++ " is to short"
   | l > max' = Left $ n ++ " is to long"
   | otherwise = Right ()
+  where l = fromIntegral l'
 
-validateNum :: String -> Int -> Int -> Int -> Either String ()
+validateNum :: (Ord a) => String -> a -> a -> a -> Either String ()
 validateNum n min' max' l
   | l < min' = Left $ n ++ " is to small"
   | l > max' = Left $ n ++ " is to big"

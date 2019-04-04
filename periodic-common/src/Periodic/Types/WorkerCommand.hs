@@ -105,7 +105,7 @@ instance Validatable WorkerCommand where
     validateNum "Step" 0 0xFFFF step
   validate (WorkDone jh w) = do
     validate jh
-    validateLength "WorkData" 0 0xFFFFFFFF $ B.length w
+    validateLength "WorkData" 0 maxBound $ B.length w
   validate (WorkFail jh) = validate jh
   validate (CanDo fn) = validate fn
   validate (CantDo fn) = validate fn
