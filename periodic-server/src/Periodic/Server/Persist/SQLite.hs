@@ -10,7 +10,7 @@ import           Prelude                 hiding (foldr, lookup)
 import           Control.Monad           (void)
 import           Control.Monad.Catch
 import           Data.Byteable           (toBytes)
-import           Data.ByteString         (ByteString)
+import           Data.ByteString         (ByteString, append)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust, listToMaybe)
@@ -89,25 +89,25 @@ doTransact db io = do
 createConfigTable :: Database -> IO ()
 createConfigTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS configs ("
-    <> "name CHAR(256) NOT NULL,"
-    <> "value  INTEGER DEFAULT 0,"
-    <> "PRIMARY KEY (name))"
+    `append` "name CHAR(256) NOT NULL,"
+    `append` "value  INTEGER DEFAULT 0,"
+    `append` "PRIMARY KEY (name))"
 
 createJobTable :: Database -> IO ()
 createJobTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS jobs ("
-    <> " func CHAR(256) NOT NULL,"
-    <> " name CHAR(256) NOT NULL,"
-    <> " value BLOB,"
-    <> " state  INTEGER DEFAULT 0,"
-    <> " sched_at INTEGER DEFAULT 0,"
-    <> " PRIMARY KEY (func, name))"
+    `append` " func CHAR(256) NOT NULL,"
+    `append` " name CHAR(256) NOT NULL,"
+    `append` " value BLOB,"
+    `append` " state  INTEGER DEFAULT 0,"
+    `append` " sched_at INTEGER DEFAULT 0,"
+    `append` " PRIMARY KEY (func, name))"
 
 createFuncTable :: Database -> IO ()
 createFuncTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS funcs ("
-    <> " func CHAR(256) NOT NULL,"
-    <> " PRIMARY KEY (func))"
+    `append` " func CHAR(256) NOT NULL,"
+    `append` " PRIMARY KEY (func))"
 
 allPending :: Database -> IO ()
 allPending db = void . exec db $ Utf8 "UPDATE jobs SET state=0"
@@ -115,7 +115,7 @@ allPending db = void . exec db $ Utf8 "UPDATE jobs SET state=0"
 doLookup :: Database -> State -> FuncName -> JobName -> IO (Maybe Job)
 doLookup db state fn jn =
   listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc f) []
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND name=? AND state=" <> stateName state <> " LIMIT 1"
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND name=? AND state=" `append` stateName state `append` " LIMIT 1"
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
 
@@ -138,11 +138,11 @@ doInsertFuncName db = execFN db sql
 
 doFoldr :: Database -> State -> (Job -> a -> a) -> a -> IO a
 doFoldr db state f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE state=" <> stateName state
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE state=" `append` stateName state
 
 doFoldr' :: Database -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
 doFoldr' db state fns f acc = F.foldrM (foldFunc f) acc fns
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state=" <> stateName state
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state=" `append` stateName state
 
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 fn =
@@ -167,11 +167,11 @@ doRemoveFuncName db fn = do
 
 doMinSchedAt :: Database -> State -> FuncName -> IO Int64
 doMinSchedAt db state fn = queryStmt db sql (`bindFN` fn) stepInt64
-  where sql = Utf8 $ "SELECT sched_at FROM jobs WHERE func=? AND state=" <> stateName state <> " ORDER BY sched_at ASC LIMIT 1"
+  where sql = Utf8 $ "SELECT sched_at FROM jobs WHERE func=? AND state=" `append` stateName state `append` " ORDER BY sched_at ASC LIMIT 1"
 
 doSize :: Database -> State -> FuncName -> IO Int64
 doSize db state fn = queryStmt db sql (`bindFN` fn) stepInt64
-  where sql = Utf8 $ "SELECT COUNT(*) FROM jobs WHERE func=? AND state=" <> stateName state
+  where sql = Utf8 $ "SELECT COUNT(*) FROM jobs WHERE func=? AND state=" `append` stateName state
 
 doConfigSet :: Database -> String -> Int -> IO ()
 doConfigSet db name v = execStmt db sql $ \stmt -> do
