@@ -5,8 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Server.Client
-  (
-    ClientT
+  ( ClientT
   , ClientEnv
   , initClientEnv
   , close
@@ -15,12 +14,7 @@ module Periodic.Server.Client
   , getLastVist
   ) where
 
-import           Control.Concurrent.STM.TVar
-import           Control.Monad.Catch          (MonadCatch)
-import           Control.Monad.IO.Class       (MonadIO (..))
-import           Control.Monad.STM            (atomically)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Control  (MonadBaseControl)
 import           Data.Binary                  (encode)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
@@ -37,6 +31,8 @@ import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job           (initJob)
 import           Periodic.Types.ServerCommand
 import           Periodic.Utils               (getEpochTime)
+import           UnliftIO
+
 
 type ClientT m = NodeT (TVar Int64) (SchedT m)
 
@@ -58,13 +54,11 @@ initClientEnv
   -> SchedEnv
   -> m ClientEnv
 initClientEnv connEnv schedEnv = do
-  lastVist <- liftIO $ newTVarIO =<< getEpochTime
+  lastVist <- newTVarIO =<< liftIO getEpochTime
   nodeEnv <- liftIO $ initEnv lastVist
   return ClientEnv{..}
 
-startClientT
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
-  => ClientEnv -> m ()
+startClientT :: MonadUnliftIO m => ClientEnv -> m ()
 startClientT env0 = runClientT env0 $
   startMainLoop_ . handleAgentT =<< env
 
@@ -74,13 +68,12 @@ close = stopNodeT
 getLastVist :: MonadIO m => ClientT m Int64
 getLastVist = do
   ref <- env
-  liftIO $ readTVarIO ref
+  readTVarIO ref
 
-handleAgentT :: (MonadIO m, MonadBaseControl IO m) => TVar Int64 -> AgentT (SchedT m)  ()
+handleAgentT :: MonadUnliftIO m => TVar Int64 -> AgentT (SchedT m)  ()
 handleAgentT lastVist = do
-  liftIO $ do
-    t <- getEpochTime
-    atomically $ writeTVar lastVist t
+  t <- liftIO getEpochTime
+  atomically $ writeTVar lastVist t
 
   cmd <- receive
   case cmd of

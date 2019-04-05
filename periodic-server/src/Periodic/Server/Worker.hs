@@ -5,8 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Server.Worker
-  (
-    WorkerT
+  ( WorkerT
   , WorkerEnv
   , initWorkerEnv
   , close
@@ -16,6 +15,7 @@ module Periodic.Server.Worker
   ) where
 
 import           Control.Monad                (unless, when)
+import           Control.Monad.Trans.Class    (lift)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (AgentT, agentEnv', liftC,
                                                receive, send)
@@ -23,21 +23,15 @@ import           Periodic.Connection          (ConnEnv, runConnectionT)
 import qualified Periodic.Connection          as Conn
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
-import           Periodic.Server.Scheduler
-import           Prelude                      hiding (elem)
-
-import           Control.Concurrent.STM.TVar
-import           Control.Monad.Catch          (MonadCatch)
-import           Control.Monad.IO.Class       (MonadIO (..))
-import           Control.Monad.STM            (atomically)
-import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Control  (MonadBaseControl)
 import           Periodic.Node                hiding (liftC)
+import           Periodic.Server.Scheduler
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 import           Periodic.Utils               (getEpochTime)
+import           Prelude                      hiding (elem)
 import           System.Log.Logger            (errorM)
+import           UnliftIO
 
 data WorkerConfig = WorkerConfig
   { wFuncList :: IOList FuncName
@@ -65,25 +59,23 @@ initWorkerEnv
   -> SchedEnv
   -> m WorkerEnv
 initWorkerEnv connEnv schedEnv = do
-  wFuncList <- liftIO newIOList
-  wJobQueue <- liftIO newIOList
-  wLastVist <- liftIO $ newTVarIO =<< getEpochTime
+  wFuncList <- newIOList
+  wJobQueue <- newIOList
+  wLastVist <- newTVarIO =<< liftIO getEpochTime
 
   let workerConfig = WorkerConfig {..}
 
   nodeEnv <- liftIO $ initEnv workerConfig
   return WorkerEnv{..}
 
-startWorkerT
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m)
-  => WorkerEnv -> m ()
+startWorkerT :: MonadUnliftIO m => WorkerEnv -> m ()
 startWorkerT env0 = runWorkerT env0 $ do
   startMainLoop_ . handleAgentT =<< env
 
   WorkerConfig {..} <- env
 
-  mapM_ (lift . failJob) =<< liftIO (toList wJobQueue)
-  mapM_ (lift . removeFunc) =<< liftIO (toList wFuncList)
+  mapM_ (lift . failJob) =<< toList wJobQueue
+  mapM_ (lift . removeFunc) =<< toList wFuncList
 
 close :: MonadIO m => WorkerT m ()
 close = stopNodeT
@@ -91,13 +83,12 @@ close = stopNodeT
 getLastVist :: MonadIO m => WorkerT m Int64
 getLastVist = do
   WorkerConfig {..} <- env
-  liftIO $ readTVarIO wLastVist
+  readTVarIO wLastVist
 
-handleAgentT :: (MonadIO m, MonadBaseControl IO m) => WorkerConfig -> AgentT (SchedT m) ()
+handleAgentT :: MonadUnliftIO m => WorkerConfig -> AgentT (SchedT m) ()
 handleAgentT WorkerConfig {..} = do
-  liftIO $ do
-    t <- getEpochTime
-    atomically $ writeTVar wLastVist t
+  t <- liftIO getEpochTime
+  atomically $ writeTVar wLastVist t
   cmd <- receive
   case cmd of
     Left e -> do
@@ -108,30 +99,30 @@ handleAgentT WorkerConfig {..} = do
       lift $ pushGrab wFuncList wJobQueue env0
     Right (WorkDone jh w) -> do
       lift $ doneJob jh w
-      liftIO $ delete wJobQueue jh
+      delete wJobQueue jh
     Right (WorkFail jh) -> do
       lift $ failJob jh
-      liftIO $ delete wJobQueue jh
+      delete wJobQueue jh
     Right (SchedLater jh l s) -> do
       lift $ schedLaterJob jh l s
-      liftIO $ delete wJobQueue jh
+      delete wJobQueue jh
     Right Sleep -> send Noop
     Right Ping -> send Pong
     Right (CanDo fn) -> do
-      has <- liftIO $ elem wFuncList fn
+      has <- elem wFuncList fn
       unless has $ do
         lift $ addFunc fn
-        liftIO $ insert wFuncList fn
+        insert wFuncList fn
     Right (CantDo fn) -> do
-      has <- liftIO $ elem wFuncList fn
+      has <- elem wFuncList fn
       when has $ do
         lift $ removeFunc fn
-        liftIO $ delete wFuncList fn
+        delete wFuncList fn
     Right (Broadcast fn) -> do
-      has <- liftIO $ elem wFuncList fn
+      has <- elem wFuncList fn
       unless has $ do
         lift $ broadcastFunc fn True
-        liftIO $ insert wFuncList fn
+        insert wFuncList fn
     Right (Acquire n c jh) -> do
       r <- lift $ acquireLock n c jh
       send $ Acquired r
