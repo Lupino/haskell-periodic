@@ -3,13 +3,11 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Periodic.Connection
-  (
-    ConnEnv
+  ( ConnEnv
   , ConnectionT
   , runConnectionT
   , initServerConnEnv
@@ -23,29 +21,21 @@ module Periodic.Connection
   , statusTVar
   ) where
 
-import           Control.Concurrent.STM      (TVar, newTVarIO, readTVar,
-                                              writeTVar)
-import           Control.Exception           (throwIO)
-import           Control.Monad               (when)
-import           Control.Monad.Base
-import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
-import           Control.Monad.IO.Class      (MonadIO (..))
-import           Control.Monad.Reader.Class  (MonadReader (ask), asks)
-import           Control.Monad.STM           (atomically)
-import           Control.Monad.Trans.Class   (MonadTrans)
-import           Control.Monad.Trans.Control
-import           Control.Monad.Trans.Reader  (ReaderT, runReaderT)
-import           Data.Byteable               (toBytes)
-import qualified Data.ByteString             as B
-import           Data.Int                    (Int32)
-import           Periodic.CRC32              as CRC (digest)
-import qualified Periodic.Lock               as L (Lock, new, with)
-import           Periodic.Transport          (Transport (recvData, sendData))
-import qualified Periodic.Transport          as T (Transport (close))
-import           Periodic.Types              (Error (..), runParser)
+import           Control.Monad              (when)
+import           Control.Monad.Reader.Class (MonadReader (ask), asks)
+import           Control.Monad.Trans.Class  (MonadTrans)
+import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
+import           Data.Byteable              (toBytes)
+import qualified Data.ByteString            as B
+import           Data.Int                   (Int32)
+import           Periodic.CRC32             as CRC (digest)
+import qualified Periodic.Lock              as L (Lock, new, with)
+import           Periodic.Transport         (Transport (recvData, sendData))
+import qualified Periodic.Transport         as T (Transport (close))
+import           Periodic.Types             (Error (..), runParser)
 import           Periodic.Types.Packet
-import           System.Entropy              (getEntropy)
-import           System.Timeout              (timeout)
+import           System.Entropy             (getEntropy)
+import           UnliftIO
 
 maxLength :: Int
 maxLength = fromIntegral (maxBound :: Int32)
@@ -75,22 +65,17 @@ newtype ConnectionT m a = ConnectionT { unConnectionT :: ReaderT ConnEnv m a }
     , MonadTrans
     , MonadIO
     , MonadReader ConnEnv
-    , MonadThrow
-    , MonadCatch
-    , MonadMask
     )
 
-deriving instance MonadBase IO m => MonadBase IO (ConnectionT m)
-
-instance MonadTransControl ConnectionT where
-  type StT ConnectionT a = StT (ReaderT ConnEnv) a
-  liftWith = defaultLiftWith ConnectionT unConnectionT
-  restoreT = defaultRestoreT ConnectionT
-
-instance MonadBaseControl IO m => MonadBaseControl IO (ConnectionT m) where
-  type StM (ConnectionT m) a = ComposeSt ConnectionT m a
-  liftBaseWith = defaultLiftBaseWith
-  restoreM     = defaultRestoreM
+instance MonadUnliftIO m => MonadUnliftIO (ConnectionT m) where
+  askUnliftIO = ConnectionT $
+    ReaderT $ \r ->
+      withUnliftIO $ \u ->
+        return (UnliftIO (unliftIO u . runConnectionT r))
+  withRunInIO inner = ConnectionT $
+    ReaderT $ \r ->
+      withRunInIO $ \run ->
+        inner (run . runConnectionT r)
 
 runConnectionT :: ConnEnv -> ConnectionT m a -> m a
 runConnectionT connEnv = flip runReaderT connEnv . unConnectionT
@@ -111,10 +96,10 @@ initServerConnEnv transport = initConnEnv transport magicREQ magicRES
 initClientConnEnv :: Transport -> IO ConnEnv
 initClientConnEnv transport = initConnEnv transport magicRES magicREQ
 
-receive :: MonadIO m => ConnectionT m B.ByteString
+receive :: MonadUnliftIO m => ConnectionT m B.ByteString
 receive = do
   connEnv@ConnEnv{..} <- ask
-  liftIO $ L.with readLock $ do
+  L.with readLock $ do
     hdr <- recv' connEnv 12
     when (B.null hdr || B.length hdr < 12) $ throwIO TransportClosed
     case runParser hdr of
@@ -129,7 +114,7 @@ receive = do
                                             else throwIO CRCNotMatch
         else throwIO MagicNotMatch
 
-recv' :: ConnEnv -> Int -> IO B.ByteString
+recv' :: MonadIO m => ConnEnv -> Int -> m B.ByteString
 recv' ConnEnv{..} nbytes = do
   buf <- atomically $ do
     bf <- readTVar buffer
@@ -137,7 +122,7 @@ recv' ConnEnv{..} nbytes = do
     return $! B.take nbytes bf
   if B.length buf == nbytes then return buf
                             else do
-                              otherBuf <- readBuf (nbytes - B.length buf)
+                              otherBuf <- liftIO $ readBuf (nbytes - B.length buf)
                               let out = B.concat [ buf, otherBuf ]
                               atomically . writeTVar buffer $! B.drop nbytes out
                               return $! B.take nbytes out
@@ -152,12 +137,12 @@ recv' ConnEnv{..} nbytes = do
                                   otherBuf <- readBuf (nb - B.length buf)
                                   return $! B.concat [ buf, otherBuf ]
 
-send :: MonadIO m => B.ByteString -> ConnectionT m ()
+send :: MonadUnliftIO m => B.ByteString -> ConnectionT m ()
 send dat = do
   ConnEnv{..} <- ask
-  liftIO $ L.with writeLock $ do
+  L.with writeLock $ do
     when (B.length dat > maxLength) $ throwIO DataTooLarge
-    sendData transport $ toBytes Packet
+    liftIO $ sendData transport $ toBytes Packet
       { packetHdr = PacketHdr
         { packetMagic = responseMagic
         , packetSize = fromIntegral $ B.length dat
@@ -175,7 +160,7 @@ connid' = connectionid
 close :: MonadIO m => ConnectionT m ()
 close = do
   ConnEnv{..} <- ask
-  liftIO . atomically $ writeTVar status False
+  atomically $ writeTVar status False
   liftIO $ T.close transport
 
 statusTVar :: Monad m => ConnectionT m (TVar Bool)
