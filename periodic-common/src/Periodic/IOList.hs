@@ -13,39 +13,39 @@ module Periodic.IOList
   , fromList
   ) where
 
-import           Control.Concurrent.STM.TVar
-import           Control.Monad.STM           (STM, atomically)
-import qualified Data.List                   as L
-import           Prelude                     hiding (elem)
+import qualified Data.List as L
+import           Prelude   hiding (elem)
+import           UnliftIO  (MonadIO, STM, TVar, atomically, modifyTVar',
+                            newTVarIO, readTVar, readTVarIO)
 
 
 newtype IOList a = IOList (TVar [a])
 
-newIOList :: IO (IOList a)
+newIOList :: MonadIO m => m (IOList a)
 newIOList = IOList <$> newTVarIO []
 
-fromList :: [a] -> IO (IOList a)
+fromList :: MonadIO m => [a] -> m (IOList a)
 fromList l = IOList <$> newTVarIO l
 
-insert :: IOList a -> a -> IO ()
+insert :: MonadIO m => IOList a -> a -> m ()
 insert (IOList h) a = atomically . modifyTVar' h $ \v -> a:v
 
-append :: IOList a -> a -> IO ()
+append :: MonadIO m => IOList a -> a -> m ()
 append (IOList h) a = atomically . modifyTVar' h $ \v -> v ++ [a]
 
-elem :: (Eq a) => IOList a -> a -> IO Bool
+elem :: (Eq a, MonadIO m) => IOList a -> a -> m Bool
 elem (IOList h) a = L.elem a <$> readTVarIO h
 
 elemSTM :: (Eq a) => IOList a -> a -> STM Bool
 elemSTM (IOList h) a = L.elem a <$> readTVar h
 
-delete :: (Eq a) => IOList a -> a -> IO ()
+delete :: (Eq a, MonadIO m) => IOList a -> a -> m ()
 delete (IOList h) a = atomically . modifyTVar' h $ L.delete a
 
 deleteSTM :: (Eq a) => IOList a -> a -> STM ()
 deleteSTM (IOList h) a = modifyTVar' h $ L.delete a
 
-toList :: IOList a -> IO [a]
+toList :: MonadIO m => IOList a -> m [a]
 toList (IOList h) = readTVarIO h
 
 toListSTM :: IOList a -> STM [a]
