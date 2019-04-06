@@ -24,7 +24,6 @@ module Periodic.Node
   , liftC
   ) where
 
-import           Control.Exception          (SomeException)
 import           Control.Monad              (forever, mzero, void)
 import           Control.Monad.Reader.Class (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class  (MonadTrans (..))
@@ -126,10 +125,10 @@ tryMainLoop
   :: (MonadUnliftIO m)
   => AgentT m () -> NodeT u m ()
 tryMainLoop agentHandler = do
-  r <- try $ mainLoop agentHandler
+  r <- tryAny $ mainLoop agentHandler
   case r of
-    Left (_::SomeException) -> stopNodeT
-    Right _                 -> pure ()
+    Left _  -> stopNodeT
+    Right _ -> pure ()
 
 mainLoop
   :: (MonadUnliftIO m)
@@ -141,10 +140,10 @@ mainLoop agentHandler = do
 
 tryDoFeed :: (MonadUnliftIO m) => ByteString -> AgentT m () -> NodeT u m ()
 tryDoFeed bs agentHandler = do
-  r <- try $ doFeed bs agentHandler
+  r <- tryAny $ doFeed bs agentHandler
   case r of
-    Left (_::SomeException) -> stopNodeT
-    Right _                 -> pure ()
+    Left _  -> stopNodeT
+    Right _ -> pure ()
 
 doFeed :: MonadIO m => ByteString -> AgentT m () -> NodeT u m ()
 doFeed bs agentHandler = do
