@@ -31,7 +31,7 @@ module Periodic.Agent
 
 import           Control.Monad.Reader.Class (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class  (MonadTrans (..))
-import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
+import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
 import           Data.Byteable              (Byteable (..))
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString            as B (concat, empty)
@@ -56,6 +56,17 @@ newtype AgentT m a = AgentT { unAgentT :: ReaderT AgentEnv (ConnectionT m) a }
 
 instance MonadTrans AgentT where
   lift = AgentT . lift . lift
+
+instance MonadUnliftIO m => MonadUnliftIO (AgentT m) where
+  askUnliftIO = AgentT $
+    ReaderT $ \r ->
+      withUnliftIO $ \u ->
+        return (UnliftIO (unliftIO u . runAgentT r))
+  withRunInIO inner = AgentT $
+    ReaderT $ \r ->
+      withRunInIO $ \run ->
+        inner (run . runAgentT r)
+
 
 liftC :: Monad m => ConnectionT m a -> AgentT m a
 liftC = AgentT . lift
