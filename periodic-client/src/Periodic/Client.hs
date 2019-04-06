@@ -5,8 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 
 module Periodic.Client
-  (
-    ClientT
+  ( ClientT
   , ClientEnv
   , open
   , close
@@ -27,7 +26,6 @@ module Periodic.Client
   , shutdown
   ) where
 
-import           Control.Concurrent           (threadDelay)
 import           Control.Monad                (forever, unless, void)
 import           Data.Byteable                (toBytes)
 import           Data.ByteString              (ByteString)
@@ -47,6 +45,7 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 import           Periodic.Utils               (getEpochTime)
 import           UnliftIO
+import           UnliftIO.Concurrent          (threadDelay)
 
 type ClientT m = NodeT () m
 
@@ -71,13 +70,13 @@ open f h = do
     Conn.send $ toBytes TypeClient
     void Conn.receive
 
-  nodeEnv <- liftIO $ initEnv ()
+  nodeEnv <- initEnv ()
 
   let clientEnv = ClientEnv{..}
 
   runClientT clientEnv $ do
     void . async $ forever $ do
-      liftIO $ threadDelay $ 100 * 1000 * 1000
+      threadDelay $ 100 * 1000 * 1000
       checkHealth
 
     void $ async startMainLoop
@@ -104,7 +103,7 @@ submitJob
   :: MonadUnliftIO m
   => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> ClientT m Bool
 submitJob fn jn w later = do
-  schedAt <- (+fromMaybe 0 later) <$> liftIO getEpochTime
+  schedAt <- (+fromMaybe 0 later) <$> getEpochTime
   submitJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
 runJob_ :: MonadUnliftIO m => Job -> ClientT m ByteString
@@ -116,7 +115,7 @@ runJob
   :: MonadUnliftIO m
   => FuncName -> JobName -> Maybe Workload -> ClientT m ByteString
 runJob fn jn w = do
-  schedAt <- liftIO getEpochTime
+  schedAt <- getEpochTime
   runJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
 dropFunc

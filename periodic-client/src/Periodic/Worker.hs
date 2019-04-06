@@ -15,8 +15,6 @@ module Periodic.Worker
   , close
   ) where
 
-import           Control.Concurrent           (threadDelay)
-import           Control.Exception            (SomeException)
 import           Control.Monad                (forever, replicateM, unless,
                                                void, when)
 import           Data.Byteable                (toBytes)
@@ -37,6 +35,7 @@ import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 import           System.Log.Logger            (errorM)
 import           UnliftIO
+import           UnliftIO.Concurrent          (threadDelay)
 
 type TaskList m = IOHashMap FuncName (JobT m ())
 type WorkerT m = NodeT (TaskList m) m
@@ -55,11 +54,11 @@ runWorkerT f h m = do
     void Conn.receive
 
     taskList <- newIOHashMap
-    env0 <- liftIO $ initEnv taskList
+    env0 <- initEnv taskList
 
     runNodeT env0 $ do
       void $ async $ forever $ do
-        liftIO $ threadDelay $ 100 * 1000 * 1000
+        threadDelay $ 100 * 1000 * 1000
         checkHealth
       void $ async startMainLoop
       m
@@ -137,7 +136,7 @@ work_ = do
             withEnv taskList $ removeFunc f
             workFail
           Just task' ->
-            catch task' $ \(e :: SomeException) -> do
+            catchAny task' $ \e -> do
               n <- name
               liftIO $ errorM "Periodic.Worker"
                      $ concat [ "Failing on running job { name = "
