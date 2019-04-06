@@ -5,10 +5,7 @@ module Periodic.Server.Persist.SQLite
   ( initSQLite
   ) where
 
-import           Prelude                 hiding (foldr, lookup)
-
 import           Control.Monad           (void)
-import           Control.Monad.Catch
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString, append)
 import qualified Data.Foldable           as F (foldrM)
@@ -20,7 +17,9 @@ import           Periodic.Server.Persist
 import           Periodic.Types.Internal (runParser)
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
+import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (errorM)
+import           UnliftIO                (throwIO, tryAny)
 
 stateName :: State -> ByteString
 stateName Pending = "0"
@@ -76,12 +75,12 @@ rollbackTx db = void $ exec db "ROLLBACK TRANSACTION"
 doTransact :: Database -> IO a -> IO a
 doTransact db io = do
   beginTx db
-  r <- try io
+  r <- tryAny io
   case r of
-    Left (e :: SomeException) -> do
+    Left e -> do
       errorM "Periodic.Server.Persist.SQLite" $ show e
       rollbackTx db
-      throwM e
+      throwIO e
     Right v -> do
       commitTx db
       pure v
@@ -184,7 +183,7 @@ doConfigGet db name = queryStmt db sql (\stmt -> void $ bindText stmt 1 $ fromSt
   where sql = Utf8 "SELECT value FROM configs WHERE name=?"
 
 dbError :: String -> IO a
-dbError = throwM . userError . ("Database error: " ++)
+dbError = throwIO . userError . ("Database error: " ++)
 
 liftEither :: Show a => IO (Either a b) -> IO b
 liftEither a = do

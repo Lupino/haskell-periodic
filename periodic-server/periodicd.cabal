@@ -37,13 +37,10 @@ library
                      , async
                      , binary
                      , transformers
-                     , transformers-base
-                     , exceptions
-                     , monad-control
-                     , lifted-async
                      , mtl
 
                      , direct-sqlite
+                     , unliftio
   default-language:    Haskell2010
 
 executable periodicd

@@ -19,6 +19,7 @@ import           Periodic.IOList   (IOList, append, delete, deleteSTM, elem,
                                     elemSTM, newIOList, toList, toListSTM)
 import           Periodic.Types    (FuncName, JobHandle)
 import           Prelude           hiding (elem)
+import           UnliftIO          (MonadIO (..))
 
 data GrabItem = GrabItem { gFuncList :: IOList FuncName
                          , gAgent    :: AgentEnv'
@@ -36,10 +37,10 @@ eqGrabItem a b = key a == key b
 
 type GrabQueue = IOList GrabItem
 
-newGrabQueue :: IO GrabQueue
+newGrabQueue :: MonadIO m => m GrabQueue
 newGrabQueue = newIOList
 
-pushAgent :: GrabQueue -> IOList FuncName -> IOList JobHandle -> AgentEnv' -> IO ()
+pushAgent :: MonadIO m => GrabQueue -> IOList FuncName -> IOList JobHandle -> AgentEnv' -> m ()
 pushAgent q gFuncList gJobQueue gAgent = do
   has <- elem q i
   unless has $ append q i
@@ -58,13 +59,13 @@ popAgentSTM q n = do
          if has then return x
                 else go xs
 
-popAgentList :: GrabQueue -> FuncName -> IO [(IOList JobHandle, AgentEnv')]
+popAgentList :: MonadIO m => GrabQueue -> FuncName -> m [(IOList JobHandle, AgentEnv')]
 popAgentList q n = do
   items <- go =<< toList q
   mapM_ (delete q) items
   pure $ map (gJobQueue &&& gAgent) items
 
- where go :: [GrabItem] -> IO [GrabItem]
+ where go :: MonadIO m => [GrabItem] -> m [GrabItem]
        go [] = return []
        go (x:xs) = do
          has <- elem (gFuncList x) n

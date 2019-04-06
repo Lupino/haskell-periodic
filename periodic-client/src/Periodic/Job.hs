@@ -23,8 +23,6 @@ module Periodic.Job
   ) where
 
 import           Control.Monad                (when)
-import           Control.Monad.Catch          (MonadMask)
-import           Control.Monad.IO.Class       (MonadIO (..))
 import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (receive, send)
@@ -33,6 +31,7 @@ import           Periodic.Types               (FromBS (..), LockName)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (Acquired))
 import           Periodic.Types.WorkerCommand
+import           UnliftIO                     hiding (timeout)
 
 type JobT m = NodeT Job m
 
@@ -61,40 +60,40 @@ timeout :: Monad m => JobT m Int
 timeout = getTimeout <$> env
 
 workDone
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => JobT m ()
 workDone = workDone_ empty
 
 workDone_
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => ByteString -> JobT m ()
 workDone_ w = do
   h <- getHandle <$> env
   withAgentT $ send (WorkDone h w)
 
 workFail
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   =>  JobT m ()
 workFail = do
   h <- getHandle <$> env
   withAgentT $ send (WorkFail h)
 
 schedLater
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   =>  Int64 -> JobT m ()
 schedLater later = do
   h <- getHandle <$> env
   withAgentT $ send (SchedLater h later 0)
 
 schedLater'
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   =>  Int64 -> Int -> JobT m ()
 schedLater' later step = do
   h <- getHandle <$> env
   withAgentT $ send (SchedLater h later step)
 
 acquireLock
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => LockName -> Int -> JobT m Bool
 acquireLock n maxCount = do
   h <- getHandle <$> env
@@ -106,14 +105,14 @@ acquireLock n maxCount = do
       _                  -> pure False
 
 releaseLock
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => LockName -> JobT m ()
 releaseLock n = do
   h <- getHandle <$> env
   withAgentT $ send (Release n h)
 
 withLock
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => LockName -> Int -> JobT m () -> JobT m ()
 withLock n maxCount j = do
   acquired <- acquireLock n maxCount

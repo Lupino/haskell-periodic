@@ -6,12 +6,13 @@ module Periodic.Lock
   , with
   ) where
 
-import           Control.Concurrent.MVar (MVar, newMVar, withMVar)
+
+import           UnliftIO (MVar, MonadIO, MonadUnliftIO, newMVar, withMVar)
 
 newtype Lock = Lock { un :: MVar () }
 
-new :: IO Lock
+new :: MonadIO m => m Lock
 new = Lock <$> newMVar ()
 
-with :: Lock -> IO a -> IO a
+with :: MonadUnliftIO m => Lock -> m a -> m a
 with Lock{..} = withMVar un . const
