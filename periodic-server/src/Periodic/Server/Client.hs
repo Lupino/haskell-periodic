@@ -54,8 +54,8 @@ initClientEnv
   -> SchedEnv
   -> m ClientEnv
 initClientEnv connEnv schedEnv = do
-  lastVist <- newTVarIO =<< liftIO getEpochTime
-  nodeEnv <- liftIO $ initEnv lastVist
+  lastVist <- newTVarIO =<< getEpochTime
+  nodeEnv <- initEnv lastVist
   return ClientEnv{..}
 
 startClientT :: MonadUnliftIO m => ClientEnv -> m ()
@@ -72,7 +72,7 @@ getLastVist = do
 
 handleAgentT :: MonadUnliftIO m => TVar Int64 -> AgentT (SchedT m)  ()
 handleAgentT lastVist = do
-  t <- liftIO getEpochTime
+  t <- getEpochTime
   atomically $ writeTVar lastVist t
 
   cmd <- receive

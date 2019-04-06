@@ -9,11 +9,9 @@
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Periodic.Server
-  (
-    startServer
+  ( startServer
   ) where
 
-import           Control.Concurrent             (threadDelay)
 import           Control.Monad                  (forever, mzero, unless, void,
                                                  when)
 import           Control.Monad.Reader.Class     (MonadReader (ask), asks)
@@ -42,6 +40,7 @@ import           Periodic.Utils                 (getEpochTime)
 import           System.Directory               (createDirectoryIfMissing)
 import           System.Log.Logger              (errorM)
 import           UnliftIO
+import           UnliftIO.Concurrent            (threadDelay)
 
 type ClientList = IOHashMap ByteString ClientEnv
 type WorkerList = IOHashMap ByteString WorkerEnv
@@ -83,7 +82,7 @@ runServerT sEnv = flip runReaderT sEnv . unServerT
 liftS :: Monad m => SchedT m a -> ServerT m a
 liftS = ServerT . lift
 
-initServerEnv :: TVar Bool -> (Socket -> IO Transport) -> Socket -> IO ServerEnv
+initServerEnv :: MonadIO m => TVar Bool -> (Socket -> IO Transport) -> Socket -> m ServerEnv
 initServerEnv serveState mkTransport serveSock = do
   clientList <- newIOHashMap
   workerList <- newIOHashMap
@@ -119,7 +118,7 @@ handleConnection
 handleConnection transport = do
   ServerEnv{..} <- ask
   schedEnv <- liftS ask
-  connEnv <- liftIO $ initServerConnEnv transport
+  connEnv <- initServerConnEnv transport
 
   lift $ runConnectionT connEnv $
     receiveThen $ \pl ->
@@ -166,7 +165,7 @@ checkWorkerState :: MonadUnliftIO m =>  WorkerList -> TVar Int -> WorkerEnv -> m
 checkWorkerState ref alive env0 = runWorkerT env0 $ do
   delay <- fromIntegral <$> readTVarIO alive
   expiredAt <- (delay +) <$> Worker.getLastVist
-  now <- liftIO getEpochTime
+  now <- getEpochTime
   when (now > expiredAt) $ do
     Worker.close
     wid <- liftC connid
@@ -181,7 +180,7 @@ checkClientState :: MonadIO m => ClientList -> TVar Int -> ClientEnv -> m ()
 checkClientState ref alive env0 = runClientT env0 $ do
   delay <- fromIntegral <$> readTVarIO alive
   expiredAt <- (delay +) <$> Client.getLastVist
-  now <- liftIO getEpochTime
+  now <- getEpochTime
   when (now > expiredAt) $ do
     Client.close
     cid <- liftC connid
@@ -192,7 +191,7 @@ runCheckState
   => String -> IOHashMap a b -> (b -> m ()) -> TVar Int -> m ()
 runCheckState var ref checkAlive alive = void . async . forever $ do
   delay <- readTVarIO alive
-  liftIO $ threadDelay $ fromIntegral delay * 1000 * 1000
+  threadDelay $ fromIntegral delay * 1000 * 1000
   mapM_ checkAlive =<< HM.elems ref
   size <- HM.size ref
   liftIO $ errorM "Periodic.Server" $ "Total " ++ var ++ ": " ++ show size

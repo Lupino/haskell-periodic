@@ -61,11 +61,11 @@ initWorkerEnv
 initWorkerEnv connEnv schedEnv = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
-  wLastVist <- newTVarIO =<< liftIO getEpochTime
+  wLastVist <- newTVarIO =<< getEpochTime
 
   let workerConfig = WorkerConfig {..}
 
-  nodeEnv <- liftIO $ initEnv workerConfig
+  nodeEnv <- initEnv workerConfig
   return WorkerEnv{..}
 
 startWorkerT :: MonadUnliftIO m => WorkerEnv -> m ()
@@ -87,7 +87,7 @@ getLastVist = do
 
 handleAgentT :: MonadUnliftIO m => WorkerConfig -> AgentT (SchedT m) ()
 handleAgentT WorkerConfig {..} = do
-  t <- liftIO getEpochTime
+  t <- getEpochTime
   atomically $ writeTVar wLastVist t
   cmd <- receive
   case cmd of
