@@ -1,7 +1,7 @@
 { mkDerivation, async, base, binary, byteable, bytestring
-, direct-sqlite, directory, exceptions, filepath, hslogger
-, lifted-async, monad-control, mtl, network, periodic-common
-, psqueues, stdenv, stm, transformers, transformers-base
+, direct-sqlite, directory, filepath, hslogger
+, mtl, network, periodic-common, unliftio
+, psqueues, stdenv, stm, transformers
 , unordered-containers, static ? false
 }:
 let config = import ./config.nix {static = static;};
@@ -15,8 +15,8 @@ in mkDerivation {
   enableSharedLibraries = false;
   libraryHaskellDepends = [
     async base binary byteable bytestring direct-sqlite directory
-    exceptions filepath hslogger lifted-async monad-control mtl network
-    periodic-common psqueues stm transformers transformers-base
+    filepath hslogger mtl network unliftio
+    periodic-common psqueues stm transformers
     unordered-containers
   ];
   executableHaskellDepends = [ base bytestring periodic-common ];

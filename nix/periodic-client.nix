@@ -1,6 +1,6 @@
 { mkDerivation, base, binary, boxes, byteable, bytestring
-, data-default-class, exceptions, hslogger, http-types
-, lifted-async, lifted-base, monad-control, periodic-common
+, data-default-class, hslogger, http-types
+, unliftio, periodic-common
 , process-extras, resource-pool, scotty, stdenv, streaming-commons
 , text, transformers, unix-time, warp, static ? false
 }:
@@ -14,8 +14,8 @@ in mkDerivation {
   enableSharedExecutables = false;
   enableSharedLibraries = false;
   libraryHaskellDepends = [
-    base byteable bytestring exceptions hslogger lifted-async
-    lifted-base monad-control periodic-common resource-pool
+    base byteable bytestring hslogger unliftio
+    periodic-common resource-pool
     transformers
   ];
   executableHaskellDepends = [
