@@ -15,44 +15,34 @@ module Periodic.Worker
   , close
   ) where
 
-import           Control.Concurrent              (threadDelay)
-import           Control.Monad.Catch             (MonadCatch, MonadMask, catch)
-import           Control.Monad.IO.Class          (MonadIO (..))
-import           Control.Monad.Trans.Control     (MonadBaseControl)
-import           Data.Byteable                   (toBytes)
-import           Periodic.Agent                  (AgentEnv, readerSize, receive,
-                                                  runAgentT, send)
-import           Periodic.Job                    (JobT, func_, name, workFail)
-import           Periodic.Socket                 (connect)
-import           Periodic.Transport              (Transport,
-                                                  makeSocketTransport)
+import           Control.Concurrent           (threadDelay)
+import           Control.Exception            (SomeException)
+import           Control.Monad                (forever, replicateM, unless,
+                                               void, when)
+import           Data.Byteable                (toBytes)
+import           Data.Maybe                   (fromJust, isJust)
+import           Periodic.Agent               (AgentEnv, readerSize, receive,
+                                               runAgentT, send)
+import           Periodic.Connection          (initClientConnEnv)
+import qualified Periodic.Connection          as Conn
+import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
+import           Periodic.Job                 (JobT, func_, name, workFail)
+import           Periodic.Node
+import           Periodic.Socket              (connect)
+import           Periodic.Transport           (Transport, makeSocketTransport)
+import           Periodic.Types               (ClientType (TypeWorker),
+                                               FuncName, Job)
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
-
-import           Periodic.Types                  (ClientType (TypeWorker),
-                                                  FuncName, Job)
-
-import           Periodic.Connection             (initClientConnEnv)
-import qualified Periodic.Connection             as Conn
-import           Periodic.IOHashMap              (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap              as HM (delete, insert, lookup)
-
-import           Control.Concurrent.Async.Lifted (async, waitAnyCancel)
-import           Control.Exception               (SomeException)
-import           Control.Monad                   (forever, replicateM, unless,
-                                                  void, when)
-import           Periodic.Node
-
-import           System.Log.Logger               (errorM)
-import           System.Timeout.Lifted           (timeout)
-
-import           Data.Maybe                      (fromJust, isJust)
+import           System.Log.Logger            (errorM)
+import           UnliftIO
 
 type TaskList m = IOHashMap FuncName (JobT m ())
 type WorkerT m = NodeT (TaskList m) m
 
 runWorkerT
-  :: (MonadIO m, MonadBaseControl IO m, MonadCatch m, MonadMask m)
+  :: MonadUnliftIO m
   => (Transport -> IO Transport) -> String -> WorkerT m a -> m a
 runWorkerT f h m = do
   connEnv <- liftIO $
@@ -64,7 +54,7 @@ runWorkerT f h m = do
     Conn.send $ toBytes TypeWorker
     void Conn.receive
 
-    taskList <- liftIO newIOHashMap
+    taskList <- newIOHashMap
     env0 <- liftIO $ initEnv taskList
 
     runNodeT env0 $ do
@@ -74,10 +64,10 @@ runWorkerT f h m = do
       void $ async startMainLoop
       m
 
-close :: MonadIO m => WorkerT m ()
+close :: MonadUnliftIO m => WorkerT m ()
 close = stopNodeT
 
-ping :: (MonadIO m, MonadMask m) => WorkerT m Bool
+ping :: MonadUnliftIO m => WorkerT m Bool
 ping = withAgentT $ do
   send Ping
   ret <- receive
@@ -87,31 +77,31 @@ ping = withAgentT $ do
     Right _    -> return False
 
 addFunc
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => FuncName -> JobT m () -> WorkerT m ()
 addFunc f j = do
   withAgentT $ send (CanDo f)
   ref <- env
-  liftIO $ HM.insert ref f j
+  HM.insert ref f j
 
 broadcast
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => FuncName -> JobT m () -> WorkerT m ()
 broadcast f j = do
   withAgentT $ send (Broadcast f)
   ref <- env
-  liftIO $ HM.insert ref f j
+  HM.insert ref f j
 
 removeFunc
-  :: (MonadIO m, MonadMask m)
+  :: MonadUnliftIO m
   => FuncName -> WorkerT m ()
 removeFunc f = do
   withAgentT $ send (CantDo f)
   ref <- env
-  liftIO $ HM.delete ref f
+  HM.delete ref f
 
 grabJob
-  :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+  :: MonadUnliftIO m
   => AgentEnv -> WorkerT m (Maybe Job)
 grabJob agentEnv = do
   pl <- liftC . runAgentT agentEnv $ do
@@ -126,15 +116,13 @@ grabJob agentEnv = do
 
 
 work
-  :: (MonadMask m, MonadIO m, MonadBaseControl IO m)
+  :: MonadUnliftIO m
   => Int -> WorkerT m ()
 work size = do
   asyncs <- replicateM size $ async work_
-  void . liftIO $ waitAnyCancel asyncs
+  void $ waitAnyCancel asyncs
 
-work_
-  :: (MonadMask m, MonadIO m, MonadBaseControl IO m)
-  => WorkerT m ()
+work_ :: MonadUnliftIO m => WorkerT m ()
 work_ = do
   taskList <- env
   agentEnv <- newAgentEnv
@@ -143,7 +131,7 @@ work_ = do
     when (isJust j) $
       withEnv (fromJust j) $ do
         f <- func_
-        task <- liftIO $ HM.lookup taskList f
+        task <- HM.lookup taskList f
         case task of
           Nothing -> do
             withEnv taskList $ removeFunc f
@@ -163,7 +151,7 @@ work_ = do
               workFail
 
 checkHealth
-  :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+  :: MonadUnliftIO m
   => WorkerT m ()
 checkHealth = do
   ret <- timeout 10000000 ping
