@@ -80,9 +80,9 @@ instance MonadUnliftIO m => MonadUnliftIO (ConnectionT m) where
 runConnectionT :: ConnEnv -> ConnectionT m a -> m a
 runConnectionT connEnv = flip runReaderT connEnv . unConnectionT
 
-initConnEnv :: Transport -> B.ByteString -> B.ByteString -> IO ConnEnv
+initConnEnv :: MonadIO m => Transport -> B.ByteString -> B.ByteString -> m ConnEnv
 initConnEnv transport requestMagic responseMagic = do
-  connectionid <- getEntropy 4
+  connectionid <- liftIO $ getEntropy 4
   readLock <- L.new
   writeLock <- L.new
   status <- newTVarIO True
@@ -90,10 +90,10 @@ initConnEnv transport requestMagic responseMagic = do
   return ConnEnv{..}
 
 
-initServerConnEnv :: Transport -> IO ConnEnv
+initServerConnEnv :: MonadIO m => Transport -> m ConnEnv
 initServerConnEnv transport = initConnEnv transport magicREQ magicRES
 
-initClientConnEnv :: Transport -> IO ConnEnv
+initClientConnEnv :: MonadIO m => Transport -> m ConnEnv
 initClientConnEnv transport = initConnEnv transport magicRES magicREQ
 
 receive :: MonadUnliftIO m => ConnectionT m B.ByteString

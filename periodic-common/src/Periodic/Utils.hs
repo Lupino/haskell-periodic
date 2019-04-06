@@ -1,16 +1,12 @@
 module Periodic.Utils
-  ( tryIO
-  , getEpochTime
+  ( getEpochTime
   ) where
 
-import           Control.Exception (IOException, catch)
-import           Data.UnixTime     (getUnixTime, toEpochTime)
-import           Foreign.C.Types   (CTime (..))
+import           Data.UnixTime   (getUnixTime, toEpochTime)
+import           Foreign.C.Types (CTime (..))
+import           UnliftIO        (MonadIO (..))
 
-tryIO :: IO a -> IO (Either IOException a)
-tryIO m = catch (fmap Right m) (return . Left)
-
-getEpochTime :: Num a => IO a
-getEpochTime = un . toEpochTime <$> getUnixTime
+getEpochTime :: (MonadIO m, Num a) => m a
+getEpochTime = liftIO $ un . toEpochTime <$> getUnixTime
   where un :: Num a => CTime -> a
         un (CTime t) = fromIntegral t

@@ -77,7 +77,7 @@ liftC = NodeT . lift
 runNodeT :: NodeEnv u -> NodeT u m a -> ConnectionT m a
 runNodeT nEnv = flip runReaderT nEnv . unNodeT
 
-initEnv :: u -> IO (NodeEnv u)
+initEnv :: MonadIO m => u -> m (NodeEnv u)
 initEnv uEnv = do
   nodeStatus <- newTVarIO True
   agentList <- newIOHashMap

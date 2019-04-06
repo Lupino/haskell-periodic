@@ -13,9 +13,9 @@ import           Control.Monad     (when)
 import           Data.List         (isPrefixOf)
 import           Network.Socket    hiding (connect, listen)
 import qualified Network.Socket    as S (connect, listen)
-import           Periodic.Utils    (tryIO)
 import           System.Directory  (doesFileExist, removeFile)
 import           System.Exit       (exitFailure)
+import           UnliftIO          (tryIO)
 
 -- Returns the first action from a list which does not throw an exception.
 -- If all the actions throw exceptions (and the list of actions is not empty),
