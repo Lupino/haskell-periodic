@@ -37,20 +37,19 @@ import qualified Periodic.Server.Worker         as Worker
 import           Periodic.Transport             (Transport)
 import           Periodic.Types                 (ClientType (..), runParser)
 import           Periodic.Utils                 (getEpochTime)
-import           System.Directory               (createDirectoryIfMissing)
 import           System.Log.Logger              (errorM)
 import           UnliftIO
 import           UnliftIO.Concurrent            (threadDelay)
+import           UnliftIO.Directory             (createDirectoryIfMissing)
 
 type ClientList = IOHashMap ByteString ClientEnv
 type WorkerList = IOHashMap ByteString WorkerEnv
 
 data ServerEnv = ServerEnv
-  { mkTransport :: Socket -> IO Transport
-  , serveSock   :: Socket
-  , serveState  :: TVar Bool
-  , clientList  :: ClientList
-  , workerList  :: WorkerList
+  { serveSock  :: Socket
+  , serveState :: TVar Bool
+  , clientList :: ClientList
+  , workerList :: WorkerList
   }
 
 
@@ -82,35 +81,31 @@ runServerT sEnv = flip runReaderT sEnv . unServerT
 liftS :: Monad m => SchedT m a -> ServerT m a
 liftS = ServerT . lift
 
-initServerEnv :: MonadIO m => TVar Bool -> (Socket -> IO Transport) -> Socket -> m ServerEnv
-initServerEnv serveState mkTransport serveSock = do
+initServerEnv :: MonadIO m => TVar Bool -> Socket -> m ServerEnv
+initServerEnv serveState serveSock = do
   clientList <- newIOHashMap
   workerList <- newIOHashMap
   pure ServerEnv{..}
 
-serveForever
-  :: MonadUnliftIO m
-  => ServerT m ()
-serveForever = do
+serveForever :: MonadUnliftIO m => (Socket -> m Transport) -> ServerT m ()
+serveForever mk = do
   state <- asks serveState
   void . runMaybeT . forever $ do
-    e <- lift tryServeOnce
+    e <- lift $ tryServeOnce mk
     when (isLeft e) mzero
     alive <- readTVarIO state
     unless alive mzero
 
 tryServeOnce
   :: MonadUnliftIO m
-  => ServerT m (Either SomeException ())
-tryServeOnce = tryAny serveOnce
+  => (Socket -> m Transport)
+  -> ServerT m (Either SomeException ())
+tryServeOnce mk = tryAny (serveOnce mk)
 
-serveOnce
-  :: MonadUnliftIO m
-  => ServerT m ()
-serveOnce = do
+serveOnce :: MonadUnliftIO m => (Socket -> m Transport) -> ServerT m ()
+serveOnce makeTransport = do
   (sock', _) <- liftIO . accept =<< asks serveSock
-  makeTransport <- asks mkTransport
-  void $ async $ handleConnection =<< liftIO (makeTransport sock')
+  void $ async $ handleConnection =<< lift (makeTransport sock')
 
 handleConnection
   :: MonadUnliftIO m
@@ -197,12 +192,12 @@ runCheckState var ref checkAlive alive = void . async . forever $ do
   liftIO $ errorM "Periodic.Server" $ "Total " ++ var ++ ": " ++ show size
 
 
-startServer :: (Socket -> IO Transport) -> FilePath -> Socket -> IO ()
+startServer :: MonadUnliftIO m => (Socket -> m Transport) -> FilePath -> Socket -> m ()
 startServer mk path sock = do
   state <- newTVarIO True
-  sEnv <- initServerEnv state mk sock
+  sEnv <- initServerEnv state sock
   createDirectoryIfMissing True path
-  sqlite <- initSQLite $ fromString $ path ++ "/data.sqlite"
+  sqlite <- liftIO $ initSQLite $ fromString $ path ++ "/data.sqlite"
   schedEnv <- initSchedEnv sqlite $ atomically $ writeTVar state False
 
   runSchedT schedEnv $ do
@@ -210,7 +205,7 @@ startServer mk path sock = do
     lift . runCheckClientState (clientList sEnv) =<< keepalive
     lift . runCheckWorkerState (workerList sEnv) =<< keepalive
 
-    runServerT sEnv serveForever
+    runServerT sEnv $ serveForever mk
 
     shutdown
     liftIO $ Socket.close sock

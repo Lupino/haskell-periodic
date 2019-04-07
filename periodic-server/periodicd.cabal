@@ -29,7 +29,6 @@ library
                      , network
                      , unordered-containers
                      , psqueues
-                     , directory
                      , filepath
                      , hslogger
                      , byteable

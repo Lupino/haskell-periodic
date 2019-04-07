@@ -122,8 +122,8 @@ type TaskList = IOHashMap JobHandle (Int64, Async ())
 runSchedT :: SchedEnv -> SchedT m a -> m a
 runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 
-initSchedEnv :: Persist -> IO () -> IO SchedEnv
-initSchedEnv sPersist sCleanup = do
+initSchedEnv :: MonadUnliftIO m => Persist -> m () -> m SchedEnv
+initSchedEnv sPersist sC = do
   sFuncStatList <- newIOHashMap
   sWaitList     <- newIOHashMap
   sLockList     <- newIOHashMap
@@ -139,6 +139,7 @@ initSchedEnv sPersist sCleanup = do
   sExpiration   <- newTVarIO 300
   sAutoPoll     <- newTVarIO False
   sPolled       <- newTVarIO False
+  sCleanup      <- toIO sC
   pure SchedEnv{..}
 
 startSchedT :: MonadUnliftIO m => SchedT m ()
