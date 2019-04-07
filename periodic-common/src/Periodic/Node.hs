@@ -92,11 +92,14 @@ withEnv u m = do
   env0 <- ask
   fromConn $ runNodeT (env0 {uEnv=u}) m
 
+runAgentT_ :: Monad m => AgentEnv -> AgentT m a -> NodeT u m a
+runAgentT_ aEnv = fromConn . runAgentT aEnv
+
 withAgentT :: (MonadUnliftIO m) => AgentT m a -> NodeT u m a
 withAgentT agentT =
   bracket newMsgid removeMsgid $ \mid -> do
     aEnv <- newAgentEnv_ mid
-    fromConn $ runAgentT aEnv agentT
+    runAgentT_ aEnv agentT
 
 newAgentEnv_ :: (MonadIO m) => Msgid -> NodeT u m AgentEnv
 newAgentEnv_ mid = do
@@ -151,11 +154,11 @@ doFeed bs agentHandler = do
   v <- HM.lookup agentList $! B.take msgidLength bs
   case v of
     Just aEnv ->
-      fromConn . runAgentT aEnv . feed $! B.drop msgidLength bs
+      runAgentT_ aEnv . feed $! B.drop msgidLength bs
     Nothing    -> do
       let mid = B.take msgidLength bs
       reader <- mkAgentReader [B.drop msgidLength bs]
-      fromConn $ runAgentT (AgentEnv reader mid) agentHandler
+      runAgentT_ (AgentEnv reader mid) agentHandler
 
 startMainLoop
   :: (MonadUnliftIO m)
@@ -180,8 +183,7 @@ doFeedError :: MonadIO m => NodeT u m ()
 doFeedError =
   asks agentList >>= HM.elems >>= mapM_ go
   where go :: MonadIO m => AgentEnv -> NodeT u m ()
-        go aEnv =
-          fromConn . runAgentT aEnv $ feed B.empty
+        go aEnv = runAgentT_ aEnv $ feed B.empty
 
 stopNodeT :: MonadIO m => NodeT u m ()
 stopNodeT = do
