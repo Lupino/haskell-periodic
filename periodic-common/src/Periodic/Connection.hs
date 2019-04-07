@@ -78,8 +78,11 @@ instance MonadUnliftIO m => MonadUnliftIO (ConnectionT m) where
       withRunInIO $ \run ->
         inner (run . runConnectionT r)
 
-class FromConn n m where
-  fromConn :: ConnectionT n a -> m n a
+class FromConn m where
+  fromConn :: Monad n => ConnectionT n a -> m n a
+
+instance FromConn ConnectionT where
+  fromConn = id
 
 runConnectionT :: ConnEnv -> ConnectionT m a -> m a
 runConnectionT connEnv = flip runReaderT connEnv . unConnectionT

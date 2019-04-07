@@ -68,7 +68,7 @@ instance MonadUnliftIO m => MonadUnliftIO (AgentT m) where
       withRunInIO $ \run ->
         inner (run . runAgentT r)
 
-instance Monad m => FromConn m AgentT where
+instance FromConn AgentT where
   fromConn = AgentT . lift
 
 runAgentT :: AgentEnv -> AgentT m a -> ConnectionT m a

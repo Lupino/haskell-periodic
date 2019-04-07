@@ -70,7 +70,7 @@ instance MonadUnliftIO m => MonadUnliftIO (NodeT u m) where
 instance MonadTrans (NodeT u) where
   lift = NodeT . lift . lift
 
-instance Monad m => FromConn m (NodeT u) where
+instance FromConn (NodeT u) where
   fromConn = NodeT . lift
 
 runNodeT :: NodeEnv u -> NodeT u m a -> ConnectionT m a
