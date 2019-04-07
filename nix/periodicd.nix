@@ -14,12 +14,12 @@ in mkDerivation {
   enableSharedExecutables = false;
   enableSharedLibraries = false;
   libraryHaskellDepends = [
-    async base binary byteable bytestring direct-sqlite directory
+    async base binary byteable bytestring direct-sqlite
     filepath hslogger mtl network unliftio
     periodic-common psqueues stm transformers
     unordered-containers
   ];
-  executableHaskellDepends = [ base bytestring periodic-common ];
+  executableHaskellDepends = [ base bytestring periodic-common unliftio ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
   configureFlags = config.configureFlags;
