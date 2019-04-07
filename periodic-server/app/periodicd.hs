@@ -6,18 +6,21 @@ module Main
     main
   ) where
 
-import           Control.Monad                 (when)
-import qualified Data.ByteString.Lazy          as LB (readFile)
-import           Data.List                     (isPrefixOf)
-import           Data.Maybe                    (fromMaybe)
+import           Control.Monad                  (when)
+import qualified Data.ByteString.Lazy           as LB (readFile)
+import           Data.List                      (isPrefixOf)
+import           Data.Maybe                     (fromMaybe)
+import           Data.String                    (fromString)
 import           Periodic.Server
-import           Periodic.Socket               (listen)
-import           Periodic.Transport            (makeSocketTransport)
+import           Periodic.Server.Persist.SQLite (initSQLite)
+import           Periodic.Socket                (listen)
+import           Periodic.Transport             (makeSocketTransport)
 import           Periodic.Transport.TLS
-import qualified Periodic.Transport.WebSockets as WS (makeServerTransport)
-import           Periodic.Transport.XOR        (makeXORTransport)
-import           System.Environment            (getArgs, lookupEnv)
-import           System.Exit                   (exitSuccess)
+import qualified Periodic.Transport.WebSockets  as WS (makeServerTransport)
+import           Periodic.Transport.XOR         (makeXORTransport)
+import           System.Environment             (getArgs, lookupEnv)
+import           System.Exit                    (exitSuccess)
+import           UnliftIO.Directory             (createDirectoryIfMissing)
 
 data Options = Options { host      :: String
                        , xorFile   :: FilePath
@@ -91,7 +94,10 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  startServer (makeTransport opts) storePath =<< listen host
+  createDirectoryIfMissing True storePath
+  sqlite <- initSQLite $ fromString $ storePath ++ "/data.sqlite"
+
+  startServer (makeTransport opts) sqlite =<< listen host
 
 makeTransport Options{..} sock
   | useTls = do

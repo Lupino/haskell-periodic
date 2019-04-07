@@ -12,35 +12,32 @@ module Periodic.Server
   ( startServer
   ) where
 
-import           Control.Monad                  (forever, mzero, unless, void,
-                                                 when)
-import           Control.Monad.Reader.Class     (MonadReader (ask), asks)
-import           Control.Monad.Trans.Class      (MonadTrans, lift)
-import           Control.Monad.Trans.Maybe      (runMaybeT)
-import           Control.Monad.Trans.Reader     (ReaderT (..), runReaderT)
-import           Data.ByteString                (ByteString)
-import           Data.Either                    (isLeft)
-import           Data.String                    (fromString)
-import           Network.Socket                 (Socket, accept)
-import qualified Network.Socket                 as Socket (close)
+import           Control.Monad              (forever, mzero, unless, void, when)
+import           Control.Monad.Reader.Class (MonadReader (ask), asks)
+import           Control.Monad.Trans.Class  (MonadTrans, lift)
+import           Control.Monad.Trans.Maybe  (runMaybeT)
+import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
+import           Data.ByteString            (ByteString)
+import           Data.Either                (isLeft)
+import           Network.Socket             (Socket, accept)
+import qualified Network.Socket             as Socket (close)
 import           Periodic.Connection
-import qualified Periodic.Connection            as Conn
-import           Periodic.IOHashMap             (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap             as HM
-import           Periodic.Node                  (liftC)
+import qualified Periodic.Connection        as Conn
+import           Periodic.IOHashMap         (IOHashMap, newIOHashMap)
+import qualified Periodic.IOHashMap         as HM
+import           Periodic.Node              (liftC)
 import           Periodic.Server.Client
-import qualified Periodic.Server.Client         as Client
-import           Periodic.Server.Persist.SQLite (initSQLite)
+import qualified Periodic.Server.Client     as Client
+import           Periodic.Server.Persist    (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Worker
-import qualified Periodic.Server.Worker         as Worker
-import           Periodic.Transport             (Transport)
-import           Periodic.Types                 (ClientType (..), runParser)
-import           Periodic.Utils                 (getEpochTime)
-import           System.Log.Logger              (errorM)
+import qualified Periodic.Server.Worker     as Worker
+import           Periodic.Transport         (Transport)
+import           Periodic.Types             (ClientType (..), runParser)
+import           Periodic.Utils             (getEpochTime)
+import           System.Log.Logger          (errorM)
 import           UnliftIO
-import           UnliftIO.Concurrent            (threadDelay)
-import           UnliftIO.Directory             (createDirectoryIfMissing)
+import           UnliftIO.Concurrent        (threadDelay)
 
 type ClientList = IOHashMap ByteString ClientEnv
 type WorkerList = IOHashMap ByteString WorkerEnv
@@ -192,13 +189,11 @@ runCheckState var ref checkAlive alive = void . async . forever $ do
   liftIO $ errorM "Periodic.Server" $ "Total " ++ var ++ ": " ++ show size
 
 
-startServer :: MonadUnliftIO m => (Socket -> m Transport) -> FilePath -> Socket -> m ()
-startServer mk path sock = do
+startServer :: MonadUnliftIO m => (Socket -> m Transport) -> Persist -> Socket -> m ()
+startServer mk persist sock = do
   state <- newTVarIO True
   sEnv <- initServerEnv state sock
-  createDirectoryIfMissing True path
-  sqlite <- liftIO $ initSQLite $ fromString $ path ++ "/data.sqlite"
-  schedEnv <- initSchedEnv sqlite $ atomically $ writeTVar state False
+  schedEnv <- initSchedEnv persist $ atomically $ writeTVar state False
 
   runSchedT schedEnv $ do
     startSchedT
