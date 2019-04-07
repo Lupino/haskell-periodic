@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE RecordWildCards            #-}
@@ -21,7 +22,6 @@ module Periodic.Agent
   , receive
   , receive_
   , readerSize
-  , liftC
 
   , AgentEnv'
   , agentEnv'
@@ -35,7 +35,8 @@ import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
 import           Data.Byteable              (Byteable (..))
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString            as B (concat, empty)
-import           Periodic.Connection        (ConnEnv, ConnectionT, connid',
+import           Periodic.Connection        (ConnEnv, ConnectionT,
+                                             FromConn (..), connid',
                                              runConnectionT, statusTVar)
 import qualified Periodic.Connection        as Conn (send)
 import           Periodic.Types             (Error (..))
@@ -67,9 +68,8 @@ instance MonadUnliftIO m => MonadUnliftIO (AgentT m) where
       withRunInIO $ \run ->
         inner (run . runAgentT r)
 
-
-liftC :: Monad m => ConnectionT m a -> AgentT m a
-liftC = AgentT . lift
+instance Monad m => FromConn m AgentT where
+  fromConn = AgentT . lift
 
 runAgentT :: AgentEnv -> AgentT m a -> ConnectionT m a
 runAgentT aEnv = flip runReaderT aEnv . unAgentT
@@ -84,12 +84,12 @@ msgidLength :: Int
 msgidLength = 4
 
 aAlive :: MonadIO m => AgentT m Bool
-aAlive = readTVarIO =<< liftC statusTVar
+aAlive = readTVarIO =<< fromConn statusTVar
 
 send_ :: MonadUnliftIO m => ByteString -> AgentT m ()
 send_ pl = do
   mid <- msgid
-  liftC $ Conn.send $ B.concat [mid, pl]
+  fromConn $ Conn.send $ B.concat [mid, pl]
 
 send :: (Byteable cmd, Validatable cmd, MonadUnliftIO m) => cmd -> AgentT m ()
 send cmd =
@@ -107,7 +107,7 @@ feed dat = do
 receive_ :: MonadIO m => AgentT m ByteString
 receive_ = do
   reader <- asks agentReader
-  st <- liftC statusTVar
+  st <- fromConn statusTVar
   atomically $ do
     v <- readTVar reader
     if null v then do
@@ -134,7 +134,7 @@ agentid AgentEnv'{..} = B.concat [agentMsgid agentEnv, connid' connEnv]
 
 agentEnv' :: Monad m => AgentT m AgentEnv'
 agentEnv' = do
-  connEnv <- liftC ask
+  connEnv <- fromConn ask
   agentEnv <- ask
   pure AgentEnv'{..}
 

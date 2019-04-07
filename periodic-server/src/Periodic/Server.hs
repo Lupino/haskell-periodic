@@ -4,7 +4,6 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
@@ -25,7 +24,6 @@ import           Periodic.Connection
 import qualified Periodic.Connection        as Conn
 import           Periodic.IOHashMap         (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap         as HM
-import           Periodic.Node              (liftC)
 import           Periodic.Server.Client
 import qualified Periodic.Server.Client     as Client
 import           Periodic.Server.Persist    (Persist)
@@ -160,7 +158,7 @@ checkWorkerState ref alive env0 = runWorkerT env0 $ do
   now <- getEpochTime
   when (now > expiredAt) $ do
     Worker.close
-    wid <- liftC connid
+    wid <- fromConn connid
     HM.delete ref wid
 
 runCheckClientState
@@ -175,7 +173,7 @@ checkClientState ref alive env0 = runClientT env0 $ do
   now <- getEpochTime
   when (now > expiredAt) $ do
     Client.close
-    cid <- liftC connid
+    cid <- fromConn connid
     HM.delete ref cid
 
 runCheckState

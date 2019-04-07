@@ -17,13 +17,13 @@ module Periodic.Server.Worker
 import           Control.Monad                (unless, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Int                     (Int64)
-import           Periodic.Agent               (AgentT, agentEnv', liftC,
-                                               receive, send)
-import           Periodic.Connection          (ConnEnv, runConnectionT)
+import           Periodic.Agent               (AgentT, agentEnv', receive, send)
+import           Periodic.Connection          (ConnEnv, fromConn,
+                                               runConnectionT)
 import qualified Periodic.Connection          as Conn
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
-import           Periodic.Node                hiding (liftC)
+import           Periodic.Node
 import           Periodic.Server.Scheduler
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand
@@ -93,7 +93,7 @@ handleAgentT WorkerConfig {..} = do
   case cmd of
     Left e -> do
       liftIO $ errorM "Periodic.Server.Worker" $ "Worker error: " ++ e
-      liftC Conn.close -- close worker
+      fromConn Conn.close -- close worker
     Right GrabJob -> do
       env0 <- agentEnv'
       lift $ pushGrab wFuncList wJobQueue env0

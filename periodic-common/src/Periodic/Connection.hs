@@ -9,6 +9,7 @@
 module Periodic.Connection
   ( ConnEnv
   , ConnectionT
+  , FromConn (..)
   , runConnectionT
   , initServerConnEnv
   , initClientConnEnv
@@ -76,6 +77,9 @@ instance MonadUnliftIO m => MonadUnliftIO (ConnectionT m) where
     ReaderT $ \r ->
       withRunInIO $ \run ->
         inner (run . runConnectionT r)
+
+class FromConn n m where
+  fromConn :: ConnectionT n a -> m n a
 
 runConnectionT :: ConnEnv -> ConnectionT m a -> m a
 runConnectionT connEnv = flip runReaderT connEnv . unConnectionT

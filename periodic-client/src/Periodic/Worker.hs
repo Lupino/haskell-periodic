@@ -21,7 +21,7 @@ import           Data.Byteable                (toBytes)
 import           Data.Maybe                   (fromJust, isJust)
 import           Periodic.Agent               (AgentEnv, readerSize, receive,
                                                runAgentT, send)
-import           Periodic.Connection          (initClientConnEnv)
+import           Periodic.Connection          (fromConn, initClientConnEnv)
 import qualified Periodic.Connection          as Conn
 import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
@@ -103,7 +103,7 @@ grabJob
   :: MonadUnliftIO m
   => AgentEnv -> WorkerT m (Maybe Job)
 grabJob agentEnv = do
-  pl <- liftC . runAgentT agentEnv $ do
+  pl <- fromConn . runAgentT agentEnv $ do
     size <- readerSize
     when (size == 0) $ send GrabJob
     timeout 10000000 receive

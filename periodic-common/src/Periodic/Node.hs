@@ -1,6 +1,6 @@
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -21,7 +21,6 @@ module Periodic.Node
   , stopNodeT
   , env
   , newAgentEnv
-  , liftC
   ) where
 
 import           Control.Monad              (forever, mzero, void)
@@ -31,8 +30,9 @@ import           Control.Monad.Trans.Maybe  (runMaybeT)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString            as B (drop, empty, take)
-import           Periodic.Agent             hiding (liftC, receive)
-import           Periodic.Connection        (ConnectionT, close, receive)
+import           Periodic.Agent             hiding (receive)
+import           Periodic.Connection        (ConnectionT, FromConn (..), close,
+                                             receive)
 import           Periodic.IOHashMap         (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap         as HM (delete, elems, insert,
                                                    lookup, member)
@@ -70,8 +70,8 @@ instance MonadUnliftIO m => MonadUnliftIO (NodeT u m) where
 instance MonadTrans (NodeT u) where
   lift = NodeT . lift . lift
 
-liftC :: Monad m => ConnectionT m a -> NodeT u m a
-liftC = NodeT . lift
+instance Monad m => FromConn m (NodeT u) where
+  fromConn = NodeT . lift
 
 runNodeT :: NodeEnv u -> NodeT u m a -> ConnectionT m a
 runNodeT nEnv = flip runReaderT nEnv . unNodeT
@@ -90,13 +90,13 @@ defaultAgentHandler = do
 withEnv :: (Monad m) =>  u1 -> NodeT u1 m a -> NodeT u m a
 withEnv u m = do
   env0 <- ask
-  liftC $ runNodeT (env0 {uEnv=u}) m
+  fromConn $ runNodeT (env0 {uEnv=u}) m
 
 withAgentT :: (MonadUnliftIO m) => AgentT m a -> NodeT u m a
 withAgentT agentT =
   bracket newMsgid removeMsgid $ \mid -> do
     aEnv <- newAgentEnv_ mid
-    liftC $ runAgentT aEnv agentT
+    fromConn $ runAgentT aEnv agentT
 
 newAgentEnv_ :: (MonadIO m) => Msgid -> NodeT u m AgentEnv
 newAgentEnv_ mid = do
@@ -135,7 +135,7 @@ mainLoop
   => AgentT m () -> NodeT u m ()
 mainLoop agentHandler = do
   NodeEnv{..} <- ask
-  bs <- liftC receive
+  bs <- fromConn receive
   void . forkIO $ tryDoFeed bs agentHandler
 
 tryDoFeed :: (MonadUnliftIO m) => ByteString -> AgentT m () -> NodeT u m ()
@@ -151,11 +151,11 @@ doFeed bs agentHandler = do
   v <- HM.lookup agentList $! B.take msgidLength bs
   case v of
     Just aEnv ->
-      liftC . runAgentT aEnv . feed $! B.drop msgidLength bs
+      fromConn . runAgentT aEnv . feed $! B.drop msgidLength bs
     Nothing    -> do
       let mid = B.take msgidLength bs
       reader <- mkAgentReader [B.drop msgidLength bs]
-      liftC $ runAgentT (AgentEnv reader mid) agentHandler
+      fromConn $ runAgentT (AgentEnv reader mid) agentHandler
 
 startMainLoop
   :: (MonadUnliftIO m)
@@ -181,13 +181,13 @@ doFeedError =
   asks agentList >>= HM.elems >>= mapM_ go
   where go :: MonadIO m => AgentEnv -> NodeT u m ()
         go aEnv =
-          liftC . runAgentT aEnv $ feed B.empty
+          fromConn . runAgentT aEnv $ feed B.empty
 
 stopNodeT :: MonadIO m => NodeT u m ()
 stopNodeT = do
   st <- asks nodeStatus
   atomically $ writeTVar st False
-  liftC close
+  fromConn close
 
 env :: Monad m => NodeT u m u
 env = asks uEnv

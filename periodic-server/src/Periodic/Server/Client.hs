@@ -20,11 +20,11 @@ import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
 import           Data.Int                     (Int64)
-import           Periodic.Agent               (AgentT, liftC, receive, send,
-                                               send_)
-import           Periodic.Connection          (ConnEnv, runConnectionT)
+import           Periodic.Agent               (AgentT, receive, send, send_)
+import           Periodic.Connection          (ConnEnv, fromConn,
+                                               runConnectionT)
 import qualified Periodic.Connection          as Conn
-import           Periodic.Node                hiding (liftC)
+import           Periodic.Node
 import           Periodic.Server.Scheduler
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..))
@@ -77,14 +77,14 @@ handleAgentT lastVist = do
 
   cmd <- receive
   case cmd of
-    Left _         -> liftC Conn.close -- close client
+    Left _         -> fromConn Conn.close -- close client
     Right (SubmitJob job) -> do
       lift $ pushJob job
       send Success
     Right (RunJob job) -> do
       lift $ prepareWait job
       lift $ pushJob job
-      state <- liftC Conn.statusTVar
+      state <- fromConn Conn.statusTVar
       w <- lift $ waitResult state job
       send w
     Right Status -> do
