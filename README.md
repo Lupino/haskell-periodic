@@ -29,7 +29,8 @@ It does this by using the Periodic client API to send some data associated with 
 {-# LANGUAGE OverloadedStrings #-}
 
 import Periodic.Client
-clientEnv <- open return "unix:///tmp/periodic.sock"
+import Periodic.Transport.Socket (socketUri)
+clientEnv <- open $ socketUri "unix:///tmp/periodic.sock"
 runClientT clientEnv $ submitJob "random_print" "Hello world!" 0
 ```
 
@@ -45,9 +46,10 @@ Let’s now look at the worker code:
 {-# LANGUAGE OverloadedStrings #-}
 import Periodic.Worker
 import Periodic.Job
+import Periodic.Transport.Socket (socketUri)
 import Control.Monad.IO.Class (liftIO)
 
-runWorkerT return "unix:///tmp/periodic/sock" $ do
+runWorkerT (socketUri "unix:///tmp/periodic/sock") $ do
   addFunc "random_print" $ do
     n <- name
     liftIO $ putStrLn h
@@ -102,16 +104,17 @@ module Main
   ) where
 
 import Periodic.Job (JobT, name, workDone)
+import Periodic.Transport.Socket (socketUri, Socket)
 import Periodic.Worker (addFunc, runWorkerT, work)
 import Control.Monad.IO.Class (liftIO)
 
 main :: IO ()
 main = do
-  runWorkerT (\t -> pure t) "unix:///tmp/periodic.sock" $ do
+  runWorkerT (socketUri "unix:///tmp/periodic.sock") $ do
     addFunc "show_file" showFile
     work 10
 
-showFile :: JobT IO ()
+showFile :: JobT Socket IO ()
 showFile = do
   liftIO . putStrLn =<< name
   workDone
