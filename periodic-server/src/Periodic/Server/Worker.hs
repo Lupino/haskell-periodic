@@ -24,6 +24,7 @@ import qualified Periodic.Connection          as Conn
 import           Periodic.IOList              (IOList, delete, elem, insert,
                                                newIOList, toList)
 import           Periodic.Node
+import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand
@@ -39,15 +40,15 @@ data WorkerConfig = WorkerConfig
   , wLastVist :: TVar Int64
   }
 
-type WorkerT m = NodeT WorkerConfig (SchedT m)
+type WorkerT db m = NodeT WorkerConfig (SchedT db m)
 
-data WorkerEnv = WorkerEnv
+data WorkerEnv db = WorkerEnv
   { nodeEnv  :: NodeEnv WorkerConfig
-  , schedEnv :: SchedEnv
+  , schedEnv :: SchedEnv db
   , connEnv  :: ConnEnv
   }
 
-runWorkerT :: Monad m => WorkerEnv -> WorkerT m a -> m a
+runWorkerT :: Monad m => WorkerEnv db -> WorkerT db m a -> m a
 runWorkerT WorkerEnv {..} =
   runSchedT schedEnv
     . runConnectionT connEnv
@@ -56,8 +57,8 @@ runWorkerT WorkerEnv {..} =
 initWorkerEnv
   :: (MonadIO m)
   => ConnEnv
-  -> SchedEnv
-  -> m WorkerEnv
+  -> SchedEnv db
+  -> m (WorkerEnv db)
 initWorkerEnv connEnv schedEnv = do
   wFuncList <- newIOList
   wJobQueue <- newIOList
@@ -68,7 +69,7 @@ initWorkerEnv connEnv schedEnv = do
   nodeEnv <- initEnv workerConfig
   return WorkerEnv{..}
 
-startWorkerT :: MonadUnliftIO m => WorkerEnv -> m ()
+startWorkerT :: (MonadUnliftIO m, Persist db) => (WorkerEnv db) -> m ()
 startWorkerT env0 = runWorkerT env0 $ do
   startMainLoop_ . handleAgentT =<< env
 
@@ -77,15 +78,15 @@ startWorkerT env0 = runWorkerT env0 $ do
   mapM_ (lift . failJob) =<< toList wJobQueue
   mapM_ (lift . removeFunc) =<< toList wFuncList
 
-close :: MonadIO m => WorkerT m ()
+close :: MonadIO m => WorkerT db m ()
 close = stopNodeT
 
-getLastVist :: MonadIO m => WorkerT m Int64
+getLastVist :: MonadIO m => WorkerT db m Int64
 getLastVist = do
   WorkerConfig {..} <- env
   readTVarIO wLastVist
 
-handleAgentT :: MonadUnliftIO m => WorkerConfig -> AgentT (SchedT m) ()
+handleAgentT :: (MonadUnliftIO m, Persist db) => WorkerConfig -> AgentT (SchedT db m) ()
 handleAgentT WorkerConfig {..} = do
   t <- getEpochTime
   atomically $ writeTVar wLastVist t

@@ -25,6 +25,7 @@ import           Periodic.Connection          (ConnEnv, fromConn,
                                                runConnectionT)
 import qualified Periodic.Connection          as Conn
 import           Periodic.Node
+import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..))
@@ -34,15 +35,15 @@ import           Periodic.Utils               (getEpochTime)
 import           UnliftIO
 
 
-type ClientT m = NodeT (TVar Int64) (SchedT m)
+type ClientT db m = NodeT (TVar Int64) (SchedT db m)
 
-data ClientEnv = ClientEnv
+data ClientEnv db = ClientEnv
   { nodeEnv  :: NodeEnv (TVar Int64)
-  , schedEnv :: SchedEnv
+  , schedEnv :: SchedEnv db
   , connEnv  :: ConnEnv
   }
 
-runClientT :: Monad m => ClientEnv -> ClientT m a -> m a
+runClientT :: Monad m => ClientEnv db -> ClientT db m a -> m a
 runClientT ClientEnv {..} =
   runSchedT schedEnv
     . runConnectionT connEnv
@@ -51,26 +52,26 @@ runClientT ClientEnv {..} =
 initClientEnv
   :: MonadIO m
   => ConnEnv
-  -> SchedEnv
-  -> m ClientEnv
+  -> SchedEnv db
+  -> m (ClientEnv db)
 initClientEnv connEnv schedEnv = do
   lastVist <- newTVarIO =<< getEpochTime
   nodeEnv <- initEnv lastVist
   return ClientEnv{..}
 
-startClientT :: MonadUnliftIO m => ClientEnv -> m ()
+startClientT :: (MonadUnliftIO m, Persist db) => ClientEnv db -> m ()
 startClientT env0 = runClientT env0 $
   startMainLoop_ . handleAgentT =<< env
 
-close :: MonadIO m => ClientT m ()
+close :: MonadIO m => ClientT db m ()
 close = stopNodeT
 
-getLastVist :: MonadIO m => ClientT m Int64
+getLastVist :: MonadIO m => ClientT db m Int64
 getLastVist = do
   ref <- env
   readTVarIO ref
 
-handleAgentT :: MonadUnliftIO m => TVar Int64 -> AgentT (SchedT m)  ()
+handleAgentT :: (MonadUnliftIO m, Persist db) => TVar Int64 -> AgentT (SchedT db m) ()
 handleAgentT lastVist = do
   t <- getEpochTime
   atomically $ writeTVar lastVist t

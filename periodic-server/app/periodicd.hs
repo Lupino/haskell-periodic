@@ -12,7 +12,8 @@ import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
 import           Data.String                    (fromString)
 import           Periodic.Server
-import           Periodic.Server.Persist.SQLite (initSQLite)
+import           Periodic.Server.Persist        (PersistConfig)
+import           Periodic.Server.Persist.SQLite (SQLite)
 import           Periodic.Socket                (listen)
 import           Periodic.Transport             (makeSocketTransport)
 import           Periodic.Transport.TLS
@@ -95,7 +96,7 @@ main = do
     printHelp
 
   createDirectoryIfMissing True storePath
-  sqlite <- initSQLite $ fromString $ storePath ++ "/data.sqlite"
+  let sqlite = fromString $ storePath ++ "/data.sqlite" :: PersistConfig SQLite
 
   startServer (makeTransport opts) sqlite =<< listen host
 
