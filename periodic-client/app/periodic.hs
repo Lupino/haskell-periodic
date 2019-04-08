@@ -12,16 +12,16 @@ import           Data.Binary                   (decodeFile, encodeFile)
 import           Data.ByteString               (ByteString)
 import qualified Data.ByteString.Char8         as B (lines, pack, putStr,
                                                      readFile, split, unpack)
-import qualified Data.ByteString.Lazy          as LB (readFile)
 import           Data.Int                      (Int64)
 import           Data.List                     (isPrefixOf, transpose)
 import           Data.Maybe                    (fromMaybe)
 import           Periodic.Client
 import           Periodic.Socket               (getHost, getService)
 import           Periodic.Transport            (Transport)
-import           Periodic.Transport.TLS
-import qualified Periodic.Transport.WebSockets as WS (makeClientTransport)
-import           Periodic.Transport.XOR        (makeXORTransport)
+import           Periodic.Transport.Socket     (socketUri)
+import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)
+import           Periodic.Transport.WebSockets (clientConfig)
+import           Periodic.Transport.XOR        (xorConfig)
 import           Periodic.Types                (Workload (..))
 import           System.Environment            (getArgs, lookupEnv)
 import           System.Exit                   (exitSuccess)
@@ -242,25 +242,26 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  clientEnv <- open (makeTransport opts) host
+  run opts cmd argv
+
+run Options {useTls = True, ..} cmd argv = do
+  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
+  clientEnv <- open (tlsConfig prms (socketUri host))
   runClientT clientEnv $ processCommand cmd argv
 
-makeTransport :: Options -> Transport -> IO Transport
-makeTransport Options{..} transport
-  | useTls = do
-    prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
-    makeTLSTransport prms transport
-  | useWs =
-    WS.makeClientTransport (fromMaybe "0.0.0.0" $ getHost host) (getService host) transport
-  | otherwise = makeTransport' xorFile transport
+run Options {useWs = True, ..} cmd argv = do
+  clientEnv <- open (clientConfig (socketUri host) (fromMaybe "0.0.0.0" $ getHost host) (getService host))
+  runClientT clientEnv $ processCommand cmd argv
 
-makeTransport' :: FilePath -> Transport -> IO Transport
-makeTransport' [] transport = return transport
-makeTransport' p transport  = do
-  key <- LB.readFile p
-  makeXORTransport key transport
+run Options {xorFile = "", ..} cmd argv = do
+  clientEnv <- open (socketUri host)
+  runClientT clientEnv $ processCommand cmd argv
 
-processCommand :: Command -> [String] -> ClientT IO ()
+run Options {..} cmd argv = do
+  clientEnv <- open (xorConfig xorFile $ socketUri host)
+  runClientT clientEnv $ processCommand cmd argv
+
+processCommand :: Transport tp => Command -> [String] -> ClientT tp IO ()
 processCommand Help _     = liftIO printHelp
 processCommand Status _   = doStatus
 processCommand Submit xs  = doSubmitJob xs
@@ -272,11 +273,14 @@ processCommand Load xs    = doLoad xs
 processCommand Dump xs    = doDump xs
 processCommand Shutdown _ = shutdown
 
+doRemoveJob :: Transport tp => [String] -> ClientT tp IO ()
 doRemoveJob (x:xs) = mapM_ (removeJob (fromString x) . fromString) xs
 doRemoveJob []     = liftIO printRemoveHelp
 
+doDropFunc :: Transport tp => [String] -> ClientT tp IO ()
 doDropFunc = mapM_ (dropFunc . fromString)
 
+doConfig :: Transport tp => [String] -> ClientT tp IO ()
 doConfig ["get"] = liftIO printConfigGetHelp
 doConfig ["get", k] = do
   v <- configGet k
@@ -288,18 +292,21 @@ doConfig ["set", k, v] = void $ configSet k (read v)
 doConfig ("set":_:_:_) = liftIO printConfigSetHelp
 doConfig _ = liftIO printConfigHelp
 
+doLoad :: Transport tp => [String] -> ClientT tp IO ()
 doLoad [fn] = do
   jobs <- liftIO $ decodeFile fn
   void $ load jobs
 
 doLoad _ = liftIO printLoadHelp
 
+doDump :: Transport tp => [String] -> ClientT tp IO ()
 doDump [fn] = do
   jobs <- dump
   liftIO $ encodeFile fn jobs
 
 doDump _ = liftIO printDumpHelp
 
+doSubmitJob :: Transport tp => [String] -> ClientT tp IO ()
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp
 doSubmitJob (x:y:xs) = do
@@ -319,6 +326,7 @@ doSubmitJob (x:y:xs) = do
         go (w, _) ("--later":l0:ys)          = go (w, readMaybe l0) ys
         go v (_:ys)                          = go v ys
 
+doRunJob :: Transport tp => [String] -> ClientT tp IO ()
 doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
 doRunJob (x:y:xs) =
@@ -337,6 +345,7 @@ doRunJob (x:y:xs) =
         getFile :: String -> IO (Maybe Workload)
         getFile fn = Just . Workload <$> B.readFile fn
 
+doStatus :: Transport tp => ClientT tp IO ()
 doStatus = do
   st <- map formatTime . unpackBS . map (B.split ',') . B.lines <$> status
   liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "LOCKING", "SCHEDAT"]:st)

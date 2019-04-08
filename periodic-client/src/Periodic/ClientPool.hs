@@ -10,14 +10,14 @@ import           Data.Pool          (Pool, createPool, withResource)
 import           Periodic.Client    hiding (ClientEnv, close, open, runClientT)
 import qualified Periodic.Client    as Client (ClientEnv, close, open,
                                                runClientT)
-import           Periodic.Transport (Transport)
+import           Periodic.Transport (Transport, TransportConfig)
 
-type ClientEnv = Pool Client.ClientEnv
+type ClientEnv tp = Pool (Client.ClientEnv tp)
 
-runClientT :: ClientEnv -> ClientT IO a -> IO a
+runClientT :: ClientEnv tp -> ClientT tp IO a -> IO a
 runClientT pool m = withResource pool $ flip Client.runClientT m
 
 open
-  :: (Transport -> IO Transport) -> String -> Int -> IO ClientEnv
-open f h =
-  createPool (Client.open f h) (`Client.runClientT` Client.close) 1 5000
+  :: Transport tp => TransportConfig tp -> Int -> IO (ClientEnv tp)
+open config =
+  createPool (Client.open config) (`Client.runClientT` Client.close) 1 5000

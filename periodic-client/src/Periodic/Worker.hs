@@ -27,8 +27,7 @@ import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
 import           Periodic.Job                 (JobT, func_, name, workFail)
 import           Periodic.Node
-import           Periodic.Socket              (connect)
-import           Periodic.Transport           (Transport, makeSocketTransport)
+import           Periodic.Transport           (Transport, TransportConfig)
 import           Periodic.Types               (ClientType (TypeWorker),
                                                FuncName, Job)
 import           Periodic.Types.ServerCommand
@@ -37,18 +36,14 @@ import           System.Log.Logger            (errorM)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
-type TaskList m = IOHashMap FuncName (JobT m ())
-type WorkerT m = NodeT (TaskList m) m
+type TaskList tp m = IOHashMap FuncName (JobT tp m ())
+type WorkerT tp m = NodeT (TaskList tp m) tp m
 
 runWorkerT
-  :: MonadUnliftIO m
-  => (Transport -> IO Transport) -> String -> WorkerT m a -> m a
-runWorkerT f h m = do
-  connEnv <- liftIO $
-    initClientConnEnv
-      =<< f
-      =<< makeSocketTransport
-      =<< connect h
+  :: (MonadUnliftIO m, Transport tp)
+  => TransportConfig tp -> WorkerT tp m a -> m a
+runWorkerT config m = do
+  connEnv <- initClientConnEnv config
   Conn.runConnectionT connEnv $ do
     Conn.send $ toBytes TypeWorker
     void Conn.receive
@@ -63,10 +58,10 @@ runWorkerT f h m = do
       void $ async startMainLoop
       m
 
-close :: MonadUnliftIO m => WorkerT m ()
+close :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
 close = stopNodeT
 
-ping :: MonadUnliftIO m => WorkerT m Bool
+ping :: (MonadUnliftIO m, Transport tp) => WorkerT tp m Bool
 ping = withAgentT $ do
   send Ping
   ret <- receive
@@ -76,32 +71,32 @@ ping = withAgentT $ do
     Right _    -> return False
 
 addFunc
-  :: MonadUnliftIO m
-  => FuncName -> JobT m () -> WorkerT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> JobT tp m () -> WorkerT tp m ()
 addFunc f j = do
   withAgentT $ send (CanDo f)
   ref <- env
   HM.insert ref f j
 
 broadcast
-  :: MonadUnliftIO m
-  => FuncName -> JobT m () -> WorkerT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> JobT tp m () -> WorkerT tp m ()
 broadcast f j = do
   withAgentT $ send (Broadcast f)
   ref <- env
   HM.insert ref f j
 
 removeFunc
-  :: MonadUnliftIO m
-  => FuncName -> WorkerT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> WorkerT tp m ()
 removeFunc f = do
   withAgentT $ send (CantDo f)
   ref <- env
   HM.delete ref f
 
 grabJob
-  :: MonadUnliftIO m
-  => AgentEnv -> WorkerT m (Maybe Job)
+  :: (MonadUnliftIO m, Transport tp)
+  => AgentEnv -> WorkerT tp m (Maybe Job)
 grabJob agentEnv = do
   pl <- fromConn . runAgentT agentEnv $ do
     size <- readerSize
@@ -115,13 +110,13 @@ grabJob agentEnv = do
 
 
 work
-  :: MonadUnliftIO m
-  => Int -> WorkerT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => Int -> WorkerT tp m ()
 work size = do
   asyncs <- replicateM size $ async work_
   void $ waitAnyCancel asyncs
 
-work_ :: MonadUnliftIO m => WorkerT m ()
+work_ :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
 work_ = do
   taskList <- env
   agentEnv <- newAgentEnv
@@ -150,8 +145,8 @@ work_ = do
               workFail
 
 checkHealth
-  :: MonadUnliftIO m
-  => WorkerT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => WorkerT tp m ()
 checkHealth = do
   ret <- timeout 10000000 ping
   case ret of

@@ -36,8 +36,7 @@ import           Periodic.Connection          (ConnEnv, initClientConnEnv,
                                                runConnectionT)
 import qualified Periodic.Connection          as Conn
 import           Periodic.Node
-import           Periodic.Socket              (connect)
-import           Periodic.Transport           (Transport, makeSocketTransport)
+import           Periodic.Transport           (Transport, TransportConfig)
 import           Periodic.Types               (ClientType (TypeClient))
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..), parseBinary)
@@ -47,25 +46,21 @@ import           Periodic.Utils               (getEpochTime)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
-type ClientT m = NodeT () m
+type ClientT tp m = NodeT () tp m
 
-data ClientEnv = ClientEnv
+data ClientEnv tp = ClientEnv
   { nodeEnv :: NodeEnv ()
-  , connEnv :: ConnEnv
+  , connEnv :: ConnEnv tp
   }
 
-runClientT :: Monad m => ClientEnv -> ClientT m a -> m a
+runClientT :: Monad m => ClientEnv tp -> ClientT tp m a -> m a
 runClientT ClientEnv{..} = runConnectionT connEnv . runNodeT nodeEnv
 
 open
-  :: MonadUnliftIO m
-  => (Transport -> IO Transport) -> String -> m ClientEnv
-open f h = do
-  connEnv <- liftIO $
-    initClientConnEnv
-      =<< f
-      =<< makeSocketTransport
-      =<< connect h
+  :: (MonadUnliftIO m, Transport tp)
+  => TransportConfig tp -> m (ClientEnv tp)
+open config = do
+  connEnv <- initClientConnEnv config
   runConnectionT connEnv $ do
     Conn.send $ toBytes TypeClient
     void Conn.receive
@@ -82,10 +77,10 @@ open f h = do
     void $ async startMainLoop
   return clientEnv
 
-close :: MonadUnliftIO m => ClientT m ()
+close :: (MonadUnliftIO m, Transport tp) => ClientT tp m ()
 close = stopNodeT
 
-ping :: MonadUnliftIO m => ClientT m Bool
+ping :: (MonadUnliftIO m, Transport tp) => ClientT tp m Bool
 ping = withAgentT $ do
   send Ping
   ret <- receive
@@ -94,45 +89,45 @@ ping = withAgentT $ do
     Right Pong -> return True
     Right _    -> return False
 
-submitJob_ :: MonadUnliftIO m => Job -> ClientT m Bool
+submitJob_ :: (MonadUnliftIO m, Transport tp) => Job -> ClientT tp m Bool
 submitJob_ j = withAgentT $ do
   send (SubmitJob j)
   isSuccess
 
 submitJob
-  :: MonadUnliftIO m
-  => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> ClientT m Bool
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> ClientT tp m Bool
 submitJob fn jn w later = do
   schedAt <- (+fromMaybe 0 later) <$> getEpochTime
   submitJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
-runJob_ :: MonadUnliftIO m => Job -> ClientT m ByteString
+runJob_ :: (MonadUnliftIO m, Transport tp) => Job -> ClientT tp m ByteString
 runJob_ j = withAgentT $ do
   send (RunJob $ setSchedAt 0 j)
   receive_
 
 runJob
-  :: MonadUnliftIO m
-  => FuncName -> JobName -> Maybe Workload -> ClientT m ByteString
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> JobName -> Maybe Workload -> ClientT tp m ByteString
 runJob fn jn w = do
   schedAt <- getEpochTime
   runJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
 dropFunc
-  :: MonadUnliftIO m
-  => FuncName -> ClientT m Bool
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> ClientT tp m Bool
 dropFunc func = withAgentT $ do
   send (DropFunc func)
   isSuccess
 
 removeJob
-  :: MonadUnliftIO m
-  => FuncName -> JobName -> ClientT m Bool
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> JobName -> ClientT tp m Bool
 removeJob f n = withAgentT $ do
   send (RemoveJob f n)
   isSuccess
 
-isSuccess :: MonadUnliftIO m => AgentT m Bool
+isSuccess :: (MonadUnliftIO m, Transport tp) => AgentT tp m Bool
 isSuccess = do
   ret <- receive
   case ret of
@@ -141,15 +136,15 @@ isSuccess = do
     Right _       -> return False
 
 status
-  :: MonadUnliftIO m
-  => ClientT m ByteString
+  :: (MonadUnliftIO m, Transport tp)
+  => ClientT tp m ByteString
 status = withAgentT $ do
   send Status
   receive_
 
 configGet
-  :: MonadUnliftIO m
-  => String -> ClientT m Int
+  :: (MonadUnliftIO m, Transport tp)
+  => String -> ClientT tp m Int
 configGet k = withAgentT $ do
   send (ConfigGet (ConfigKey k))
   ret <- receive
@@ -159,18 +154,18 @@ configGet k = withAgentT $ do
     Right _          -> return 0
 
 configSet
-  :: MonadUnliftIO m
-  => String -> Int -> ClientT m Bool
+  :: (MonadUnliftIO m, Transport tp)
+  => String -> Int -> ClientT tp m Bool
 configSet k v = withAgentT $ do
   send (ConfigSet (ConfigKey k) v)
   isSuccess
 
-load :: MonadUnliftIO m => [Job] -> ClientT m Bool
+load :: (MonadUnliftIO m, Transport tp) => [Job] -> ClientT tp m Bool
 load jobs = withAgentT $ do
   send (Load jobs)
   isSuccess
 
-dump :: MonadUnliftIO m => ClientT m [Job]
+dump :: (MonadUnliftIO m, Transport tp) => ClientT tp m [Job]
 dump = withAgentT $ do
   send Dump
   ret <- parseBinary <$> receive_
@@ -178,10 +173,10 @@ dump = withAgentT $ do
     Left _  -> return []
     Right v -> return v
 
-shutdown :: MonadUnliftIO m => ClientT m ()
+shutdown :: (MonadUnliftIO m, Transport tp) => ClientT tp m ()
 shutdown = withAgentT $ send Shutdown
 
-checkHealth :: MonadUnliftIO m => ClientT m ()
+checkHealth :: (MonadUnliftIO m, Transport tp) => ClientT tp m ()
 checkHealth = do
   ret <- timeout 10000000 ping
   case ret of

@@ -27,74 +27,75 @@ import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (receive, send)
 import           Periodic.Node
+import           Periodic.Transport           (Transport, TransportConfig)
 import           Periodic.Types               (FromBS (..), LockName)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (Acquired))
 import           Periodic.Types.WorkerCommand
 import           UnliftIO                     hiding (timeout)
 
-type JobT m = NodeT Job m
+type JobT tp m = NodeT Job tp m
 
-name :: (FromBS a, Show a, Monad m) => JobT m a
+name :: (FromBS a, Show a, Monad m) => JobT tp m a
 name = fromBS . unJN <$> name_
 
-name_ :: Monad m => JobT m JobName
+name_ :: Monad m => JobT tp m JobName
 name_ = getName <$> env
 
-func :: (FromBS a, Show a, Monad m) => JobT m a
+func :: (FromBS a, Show a, Monad m) => JobT tp m a
 func = fromBS . unFN <$> func_
 
-func_ :: Monad m => JobT m FuncName
+func_ :: Monad m => JobT tp m FuncName
 func_ = getFuncName <$> env
 
-workload :: (FromBS a, Show a, Monad m) => JobT m a
+workload :: (FromBS a, Show a, Monad m) => JobT tp m a
 workload = fromBS . unWL <$> workload_
 
-workload_ :: Monad m => JobT m Workload
+workload_ :: Monad m => JobT tp m Workload
 workload_ = getWorkload <$> env
 
-count :: Monad m => JobT m Int
+count :: Monad m => JobT tp m Int
 count = getCount <$> env
 
-timeout :: Monad m => JobT m Int
+timeout :: Monad m => JobT tp m Int
 timeout = getTimeout <$> env
 
 workDone
-  :: MonadUnliftIO m
-  => JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => JobT tp m ()
 workDone = workDone_ empty
 
 workDone_
-  :: MonadUnliftIO m
-  => ByteString -> JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => ByteString -> JobT tp m ()
 workDone_ w = do
   h <- getHandle <$> env
   withAgentT $ send (WorkDone h w)
 
 workFail
-  :: MonadUnliftIO m
-  =>  JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  =>  JobT tp m ()
 workFail = do
   h <- getHandle <$> env
   withAgentT $ send (WorkFail h)
 
 schedLater
-  :: MonadUnliftIO m
-  =>  Int64 -> JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  =>  Int64 -> JobT tp m ()
 schedLater later = do
   h <- getHandle <$> env
   withAgentT $ send (SchedLater h later 0)
 
 schedLater'
-  :: MonadUnliftIO m
-  =>  Int64 -> Int -> JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  =>  Int64 -> Int -> JobT tp m ()
 schedLater' later step = do
   h <- getHandle <$> env
   withAgentT $ send (SchedLater h later step)
 
 acquireLock
-  :: MonadUnliftIO m
-  => LockName -> Int -> JobT m Bool
+  :: (MonadUnliftIO m, Transport tp)
+  => LockName -> Int -> JobT tp m Bool
 acquireLock n maxCount = do
   h <- getHandle <$> env
   withAgentT $ do
@@ -105,15 +106,15 @@ acquireLock n maxCount = do
       _                  -> pure False
 
 releaseLock
-  :: MonadUnliftIO m
-  => LockName -> JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => LockName -> JobT tp m ()
 releaseLock n = do
   h <- getHandle <$> env
   withAgentT $ send (Release n h)
 
 withLock
-  :: MonadUnliftIO m
-  => LockName -> Int -> JobT m () -> JobT m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => LockName -> Int -> JobT tp m () -> JobT tp m ()
 withLock n maxCount j = do
   acquired <- acquireLock n maxCount
   when acquired $ do

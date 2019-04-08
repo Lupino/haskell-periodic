@@ -1,7 +1,10 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies    #-}
+
 module Periodic.Transport.XOR
-  (
-    xorBS
-  , makeXORTransport
+  ( xorBS
+  , XOR
+  , xorConfig
   ) where
 
 import           Control.Concurrent.STM.TVar
@@ -10,7 +13,30 @@ import           Data.Bits                   (xor)
 import qualified Data.ByteString             as B
 import qualified Data.ByteString.Lazy        as LB
 import qualified Periodic.Lock               as L
-import           Periodic.Transport          (Transport (..))
+import           Periodic.Transport
+
+data XOR tp = XOR
+  { transport :: tp
+  , sn        :: TVar LB.ByteString
+  , rn        :: TVar LB.ByteString
+  , sl        :: L.Lock
+  , rl        :: L.Lock
+  }
+
+instance Transport tp => Transport (XOR tp) where
+  data TransportConfig (XOR tp) = XORConfig FilePath (TransportConfig tp)
+  newTransport (XORConfig fn config) = do
+    transport <- newTransport config
+    key <- LB.readFile fn
+    sn <- newTVarIO $ LB.cycle key
+    rn <- newTVarIO $ LB.cycle key
+    sl <- L.new
+    rl <- L.new
+    return XOR {..}
+
+  recvData XOR {..} nbytes = L.with rl $ xorBS rn =<< recvData transport nbytes
+  sendData XOR {..} bs = L.with sl $ xorBS sn bs >>= sendData transport
+  closeTransport XOR {..} = closeTransport transport
 
 xorBS :: TVar LB.ByteString -> B.ByteString -> IO B.ByteString
 xorBS ref bs = atomically $ do
@@ -22,15 +48,5 @@ xorBS ref bs = atomically $ do
         len = LB.length bs'
         xor' = B.pack . LB.zipWith xor bs'
 
-makeXORTransport :: LB.ByteString -> Transport -> IO Transport
-makeXORTransport key transport = do
-  sn <- newTVarIO $ LB.cycle key
-  rn <- newTVarIO $ LB.cycle key
-  sl <- L.new
-  rl <- L.new
-  return Transport { recvData = \nbytes -> L.with rl $
-                                    xorBS rn =<< recvData transport nbytes
-                   , sendData = \bs -> L.with sl $
-                                    xorBS sn bs >>= sendData transport
-                   , close    = close transport
-                   }
+xorConfig :: FilePath -> TransportConfig tp -> TransportConfig (XOR tp)
+xorConfig = XORConfig

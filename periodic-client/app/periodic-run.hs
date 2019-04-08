@@ -9,7 +9,7 @@ module Main
 import           Control.Monad                  (when)
 import           Control.Monad.IO.Class         (liftIO)
 import qualified Data.ByteString.Char8          as B (ByteString, pack)
-import qualified Data.ByteString.Lazy           as LB (null, readFile, toStrict)
+import qualified Data.ByteString.Lazy           as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8     as LB (hPut, lines, putStr)
 import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
@@ -21,12 +21,13 @@ import           Periodic.Job                   (JobT, name, schedLater,
                                                  workFail, workload)
 import           Periodic.Socket                (getHost, getService)
 import           Periodic.Transport             (Transport)
-import           Periodic.Transport.TLS
-import qualified Periodic.Transport.WebSockets  as WS (makeClientTransport)
-import           Periodic.Transport.XOR         (makeXORTransport)
+import           Periodic.Transport.Socket      (socketUri)
+import           Periodic.Transport.TLS         (makeClientParams', tlsConfig)
+import           Periodic.Transport.WebSockets  (clientConfig)
+import           Periodic.Transport.XOR         (xorConfig)
 import           Periodic.Types                 (FuncName (..), LockName (..))
-import           Periodic.Worker                (addFunc, broadcast, runWorkerT,
-                                                 work)
+import           Periodic.Worker                (WorkerT, addFunc, broadcast,
+                                                 runWorkerT, work)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (ExitCode (..), exitSuccess)
 import           System.IO                      (stderr)
@@ -137,32 +138,34 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  runWorkerT (makeTransport opts) host $ do
-    let w = processWorker opts cmd argv
-    if notify then broadcast func w
-    else
-      case lockName of
-        Nothing -> addFunc func w
-        Just n  -> addFunc func $ withLock n lockCount w
-    liftIO $ putStrLn "Worker started."
-    work thread
+  run opts func cmd argv
 
-makeTransport :: Options -> Transport -> IO Transport
-makeTransport Options{..} transport
-  | useTls = do
-    prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
-    makeTLSTransport prms transport
-  | useWs =
-    WS.makeClientTransport (fromMaybe "0.0.0.0" $ getHost host) (getService host) transport
-  | otherwise = makeTransport' xorFile transport
+doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
+doWork opts@Options{..} func cmd argv = do
+  let w = processWorker opts cmd argv
+  if notify then broadcast func w
+  else
+    case lockName of
+      Nothing -> addFunc func w
+      Just n  -> addFunc func $ withLock n lockCount w
+  liftIO $ putStrLn "Worker started."
+  work thread
 
-makeTransport' :: FilePath -> Transport -> IO Transport
-makeTransport' [] transport = return transport
-makeTransport' p transport  = do
-  key <- LB.readFile p
-  makeXORTransport key transport
+run :: Options -> FuncName -> String -> [String] -> IO ()
+run opts@Options {useTls = True, ..} func cmd argv = do
+  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
+  runWorkerT (tlsConfig prms (socketUri host)) $ doWork opts func cmd argv
 
-processWorker :: Options -> String -> [String] -> JobT IO ()
+run opts@Options {useWs = True, ..} func cmd argv =
+  runWorkerT (clientConfig (socketUri host) (fromMaybe "0.0.0.0" $ getHost host) (getService host)) $ doWork opts func cmd argv
+
+run opts@Options {xorFile = "", ..} func cmd argv =
+  runWorkerT (socketUri host) $ doWork opts func cmd argv
+
+run opts@Options {..} func cmd argv =
+  runWorkerT (xorConfig xorFile $ socketUri host) $ doWork opts func cmd argv
+
+processWorker :: Transport tp => Options -> String -> [String] -> JobT tp IO ()
 processWorker Options{..} cmd argv = do
   n <- name
   rb <- workload

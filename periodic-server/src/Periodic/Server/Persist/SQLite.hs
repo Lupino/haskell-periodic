@@ -33,7 +33,7 @@ stateName' Pending = 0
 stateName' Running = 1
 stateName' Locking = 2
 
-data SQLite = SQLite Database
+newtype SQLite = SQLite Database
 
 instance Persist SQLite where
   data PersistConfig SQLite = SQLitePath Utf8
