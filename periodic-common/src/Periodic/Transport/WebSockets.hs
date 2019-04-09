@@ -35,25 +35,30 @@ wsSendData :: WS.Connection -> ByteString -> IO ()
 wsSendData conn bs =
   WS.sendDataMessage conn . WS.Binary $ BL.fromStrict bs
 
-newtype WebSocket = WS WS.Connection
+data WebSocket tp = WS WS.Connection tp
 
-instance Transport WebSocket where
-  data TransportConfig WebSocket =
-      forall tp. (Transport tp) => WSServer (TransportConfig tp)
-    | forall tp. (Transport tp) => WSClient (TransportConfig tp) String String
+instance Transport tp => Transport (WebSocket tp) where
+  data TransportConfig (WebSocket tp) =
+      WSServer (TransportConfig tp)
+    | WSClient (TransportConfig tp) String String
   newTransport (WSServer config) = do
     transport <- newTransport config
     stream <- mkStream transport
     pendingConn <- WS.makePendingConnectionFromStream stream WS.defaultConnectionOptions
-    WS <$> WS.acceptRequest pendingConn
+    flip WS transport <$> WS.acceptRequest pendingConn
   newTransport (WSClient config host port) = do
     transport <- newTransport config
     stream <- mkStream transport
-    WS <$> WS.newClientConnection stream host port WS.defaultConnectionOptions []
+    flip WS transport <$> WS.newClientConnection stream host port WS.defaultConnectionOptions []
+
+  recvData (WS conn _) = wsRecvData conn
+  sendData (WS conn _) = wsSendData conn
+
+  closeTransport (WS _ tp) = closeTransport tp
 
 
-serverConfig :: Transport tp => TransportConfig tp -> TransportConfig WebSocket
+serverConfig :: Transport tp => TransportConfig tp -> TransportConfig (WebSocket tp)
 serverConfig = WSServer
 
-clientConfig :: Transport tp => TransportConfig tp -> String -> String -> TransportConfig WebSocket
+clientConfig :: Transport tp => TransportConfig tp -> String -> String -> TransportConfig (WebSocket tp)
 clientConfig = WSClient
