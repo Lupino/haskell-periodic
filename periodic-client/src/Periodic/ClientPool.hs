@@ -1,23 +1,19 @@
 module Periodic.ClientPool
-  (
-    module Periodic.Client
-  , ClientEnv
-  , runClientT
-  , open
+  ( module Periodic.Client
+  , ClientPoolEnv
+  , runClientPoolM
+  , openPool
   ) where
 
-import           Data.Pool          (Pool, createPool, withResource)
-import           Periodic.Client    hiding (ClientEnv, close, open, runClientT)
-import qualified Periodic.Client    as Client (ClientEnv, close, open,
-                                               runClientT)
-import           Periodic.Transport (Transport, TransportConfig)
+import           Periodic.Client           hiding (close)
+import           Periodic.Trans.ClientPool (runClientPoolT)
+import qualified Periodic.Trans.ClientPool as P (ClientPoolEnv, openPool)
+import           Periodic.Transport.Socket (Socket, socketUri)
 
-type ClientEnv tp = Pool (Client.ClientEnv tp)
+type ClientPoolEnv = P.ClientPoolEnv Socket
 
-runClientT :: ClientEnv tp -> ClientT tp IO a -> IO a
-runClientT pool m = withResource pool $ flip Client.runClientT m
+runClientPoolM :: ClientPoolEnv -> ClientM a -> IO a
+runClientPoolM = runClientPoolT
 
-open
-  :: Transport tp => TransportConfig tp -> Int -> IO (ClientEnv tp)
-open config =
-  createPool (Client.open config) (`Client.runClientT` Client.close) 1 5000
+openPool :: String -> Int -> IO ClientPoolEnv
+openPool h = P.openPool (socketUri h)

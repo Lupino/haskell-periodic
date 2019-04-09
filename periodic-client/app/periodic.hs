@@ -15,8 +15,8 @@ import qualified Data.ByteString.Char8         as B (lines, pack, putStr,
 import           Data.Int                      (Int64)
 import           Data.List                     (isPrefixOf, transpose)
 import           Data.Maybe                    (fromMaybe)
-import           Periodic.Client
 import           Periodic.Socket               (getHost, getService)
+import           Periodic.Trans.Client
 import           Periodic.Transport            (Transport)
 import           Periodic.Transport.Socket     (socketUri)
 import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)

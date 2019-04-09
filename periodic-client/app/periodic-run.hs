@@ -2,8 +2,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 
 module Main
-  (
-    main
+  ( main
   ) where
 
 import           Control.Monad                  (when)
@@ -16,18 +15,18 @@ import           Data.Maybe                     (fromMaybe)
 import qualified Data.Text                      as T (unpack)
 import           Data.Text.Encoding             (decodeUtf8With)
 import           Data.Text.Encoding.Error       (ignore)
-import           Periodic.Job                   (JobT, name, schedLater,
+import           Periodic.Socket                (getHost, getService)
+import           Periodic.Trans.Job             (JobT, name, schedLater,
                                                  withLock, workDone, workDone_,
                                                  workFail, workload)
-import           Periodic.Socket                (getHost, getService)
+import           Periodic.Trans.Worker          (WorkerT, addFunc, broadcast,
+                                                 runWorkerT, work)
 import           Periodic.Transport             (Transport)
 import           Periodic.Transport.Socket      (socketUri)
 import           Periodic.Transport.TLS         (makeClientParams', tlsConfig)
 import           Periodic.Transport.WebSockets  (clientConfig)
 import           Periodic.Transport.XOR         (xorConfig)
 import           Periodic.Types                 (FuncName (..), LockName (..))
-import           Periodic.Worker                (WorkerT, addFunc, broadcast,
-                                                 runWorkerT, work)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (ExitCode (..), exitSuccess)
 import           System.IO                      (stderr)
