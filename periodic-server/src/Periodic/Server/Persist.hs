@@ -1,53 +1,38 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE TypeFamilies      #-}
 
 module Periodic.Server.Persist
   ( Persist (..)
-  , persist
   , State (..)
   ) where
 
-import           Prelude            hiding (foldr, lookup)
-
+import           Control.Exception  (Exception)
 import           Data.Int           (Int64)
 import           Periodic.Types.Job (FuncName, Job, JobName)
+import           Prelude            hiding (foldr, lookup)
 
 data State = Pending | Running | Locking
 
-data Persist = Persist
-  { member :: State -> FuncName -> JobName -> IO Bool
-  , lookup :: State -> FuncName -> JobName -> IO (Maybe Job)
-  , insert :: State -> FuncName -> JobName -> Job -> IO ()
-  , delete :: FuncName -> JobName -> IO ()
-  , size   :: State -> FuncName -> IO Int64
-  , foldr  :: forall a . State -> (Job -> a -> a) -> a -> IO a
-  , foldr' :: forall a . State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-  , configGet :: String -> IO (Maybe Int)
-  , configSet :: String -> Int -> IO ()
-  , insertFuncName   :: FuncName -> IO ()
-  , removeFuncName   :: FuncName -> IO ()
-  , funcList         :: IO [FuncName]
-  , minSchedAt       :: FuncName -> IO Int64
-  , transact         :: forall a. IO a -> IO a
-  , transactReadOnly :: forall a. IO a -> IO a
-  }
+class (Exception (PersistException db)) => Persist db where
+  data PersistConfig db
+  data PersistException db
+  newPersist :: PersistConfig db -> IO db
+  member :: db -> State -> FuncName -> JobName -> IO Bool
+  lookup :: db -> State -> FuncName -> JobName -> IO (Maybe Job)
+  insert :: db -> State -> FuncName -> JobName -> Job -> IO ()
+  delete :: db -> FuncName -> JobName -> IO ()
+  size   :: db -> State -> FuncName -> IO Int64
+  foldr  :: forall a . db -> State -> (Job -> a -> a) -> a -> IO a
+  foldr' :: forall a . db -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+  configGet :: db -> String -> IO (Maybe Int)
+  configSet :: db -> String -> Int -> IO ()
+  insertFuncName   :: db -> FuncName -> IO ()
+  removeFuncName   :: db -> FuncName -> IO ()
+  funcList         :: db -> IO [FuncName]
+  minSchedAt       :: db -> FuncName -> IO Int64
+  transact         :: forall a. db -> IO a -> IO a
+  transactReadOnly :: forall a. db -> IO a -> IO a
 
-persist :: Persist
-persist = Persist
-  { member = \_ _ _ -> pure False
-  , lookup = \_ _ _ -> pure Nothing
-  , insert = \_ _ _ _ -> pure ()
-  , delete = \_ _ -> pure ()
-  , size = \_ _ -> pure 0
-  , foldr = \_ _ a -> pure a
-  , foldr' = \_ _ _ a -> pure a
-  , configGet = \_ -> pure Nothing
-  , configSet = \_ _ -> pure ()
-  , insertFuncName = \_ -> pure ()
-  , removeFuncName = \_ -> pure ()
-  , funcList = pure []
-  , minSchedAt = \_ -> pure 0
-  , transact = id
-  , transactReadOnly = id
-  }

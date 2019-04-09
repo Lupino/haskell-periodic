@@ -39,6 +39,7 @@ import           Periodic.Connection        (ConnEnv, ConnectionT,
                                              FromConn (..), connid',
                                              runConnectionT, statusTVar)
 import qualified Periodic.Connection        as Conn (send)
+import           Periodic.Transport         (Transport)
 import           Periodic.Types             (Error (..))
 import           Periodic.Types.Internal
 import           System.Log.Logger          (errorM)
@@ -52,13 +53,13 @@ data AgentEnv = AgentEnv
   , agentMsgid  :: Msgid
   }
 
-newtype AgentT m a = AgentT { unAgentT :: ReaderT AgentEnv (ConnectionT m) a }
+newtype AgentT tp m a = AgentT { unAgentT :: ReaderT AgentEnv (ConnectionT tp m) a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader AgentEnv)
 
-instance MonadTrans AgentT where
+instance MonadTrans (AgentT tp) where
   lift = AgentT . lift . lift
 
-instance MonadUnliftIO m => MonadUnliftIO (AgentT m) where
+instance MonadUnliftIO m => MonadUnliftIO (AgentT tp m) where
   askUnliftIO = AgentT $
     ReaderT $ \r ->
       withUnliftIO $ \u ->
@@ -71,27 +72,27 @@ instance MonadUnliftIO m => MonadUnliftIO (AgentT m) where
 instance FromConn AgentT where
   fromConn = AgentT . lift
 
-runAgentT :: AgentEnv -> AgentT m a -> ConnectionT m a
+runAgentT :: AgentEnv -> AgentT tp m a -> ConnectionT tp m a
 runAgentT aEnv = flip runReaderT aEnv . unAgentT
 
 mkAgentReader :: MonadIO m => [ByteString] -> m AgentReader
 mkAgentReader = newTVarIO
 
-msgid :: Monad m => AgentT m Msgid
+msgid :: Monad m => AgentT tp m Msgid
 msgid = asks agentMsgid
 
 msgidLength :: Int
 msgidLength = 4
 
-aAlive :: MonadIO m => AgentT m Bool
+aAlive :: MonadIO m => AgentT tp m Bool
 aAlive = readTVarIO =<< fromConn statusTVar
 
-send_ :: MonadUnliftIO m => ByteString -> AgentT m ()
+send_ :: (MonadUnliftIO m, Transport tp) => ByteString -> AgentT tp m ()
 send_ pl = do
   mid <- msgid
   fromConn $ Conn.send $ B.concat [mid, pl]
 
-send :: (Byteable cmd, Validatable cmd, MonadUnliftIO m) => cmd -> AgentT m ()
+send :: (Byteable cmd, Validatable cmd, MonadUnliftIO m, Transport tp) => cmd -> AgentT tp m ()
 send cmd =
   case validate cmd of
     Right _ -> send_ $ toBytes cmd
@@ -99,12 +100,12 @@ send cmd =
       liftIO $ errorM "Periodic.Agent" $ "InValidError " ++ e
       throwIO $ InValidError e
 
-feed :: (MonadIO m) => ByteString -> AgentT m ()
+feed :: (MonadIO m) => ByteString -> AgentT tp m ()
 feed dat = do
   reader <- asks agentReader
   atomically . modifyTVar' reader $ \v -> v ++ [dat]
 
-receive_ :: MonadIO m => AgentT m ByteString
+receive_ :: (MonadIO m, Transport tp) => AgentT tp m ByteString
 receive_ = do
   reader <- asks agentReader
   st <- fromConn statusTVar
@@ -118,25 +119,25 @@ receive_ = do
       writeTVar reader $! tail v
       pure $! head v
 
-receive :: (Parser cmd, MonadIO m) => AgentT m (Either String cmd)
+receive :: (Parser cmd, MonadIO m, Transport tp) => AgentT tp m (Either String cmd)
 receive = runParser <$> receive_
 
-readerSize :: MonadIO m => AgentT m Int
+readerSize :: MonadIO m => AgentT tp m Int
 readerSize = fmap length $ readTVarIO =<< asks agentReader
 
-data AgentEnv' = AgentEnv'
+data AgentEnv' tp = AgentEnv'
   { agentEnv :: AgentEnv
-  , connEnv  :: ConnEnv
+  , connEnv  :: ConnEnv tp
   }
 
-agentid :: AgentEnv' -> ByteString
+agentid :: AgentEnv' tp -> ByteString
 agentid AgentEnv'{..} = B.concat [agentMsgid agentEnv, connid' connEnv]
 
-agentEnv' :: Monad m => AgentT m AgentEnv'
+agentEnv' :: (Monad m, Transport tp) => AgentT tp m (AgentEnv' tp)
 agentEnv' = do
   connEnv <- fromConn ask
   agentEnv <- ask
   pure AgentEnv'{..}
 
-runAgentT' :: AgentEnv' -> AgentT m a -> m a
+runAgentT' :: AgentEnv' tp -> AgentT tp m a -> m a
 runAgentT' AgentEnv'{..} = runConnectionT connEnv . runAgentT agentEnv

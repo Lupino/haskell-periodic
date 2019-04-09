@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -31,8 +32,7 @@ import qualified Data.ByteString            as B
 import           Data.Int                   (Int32)
 import           Periodic.CRC32             as CRC (digest)
 import qualified Periodic.Lock              as L (Lock, new, with)
-import           Periodic.Transport         (Transport (recvData, sendData))
-import qualified Periodic.Transport         as T (Transport (close))
+import           Periodic.Transport
 import           Periodic.Types             (Error (..), runParser)
 import           Periodic.Types.Packet
 import           System.Entropy             (getEntropy)
@@ -47,8 +47,8 @@ magicREQ = "\x00REQ"
 magicRES :: B.ByteString
 magicRES = "\x00RES"
 
-data ConnEnv = ConnEnv
-  { transport     :: Transport
+data ConnEnv tp = ConnEnv
+  { transport     :: tp
   , requestMagic  :: B.ByteString
   , responseMagic :: B.ByteString
   , connectionid  :: B.ByteString
@@ -58,17 +58,17 @@ data ConnEnv = ConnEnv
   , status        :: TVar Bool
   }
 
-newtype ConnectionT m a = ConnectionT { unConnectionT :: ReaderT ConnEnv m a }
+newtype ConnectionT tp m a = ConnectionT { unConnectionT :: ReaderT (ConnEnv tp) m a }
   deriving
     ( Functor
     , Applicative
     , Monad
     , MonadTrans
     , MonadIO
-    , MonadReader ConnEnv
+    , MonadReader (ConnEnv tp)
     )
 
-instance MonadUnliftIO m => MonadUnliftIO (ConnectionT m) where
+instance MonadUnliftIO m => MonadUnliftIO (ConnectionT tp m) where
   askUnliftIO = ConnectionT $
     ReaderT $ \r ->
       withUnliftIO $ \u ->
@@ -79,31 +79,32 @@ instance MonadUnliftIO m => MonadUnliftIO (ConnectionT m) where
         inner (run . runConnectionT r)
 
 class FromConn m where
-  fromConn :: Monad n => ConnectionT n a -> m n a
+  fromConn :: Monad n => ConnectionT tp n a -> m tp n a
 
 instance FromConn ConnectionT where
   fromConn = id
 
-runConnectionT :: ConnEnv -> ConnectionT m a -> m a
+runConnectionT :: ConnEnv tp -> ConnectionT tp m a -> m a
 runConnectionT connEnv = flip runReaderT connEnv . unConnectionT
 
-initConnEnv :: MonadIO m => Transport -> B.ByteString -> B.ByteString -> m ConnEnv
-initConnEnv transport requestMagic responseMagic = do
+initConnEnv :: (MonadIO m, Transport tp) => TransportConfig tp -> B.ByteString -> B.ByteString -> m (ConnEnv tp)
+initConnEnv config requestMagic responseMagic = do
   connectionid <- liftIO $ getEntropy 4
   readLock <- L.new
   writeLock <- L.new
   status <- newTVarIO True
   buffer <- newTVarIO B.empty
+  transport <- liftIO $ newTransport config
   return ConnEnv{..}
 
 
-initServerConnEnv :: MonadIO m => Transport -> m ConnEnv
-initServerConnEnv transport = initConnEnv transport magicREQ magicRES
+initServerConnEnv :: (MonadIO m, Transport tp) => TransportConfig tp -> m (ConnEnv tp)
+initServerConnEnv config = initConnEnv config magicREQ magicRES
 
-initClientConnEnv :: MonadIO m => Transport -> m ConnEnv
-initClientConnEnv transport = initConnEnv transport magicRES magicREQ
+initClientConnEnv :: (MonadIO m, Transport tp) => TransportConfig tp -> m (ConnEnv tp)
+initClientConnEnv config = initConnEnv config magicRES magicREQ
 
-receive :: MonadUnliftIO m => ConnectionT m B.ByteString
+receive :: (MonadUnliftIO m, Transport tp) => ConnectionT tp m B.ByteString
 receive = do
   connEnv@ConnEnv{..} <- ask
   L.with readLock $ do
@@ -121,7 +122,7 @@ receive = do
                                             else throwIO CRCNotMatch
         else throwIO MagicNotMatch
 
-recv' :: MonadIO m => ConnEnv -> Int -> m B.ByteString
+recv' :: (MonadIO m, Transport tp) => ConnEnv tp -> Int -> m B.ByteString
 recv' ConnEnv{..} nbytes = do
   buf <- atomically $ do
     bf <- readTVar buffer
@@ -144,7 +145,7 @@ recv' ConnEnv{..} nbytes = do
                                   otherBuf <- readBuf (nb - B.length buf)
                                   return $! B.concat [ buf, otherBuf ]
 
-send :: MonadUnliftIO m => B.ByteString -> ConnectionT m ()
+send :: (MonadUnliftIO m, Transport tp) => B.ByteString -> ConnectionT tp m ()
 send dat = do
   ConnEnv{..} <- ask
   L.with writeLock $ do
@@ -158,17 +159,17 @@ send dat = do
       , packetData = dat
       }
 
-connid :: Monad m => ConnectionT m B.ByteString
+connid :: Monad m => ConnectionT tp m B.ByteString
 connid = asks connectionid
 
-connid' :: ConnEnv -> B.ByteString
+connid' :: ConnEnv tp -> B.ByteString
 connid' = connectionid
 
-close :: MonadIO m => ConnectionT m ()
+close :: (MonadIO m, Transport tp) => ConnectionT tp m ()
 close = do
   ConnEnv{..} <- ask
   atomically $ writeTVar status False
-  liftIO $ T.close transport
+  liftIO $ closeTransport transport
 
-statusTVar :: Monad m => ConnectionT m (TVar Bool)
+statusTVar :: Monad m => ConnectionT tp m (TVar Bool)
 statusTVar = status <$> ask

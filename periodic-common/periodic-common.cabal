@@ -29,6 +29,7 @@ library
                      , Periodic.Node
                      , Periodic.Socket
                      , Periodic.Transport
+                     , Periodic.Transport.Socket
                      , Periodic.Transport.XOR
                      , Periodic.Transport.TLSSetting
                      , Periodic.Transport.TLS

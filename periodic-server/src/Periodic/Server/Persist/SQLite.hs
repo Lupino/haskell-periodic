@@ -1,8 +1,10 @@
+{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Periodic.Server.Persist.SQLite
-  ( initSQLite
+  ( SQLite
   ) where
 
 import           Control.Monad           (void)
@@ -11,7 +13,7 @@ import           Data.ByteString         (ByteString, append)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust, listToMaybe)
-import           Data.String             (fromString)
+import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist
 import           Periodic.Types.Internal (runParser)
@@ -19,7 +21,7 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (errorM)
-import           UnliftIO                (throwIO, tryAny)
+import           UnliftIO                (Exception, Typeable, throwIO, tryAny)
 
 stateName :: State -> ByteString
 stateName Pending = "0"
@@ -31,37 +33,45 @@ stateName' Pending = 0
 stateName' Running = 1
 stateName' Locking = 2
 
+newtype SQLite = SQLite Database
 
-initSQLite :: Utf8 -> IO Persist
-initSQLite path = do
-  edb <- open path
-  case edb of
-    Left (e, _) -> dbError $ show e
-    Right db -> do
-      beginTx db
-      createConfigTable db
-      createJobTable db
-      createFuncTable db
-      allPending db
-      commitTx db
-      pure $ Persist
-        { member = doMember db
-        , lookup = doLookup db
-        , insert = doInsert db
-        , delete = doDelete db
-        , size = doSize db
-        , foldr = doFoldr db
-        , foldr' = doFoldr' db
-        , configSet = doConfigSet db
-        , configGet = doConfigGet db
-        , insertFuncName = doInsertFuncName db
-        , removeFuncName = doRemoveFuncName db
-        , funcList = doFuncList db
-        , minSchedAt = doMinSchedAt db Pending
-        , transact = doTransact db
-        , transactReadOnly = doTransact db
-        }
+instance Persist SQLite where
+  data PersistConfig SQLite = SQLitePath Utf8
+  data PersistException SQLite = SQLiteException Error deriving (Eq, Show, Typeable)
 
+  newPersist (SQLitePath path) = do
+    edb <- open path
+    case edb of
+      Left (e, _) -> throwIO $ SQLiteException e
+      Right db -> do
+        beginTx db
+        createConfigTable db
+        createJobTable db
+        createFuncTable db
+        allPending db
+        commitTx db
+        return $ SQLite db
+
+  member           (SQLite db) = doMember db
+  lookup           (SQLite db) = doLookup db
+  insert           (SQLite db) = doInsert db
+  delete           (SQLite db) = doDelete db
+  size             (SQLite db) = doSize db
+  foldr            (SQLite db) = doFoldr db
+  foldr'           (SQLite db) = doFoldr' db
+  configSet        (SQLite db) = doConfigSet db
+  configGet        (SQLite db) = doConfigGet db
+  insertFuncName   (SQLite db) = doInsertFuncName db
+  removeFuncName   (SQLite db) = doRemoveFuncName db
+  funcList         (SQLite db) = doFuncList db
+  minSchedAt       (SQLite db) = doMinSchedAt db Pending
+  transact         (SQLite db) = doTransact db
+  transactReadOnly (SQLite db) = doTransact db
+
+instance Exception (PersistException SQLite)
+
+instance IsString (PersistConfig SQLite) where
+  fromString = SQLitePath . fromString
 
 beginTx :: Database -> IO ()
 beginTx db = void $ exec db "BEGIN TRANSACTION"

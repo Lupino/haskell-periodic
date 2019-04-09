@@ -7,17 +7,17 @@ module Main
   ) where
 
 import           Control.Monad                  (when)
-import qualified Data.ByteString.Lazy           as LB (readFile)
 import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
 import           Data.String                    (fromString)
-import           Periodic.Server
-import           Periodic.Server.Persist.SQLite (initSQLite)
-import           Periodic.Socket                (listen)
-import           Periodic.Transport             (makeSocketTransport)
-import           Periodic.Transport.TLS
-import qualified Periodic.Transport.WebSockets  as WS (makeServerTransport)
-import           Periodic.Transport.XOR         (makeXORTransport)
+import           Periodic.Server                (startServer)
+import           Periodic.Server.Persist        (Persist, PersistConfig)
+import           Periodic.Server.Persist.SQLite (SQLite)
+import           Periodic.Socket                (Socket, listen)
+import           Periodic.Transport.Socket      (rawSocket)
+import           Periodic.Transport.TLS         (makeServerParams', tlsConfig)
+import           Periodic.Transport.WebSockets  (serverConfig)
+import           Periodic.Transport.XOR         (xorConfig)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
 import           UnliftIO.Directory             (createDirectoryIfMissing)
@@ -95,19 +95,20 @@ main = do
     printHelp
 
   createDirectoryIfMissing True storePath
-  sqlite <- initSQLite $ fromString $ storePath ++ "/data.sqlite"
+  let sqlite = fromString $ storePath ++ "/data.sqlite" :: PersistConfig SQLite
 
-  startServer (makeTransport opts) sqlite =<< listen host
+  run opts sqlite =<< listen host
 
-makeTransport Options{..} sock
-  | useTls = do
+run :: Persist db => Options -> PersistConfig db -> Socket -> IO ()
+run Options {useTls = True, ..} config sock = do
     prms <- makeServerParams' cert [] certKey caStore
-    makeTLSTransport prms =<< makeSocketTransport sock
-  | useWs = WS.makeServerTransport =<< makeSocketTransport sock
-  | otherwise = makeTransport' xorFile sock
+    startServer config sock $ tlsConfig prms . rawSocket
 
-makeTransport' [] sock = makeSocketTransport sock
-makeTransport' p sock  = do
-  key <- LB.readFile p
-  transport <- makeSocketTransport sock
-  makeXORTransport key transport
+run Options {useWs = True} config sock =
+    startServer config sock $ serverConfig . rawSocket
+
+run Options {xorFile = ""} config sock =
+    startServer config sock rawSocket
+
+run Options {xorFile = f} config sock =
+    startServer config sock $ xorConfig f . rawSocket

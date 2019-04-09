@@ -26,41 +26,41 @@ import           Periodic.IOHashMap         (IOHashMap, newIOHashMap)
 import qualified Periodic.IOHashMap         as HM
 import           Periodic.Server.Client
 import qualified Periodic.Server.Client     as Client
-import           Periodic.Server.Persist    (Persist)
+import           Periodic.Server.Persist    (Persist, PersistConfig)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Worker
 import qualified Periodic.Server.Worker     as Worker
-import           Periodic.Transport         (Transport)
+import           Periodic.Transport         (Transport, TransportConfig)
 import           Periodic.Types             (ClientType (..), runParser)
 import           Periodic.Utils             (getEpochTime)
 import           System.Log.Logger          (errorM)
 import           UnliftIO
 import           UnliftIO.Concurrent        (threadDelay)
 
-type ClientList = IOHashMap ByteString ClientEnv
-type WorkerList = IOHashMap ByteString WorkerEnv
+type ClientList db tp = IOHashMap ByteString (ClientEnv db tp)
+type WorkerList db tp = IOHashMap ByteString (WorkerEnv db tp)
 
-data ServerEnv = ServerEnv
+data ServerEnv db tp = ServerEnv
   { serveSock  :: Socket
   , serveState :: TVar Bool
-  , clientList :: ClientList
-  , workerList :: WorkerList
+  , clientList :: ClientList db tp
+  , workerList :: WorkerList db tp
   }
 
 
-newtype ServerT m a = ServerT {unServerT :: ReaderT ServerEnv (SchedT m) a}
+newtype ServerT db tp m a = ServerT {unServerT :: ReaderT (ServerEnv db tp) (SchedT db tp m) a}
   deriving
     ( Functor
     , Applicative
     , Monad
     , MonadIO
-    , MonadReader ServerEnv
+    , MonadReader (ServerEnv db tp)
     )
 
-instance MonadTrans ServerT where
+instance MonadTrans (ServerT db tp) where
   lift = ServerT . lift . lift
 
-instance MonadUnliftIO m => MonadUnliftIO (ServerT m) where
+instance MonadUnliftIO m => MonadUnliftIO (ServerT db tp m) where
   askUnliftIO = ServerT $
     ReaderT $ \r ->
       withUnliftIO $ \u ->
@@ -70,19 +70,19 @@ instance MonadUnliftIO m => MonadUnliftIO (ServerT m) where
       withRunInIO $ \run ->
         inner (run . runServerT r)
 
-runServerT :: ServerEnv -> ServerT m a -> SchedT m a
+runServerT :: ServerEnv db tp -> ServerT db tp m a -> SchedT db tp m a
 runServerT sEnv = flip runReaderT sEnv . unServerT
 
-liftS :: Monad m => SchedT m a -> ServerT m a
+liftS :: Monad m => SchedT db tp m a -> ServerT db tp m a
 liftS = ServerT . lift
 
-initServerEnv :: MonadIO m => TVar Bool -> Socket -> m ServerEnv
+initServerEnv :: MonadIO m => TVar Bool -> Socket -> m (ServerEnv db tp)
 initServerEnv serveState serveSock = do
   clientList <- newIOHashMap
   workerList <- newIOHashMap
   pure ServerEnv{..}
 
-serveForever :: MonadUnliftIO m => (Socket -> m Transport) -> ServerT m ()
+serveForever :: (MonadUnliftIO m, Persist db, Transport tp) => (Socket -> TransportConfig tp) -> ServerT db tp m ()
 serveForever mk = do
   state <- asks serveState
   void . runMaybeT . forever $ do
@@ -92,23 +92,23 @@ serveForever mk = do
     unless alive mzero
 
 tryServeOnce
-  :: MonadUnliftIO m
-  => (Socket -> m Transport)
-  -> ServerT m (Either SomeException ())
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => (Socket -> TransportConfig tp)
+  -> ServerT db tp m (Either SomeException ())
 tryServeOnce mk = tryAny (serveOnce mk)
 
-serveOnce :: MonadUnliftIO m => (Socket -> m Transport) -> ServerT m ()
-serveOnce makeTransport = do
+serveOnce :: (MonadUnliftIO m, Persist db, Transport tp) => (Socket -> TransportConfig tp) -> ServerT db tp m ()
+serveOnce mk = do
   (sock', _) <- liftIO . accept =<< asks serveSock
-  void $ async $ handleConnection =<< lift (makeTransport sock')
+  void $ async $ handleConnection $ mk sock'
 
 handleConnection
-  :: MonadUnliftIO m
-  => Transport -> ServerT m ()
-handleConnection transport = do
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => TransportConfig tp -> ServerT db tp m ()
+handleConnection tpconfig = do
   ServerEnv{..} <- ask
   schedEnv <- liftS ask
-  connEnv <- initServerConnEnv transport
+  connEnv <- initServerConnEnv tpconfig
 
   lift $ runConnectionT connEnv $
     receiveThen $ \pl ->
@@ -129,8 +129,8 @@ handleConnection transport = do
             HM.delete workerList cid
 
   where receiveThen
-          :: MonadUnliftIO m
-          => (ByteString -> ConnectionT m ()) -> ConnectionT m ()
+          :: (MonadUnliftIO m, Transport tp)
+          => (ByteString -> ConnectionT tp m ()) -> ConnectionT tp m ()
         receiveThen next = do
           e <- tryAny receive
           case e of
@@ -138,8 +138,8 @@ handleConnection transport = do
             Right pl -> next pl
 
         sendThen
-          :: MonadUnliftIO m
-          => ConnectionT m () -> ConnectionT m ()
+          :: (MonadUnliftIO m, Transport tp)
+          => ConnectionT tp m () -> ConnectionT tp m ()
         sendThen next = do
           e <- tryAny $ send =<< connid
           case e of
@@ -147,11 +147,11 @@ handleConnection transport = do
             Right _ -> next
 
 runCheckWorkerState
-  :: MonadUnliftIO m
-  => WorkerList -> TVar Int -> m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => WorkerList db tp -> TVar Int -> m ()
 runCheckWorkerState ref alive = runCheckState "Worker" ref (checkWorkerState ref alive) alive
 
-checkWorkerState :: MonadUnliftIO m =>  WorkerList -> TVar Int -> WorkerEnv -> m ()
+checkWorkerState :: (MonadUnliftIO m, Transport tp) =>  WorkerList db tp -> TVar Int -> WorkerEnv db tp -> m ()
 checkWorkerState ref alive env0 = runWorkerT env0 $ do
   delay <- fromIntegral <$> readTVarIO alive
   expiredAt <- (delay +) <$> Worker.getLastVist
@@ -162,11 +162,11 @@ checkWorkerState ref alive env0 = runWorkerT env0 $ do
     HM.delete ref wid
 
 runCheckClientState
-  :: MonadUnliftIO m
-  => ClientList -> TVar Int -> m ()
+  :: (MonadUnliftIO m, Transport tp)
+  => ClientList db tp -> TVar Int -> m ()
 runCheckClientState ref alive = runCheckState "Client" ref (checkClientState ref alive) alive
 
-checkClientState :: MonadIO m => ClientList -> TVar Int -> ClientEnv -> m ()
+checkClientState :: (MonadIO m, Transport tp) => ClientList db tp -> TVar Int -> ClientEnv db tp -> m ()
 checkClientState ref alive env0 = runClientT env0 $ do
   delay <- fromIntegral <$> readTVarIO alive
   expiredAt <- (delay +) <$> Client.getLastVist
@@ -187,11 +187,13 @@ runCheckState var ref checkAlive alive = void . async . forever $ do
   liftIO $ errorM "Periodic.Server" $ "Total " ++ var ++ ": " ++ show size
 
 
-startServer :: MonadUnliftIO m => (Socket -> m Transport) -> Persist -> Socket -> m ()
-startServer mk persist sock = do
+startServer
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  =>  PersistConfig db -> Socket -> (Socket -> TransportConfig tp) -> m ()
+startServer config sock mk = do
   state <- newTVarIO True
   sEnv <- initServerEnv state sock
-  schedEnv <- initSchedEnv persist $ atomically $ writeTVar state False
+  schedEnv <- initSchedEnv config $ atomically $ writeTVar state False
 
   runSchedT schedEnv $ do
     startSchedT

@@ -25,7 +25,9 @@ import           Periodic.Connection          (ConnEnv, fromConn,
                                                runConnectionT)
 import qualified Periodic.Connection          as Conn
 import           Periodic.Node
+import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
+import           Periodic.Transport           (Transport)
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job           (initJob)
@@ -34,15 +36,15 @@ import           Periodic.Utils               (getEpochTime)
 import           UnliftIO
 
 
-type ClientT m = NodeT (TVar Int64) (SchedT m)
+type ClientT db tp m = NodeT (TVar Int64) tp (SchedT db tp m)
 
-data ClientEnv = ClientEnv
+data ClientEnv db tp = ClientEnv
   { nodeEnv  :: NodeEnv (TVar Int64)
-  , schedEnv :: SchedEnv
-  , connEnv  :: ConnEnv
+  , schedEnv :: SchedEnv db tp
+  , connEnv  :: ConnEnv tp
   }
 
-runClientT :: Monad m => ClientEnv -> ClientT m a -> m a
+runClientT :: Monad m => ClientEnv db tp -> ClientT db tp m a -> m a
 runClientT ClientEnv {..} =
   runSchedT schedEnv
     . runConnectionT connEnv
@@ -50,27 +52,27 @@ runClientT ClientEnv {..} =
 
 initClientEnv
   :: MonadIO m
-  => ConnEnv
-  -> SchedEnv
-  -> m ClientEnv
+  => ConnEnv tp
+  -> SchedEnv db tp
+  -> m (ClientEnv db tp)
 initClientEnv connEnv schedEnv = do
   lastVist <- newTVarIO =<< getEpochTime
   nodeEnv <- initEnv lastVist
   return ClientEnv{..}
 
-startClientT :: MonadUnliftIO m => ClientEnv -> m ()
+startClientT :: (MonadUnliftIO m, Persist db, Transport tp) => ClientEnv db tp -> m ()
 startClientT env0 = runClientT env0 $
   startMainLoop_ . handleAgentT =<< env
 
-close :: MonadIO m => ClientT m ()
+close :: (MonadIO m, Transport tp) => ClientT db tp m ()
 close = stopNodeT
 
-getLastVist :: MonadIO m => ClientT m Int64
+getLastVist :: MonadIO m => ClientT db tp m Int64
 getLastVist = do
   ref <- env
   readTVarIO ref
 
-handleAgentT :: MonadUnliftIO m => TVar Int64 -> AgentT (SchedT m)  ()
+handleAgentT :: (MonadUnliftIO m, Persist db, Transport tp) => TVar Int64 -> AgentT tp (SchedT db tp m) ()
 handleAgentT lastVist = do
   t <- getEpochTime
   atomically $ writeTVar lastVist t

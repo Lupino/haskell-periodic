@@ -10,7 +10,7 @@ import           Control.Monad                   (when)
 import           Control.Monad.IO.Class          (liftIO)
 import qualified Data.ByteString.Char8           as B (pack)
 import qualified Data.ByteString.Lazy            as LB (empty, fromStrict,
-                                                        readFile, toStrict)
+                                                        toStrict)
 import           Data.Default.Class              (def)
 import           Data.List                       (isPrefixOf)
 import           Data.Maybe                      (fromMaybe)
@@ -18,12 +18,13 @@ import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
 import           Network.HTTP.Types              (status204, status500)
 import           Network.Wai.Handler.Warp        (setHost, setPort)
-import           Periodic.ClientPool
 import           Periodic.Socket                 (getHost, getService)
+import           Periodic.Trans.ClientPool
 import           Periodic.Transport              (Transport)
-import           Periodic.Transport.TLS
-import qualified Periodic.Transport.WebSockets   as WS (makeClientTransport)
-import           Periodic.Transport.XOR          (makeXORTransport)
+import           Periodic.Transport.Socket       (socketUri)
+import           Periodic.Transport.TLS          (makeClientParams', tlsConfig)
+import           Periodic.Transport.WebSockets   (clientConfig)
+import           Periodic.Transport.XOR          (xorConfig)
 import           Periodic.Types.Job
 import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitSuccess)
@@ -111,28 +112,28 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  clientEnv <- open (makeTransport opts) host poolSize
+  run opts def
+    { settings = setPort httpPort
+               $ setHost (Host httpHost) (settings def)}
 
-  let sopts = def {settings = setPort httpPort
-                           $ setHost (Host httpHost) (settings def)}
+run Options {useTls = True, ..} sopts = do
+  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
+  clientEnv <- openPool (tlsConfig prms (socketUri host)) poolSize
   scottyOpts sopts $ application clientEnv
 
-makeTransport :: Options -> Transport -> IO Transport
-makeTransport Options{..} transport
-  | useTls = do
-    prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
-    makeTLSTransport prms transport
-  | useWs =
-    WS.makeClientTransport (fromMaybe "0.0.0.0" $ getHost host) (getService host) transport
-  | otherwise = makeTransport' xorFile transport
+run Options {useWs = True, ..} sopts = do
+  clientEnv <- openPool (clientConfig (socketUri host) (fromMaybe "0.0.0.0" $ getHost host) (getService host)) poolSize
+  scottyOpts sopts $ application clientEnv
 
-makeTransport' :: FilePath -> Transport -> IO Transport
-makeTransport' [] transport = return transport
-makeTransport' p transport  = do
-  key <- LB.readFile p
-  makeXORTransport key transport
+run Options {xorFile = "", ..} sopts = do
+  clientEnv <- openPool (socketUri host) poolSize
+  scottyOpts sopts $ application clientEnv
 
-application :: ClientEnv ->  ScottyM ()
+run Options {..} sopts = do
+  clientEnv <- openPool (xorConfig xorFile $ socketUri host) poolSize
+  scottyOpts sopts $ application clientEnv
+
+application :: Transport tp => ClientPoolEnv tp ->  ScottyM ()
 application clientEnv = do
   get "/periodic/status/" $ statusHandler clientEnv
   post "/periodic/submit/:func_name/:job_name/" $ submitJobHandler clientEnv
@@ -159,31 +160,31 @@ sampleRet r = do
   WS.status $ if r then status204 else status500
   raw LB.empty
 
-submitJobHandler :: ClientEnv -> ActionM ()
+submitJobHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 submitJobHandler clientEnv = do
   job <- paramJob_
-  r <- liftIO $ runClientT clientEnv $ submitJob_ job
+  r <- liftIO $ runClientPoolT clientEnv $ submitJob_ job
   sampleRet r
 
-removeJobHandler :: ClientEnv -> ActionM ()
+removeJobHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 removeJobHandler clientEnv = do
   (fn, jn) <- paramJob
-  r <- liftIO $ runClientT clientEnv $ removeJob fn jn
+  r <- liftIO $ runClientPoolT clientEnv $ removeJob fn jn
   sampleRet r
 
-runJobHandler :: ClientEnv -> ActionM ()
+runJobHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 runJobHandler clientEnv = do
   job <- paramJob_
-  r <- liftIO $ runClientT clientEnv $ runJob_ job
+  r <- liftIO $ runClientPoolT clientEnv $ runJob_ job
   raw $ LB.fromStrict r
 
-dropFuncHandler :: ClientEnv -> ActionM ()
+dropFuncHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 dropFuncHandler clientEnv = do
   fn <- fromString <$> param "func_name"
-  r <- liftIO $ runClientT clientEnv $ dropFunc fn
+  r <- liftIO $ runClientPoolT clientEnv $ dropFunc fn
   sampleRet r
 
-statusHandler :: ClientEnv -> ActionM ()
+statusHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 statusHandler clientEnv = do
-  r <- liftIO $ runClientT clientEnv status
+  r <- liftIO $ runClientPoolT clientEnv status
   raw $ LB.fromStrict r

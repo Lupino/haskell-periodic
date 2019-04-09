@@ -15,14 +15,14 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Periodic.Server
-                     , Periodic.Server.Client
-                     , Periodic.Server.Scheduler
+  exposed-modules:     Periodic.Server.Scheduler
                      , Periodic.Server.Worker
                      , Periodic.Server.GrabQueue
                      , Periodic.Server.FuncStat
                      , Periodic.Server.Persist
                      , Periodic.Server.Persist.SQLite
+                     , Periodic.Server.Client
+                     , Periodic.Server
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring
