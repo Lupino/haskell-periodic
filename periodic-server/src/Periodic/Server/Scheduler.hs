@@ -72,8 +72,13 @@ import           UnliftIO.Concurrent          (threadDelay)
 
 data Action = Add Job | Remove Job | Cancel | PollJob | TryPoll JobHandle
 
+-- Cache runJob result
+--                                   expiredAt, Nothing       retrySTM
+--                                   expiredAt, Just bs       return bs
 type WaitList = IOHashMap JobHandle (Int64, Maybe ByteString)
 
+-- Distributed lock
+--                                  acquired    locked
 type LockList = IOHashMap LockName ([JobHandle], [JobHandle])
 
 data SchedEnv db tp = SchedEnv
@@ -81,15 +86,15 @@ data SchedEnv db tp = SchedEnv
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
   , sMaxPatch     :: TVar Int -- max poll patch size
-  , sKeepalive    :: TVar Int
+  , sKeepalive    :: TVar Int -- client or worker keepalive
   , sExpiration   :: TVar Int -- run job cache expiration
-  , sAutoPoll     :: TVar Bool
-  , sPolled       :: TVar Bool
+  , sAutoPoll     :: TVar Bool -- auto poll job when job done or failed
+  , sPolled       :: TVar Bool -- auto poll lock
   , sCleanup      :: IO ()
   , sFuncStatList :: FuncStatList
   , sLocker       :: L.Lock
   , sGrabQueue    :: GrabQueue tp
-  , sAlive        :: TVar Bool
+  , sAlive        :: TVar Bool -- sched state, when false sched is exited.
   , sChanList     :: TVar [Action]
   , sWaitList     :: WaitList
   , sLockList     :: LockList
