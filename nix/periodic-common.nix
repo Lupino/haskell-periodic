@@ -1,9 +1,8 @@
 { mkDerivation, base, binary, byteable, bytestring
-, data-default-class, directory, entropy, hashable
-, hslogger, mtl, network, pem, stdenv, stm, text
-, tls, transformers, unix-time, vector, unliftio
-, unordered-containers, websockets, x509, x509-store
-, x509-validation
+, data-default-class, directory, entropy, hashable, hslogger, mtl
+, network, pem, stdenv, stm, text, tls, transformers, unix-time
+, unliftio, unordered-containers, vector, websockets, x509
+, x509-store, x509-validation
 }:
 mkDerivation {
   pname = "periodic-common";
@@ -11,9 +10,9 @@ mkDerivation {
   src = ../periodic-common;
   libraryHaskellDepends = [
     base binary byteable bytestring data-default-class directory
-    entropy hashable hslogger mtl network pem unliftio
-    stm text tls transformers unix-time vector
-    unordered-containers websockets x509 x509-store x509-validation
+    entropy hashable hslogger mtl network pem stm text tls transformers
+    unix-time unliftio unordered-containers vector websockets x509
+    x509-store x509-validation
   ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
