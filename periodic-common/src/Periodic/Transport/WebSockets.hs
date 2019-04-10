@@ -32,8 +32,7 @@ wsRecvData conn _ = do
     _            -> pure empty
 
 wsSendData :: WS.Connection -> ByteString -> IO ()
-wsSendData conn bs =
-  WS.sendDataMessage conn . WS.Binary $ BL.fromStrict bs
+wsSendData conn = WS.sendBinaryData conn . BL.fromStrict
 
 data WebSocket tp = WS WS.Connection tp
 
