@@ -94,6 +94,7 @@ listenOn host serv = do
       close
       (\sock -> do
           setSocketOption sock ReuseAddr 1
+          setSocketOption sock NoDelay   1
           bind sock (addrAddress addr)
           S.listen sock maxListenQueue
           return sock
