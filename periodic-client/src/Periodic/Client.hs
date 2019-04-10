@@ -2,6 +2,7 @@ module Periodic.Client
   ( ClientM
   , ClientEnv
   , open
+  , close
   , runClientM
 
   -- re-exports
