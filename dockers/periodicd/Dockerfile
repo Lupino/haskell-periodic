@@ -13,6 +13,9 @@ WORKDIR /data
 VOLUME /data
 
 ENV PERIODIC_PORT tcp://:5000
+
+HEALTHCHECK CMD periodic status || exit 1
+
 EXPOSE 5000
 
 ENTRYPOINT ["/usr/bin/periodicd"]
