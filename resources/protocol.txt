@@ -167,7 +167,7 @@ These request types may only be sent by a client:
             - revert-delay
             - timeout
             - keepalive
-            - max-patch
+            - max-batch-size
     CONFIG_GET
         Get config from server. The server will respond with a CONFIG packet.
         Arguments:
@@ -177,7 +177,7 @@ These request types may only be sent by a client:
             - revert-delay
             - timeout
             - keepalive
-            - max-patch
+            - max-batch-size
         - 4 byte value (int32).
     SHUTDOWN
         Shutdown server.

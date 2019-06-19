@@ -85,7 +85,7 @@ data SchedEnv db tp = SchedEnv
   { sPollDelay    :: TVar Int -- main poll loop every time delay
   , sRevertDelay  :: TVar Int -- revert process queue loop every time delay
   , sTaskTimeout  :: TVar Int -- the task do timeout
-  , sMaxPatch     :: TVar Int -- max poll patch size
+  , sMaxBatchSize :: TVar Int -- max poll batch size
   , sKeepalive    :: TVar Int -- client or worker keepalive
   , sExpiration   :: TVar Int -- run job cache expiration
   , sAutoPoll     :: TVar Bool -- auto poll job when job done or failed
@@ -139,7 +139,7 @@ initSchedEnv config sC = do
   sPollDelay    <- newTVarIO 300
   sRevertDelay  <- newTVarIO 300
   sTaskTimeout  <- newTVarIO 600
-  sMaxPatch     <- newTVarIO 250
+  sMaxBatchSize <- newTVarIO 250
   sKeepalive    <- newTVarIO 300
   sExpiration   <- newTVarIO 300
   sAutoPoll     <- newTVarIO False
@@ -161,7 +161,7 @@ startSchedT = do
   loadInt "revert-delay" sRevertDelay
   loadInt "timeout" sTaskTimeout
   loadInt "keepalive" sKeepalive
-  loadInt "max-patch" sMaxPatch
+  loadInt "max-batch-size" sMaxBatchSize
   loadInt "expiration" sExpiration
 
 loadInt :: (MonadIO m, Persist db) => String -> TVar Int -> SchedT db tp m ()
@@ -180,25 +180,25 @@ setConfigInt :: (MonadIO m, Persist db) => String -> Int -> SchedT db tp m ()
 setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
-    "poll-delay"   -> saveInt "poll-delay" val sPollDelay
-    "revert-delay" -> saveInt "revert-delay" val sRevertDelay
-    "timeout"      -> saveInt "timeout" val sTaskTimeout
-    "keepalive"    -> saveInt "keepalive" val sKeepalive
-    "max-patch"    -> saveInt "max-patch" val sMaxPatch
-    "expiration"   -> saveInt "expiration" val sExpiration
-    _              -> pure ()
+    "poll-delay"     -> saveInt "poll-delay" val sPollDelay
+    "revert-delay"   -> saveInt "revert-delay" val sRevertDelay
+    "timeout"        -> saveInt "timeout" val sTaskTimeout
+    "keepalive"      -> saveInt "keepalive" val sKeepalive
+    "max-batch-size" -> saveInt "max-batch-size" val sMaxBatchSize
+    "expiration"     -> saveInt "expiration" val sExpiration
+    _                -> pure ()
 
 getConfigInt :: (MonadIO m, Persist db) => String -> SchedT db tp m Int
 getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
-    "poll-delay"   -> readTVarIO sPollDelay
-    "revert-delay" -> readTVarIO sRevertDelay
-    "timeout"      -> readTVarIO sTaskTimeout
-    "keepalive"    -> readTVarIO sKeepalive
-    "max-patch"    -> readTVarIO sMaxPatch
-    "expiration"   -> readTVarIO sExpiration
-    _              -> pure 0
+    "poll-delay"     -> readTVarIO sPollDelay
+    "revert-delay"   -> readTVarIO sRevertDelay
+    "timeout"        -> readTVarIO sTaskTimeout
+    "keepalive"      -> readTVarIO sKeepalive
+    "max-batch-size" -> readTVarIO sMaxBatchSize
+    "expiration"     -> readTVarIO sExpiration
+    _                -> pure 0
 
 keepalive :: Monad m => SchedT db tp m (TVar Int)
 keepalive = asks sKeepalive
@@ -267,9 +267,9 @@ removeTaskAndTryPoll taskList jh = do
   isPolled <- readTVarIO polled
   autoPoll <- readTVarIO =<< asks sAutoPoll
   when (isPolled && autoPoll) $ do
-    maxPatch <- readTVarIO =<< asks sMaxPatch
+    maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
     size <- FL.size taskList
-    when (size < maxPatch) $ do
+    when (size < maxBatchSize) $ do
       atomically $ writeTVar polled False
       pushChanList PollJob
 
@@ -315,14 +315,14 @@ pollJob_ taskList funcList = do
   handles <- FL.keys taskList
   let check job = notElem (getHandle job) handles && (getSchedAt job < next)
 
-  maxPatch <- readTVarIO =<< asks sMaxPatch
+  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   jobs <- transactReadOnly $ \p ->
-    P.foldr' p Pending funcList (foldFunc (maxPatch * 2) check now) PSQ.empty
+    P.foldr' p Pending funcList (foldFunc (maxBatchSize * 2) check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
 
   autoPoll <- asks sAutoPoll
-  atomically $ writeTVar autoPoll (length jobs > maxPatch)
+  atomically $ writeTVar autoPoll (length jobs > maxBatchSize)
 
   where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> HashPSQ JobHandle Int64 Job -> HashPSQ JobHandle Int64 Job
         foldFunc s f now job acc | f job = trimPSQ $ PSQ.insert (getHandle job) (now - getSchedAt job) job acc
@@ -381,9 +381,9 @@ reSchedJob taskList job = do
       FL.insert taskList (getHandle job) (getSchedAt job, w')
   where check :: (MonadIO m) => TaskList -> SchedT db tp m Bool
         check tl = do
-          maxPatch <- readTVarIO =<< asks sMaxPatch
+          maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
           size <- FL.size tl
-          if size < maxPatch * 2 then return True
+          if size < maxBatchSize * 2 then return True
           else do
             lastTask <- findLastTask tl
             case lastTask of
