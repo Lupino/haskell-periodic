@@ -163,8 +163,8 @@ These request types may only be sent by a client:
         Arguments:
         - 1 byte key size.
         - ? byte key. the key is one of
-            - poll-delay
-            - revert-delay
+            - poll-interval
+            - revert-interval
             - timeout
             - keepalive
             - max-batch-size
@@ -173,8 +173,8 @@ These request types may only be sent by a client:
         Arguments:
         - 1 byte key size.
         - ? byte key. the key is one of
-            - poll-delay
-            - revert-delay
+            - poll-interval
+            - revert-interval
             - timeout
             - keepalive
             - max-batch-size
