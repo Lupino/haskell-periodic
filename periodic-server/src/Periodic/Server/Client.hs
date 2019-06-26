@@ -84,11 +84,15 @@ handleAgentT lastVist = do
       lift $ pushJob job
       send Success
     Right (RunJob job) -> do
-      lift $ prepareWait job
-      lift $ pushJob job
-      state <- fromConn Conn.statusTVar
-      w <- lift $ waitResult state job
-      send w
+      preR <- lift $ lookupPrevResult job
+      case preR of
+        Just v -> send v
+        Nothing -> do
+          lift $ prepareWait job
+          lift $ pushJob job
+          state <- fromConn Conn.statusTVar
+          w <- lift $ waitResult state job
+          send w
     Right Status -> do
       stats <- lift $ map toBytes <$> status
       send_ $ B.intercalate "\n" stats

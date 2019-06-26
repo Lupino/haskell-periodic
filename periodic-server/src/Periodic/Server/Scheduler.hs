@@ -34,6 +34,7 @@ module Periodic.Server.Scheduler
   , setConfigInt
   , getConfigInt
   , prepareWait
+  , lookupPrevResult
   , waitResult
   ) where
 
@@ -778,6 +779,17 @@ existsWaitList :: MonadIO m => JobHandle -> SchedT db tp m Bool
 existsWaitList jh = do
   wl <- asks sWaitList
   isJust <$> FL.lookup wl jh
+
+lookupPrevResult :: MonadIO m => Job -> SchedT db tp m (Maybe ByteString)
+lookupPrevResult job = do
+  wl <- asks sWaitList
+  r <- FL.lookup wl jh
+  case r of
+    Nothing             -> pure Nothing
+    (Just (_, Nothing)) -> pure Nothing
+    (Just (_, Just v))  -> pure (Just v)
+
+  where jh = getHandle job
 
 removeFromWaitList :: MonadIO m => JobHandle -> SchedT db tp m ()
 removeFromWaitList jh = do
