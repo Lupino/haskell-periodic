@@ -568,10 +568,15 @@ assignJob env0 job =
 failJob :: (MonadIO m, Persist db) => JobHandle -> SchedT db tp m ()
 failJob jh = do
   releaseLock' jh
-  job <- transactReadOnly $ \p -> P.lookup p Running fn jn
-  when (isJust job) $ do
-    nextSchedAt <- getEpochTime
-    retryJob $ setSchedAt nextSchedAt $ fromJust job
+  isWaiting <- existsWaitList jh
+  if isWaiting then do
+    removeFromWaitList jh
+    doneJob jh ""
+  else do
+    job <- transactReadOnly $ \p -> P.lookup p Running fn jn
+    when (isJust job) $ do
+      nextSchedAt <- getEpochTime
+      retryJob $ setSchedAt nextSchedAt $ fromJust job
 
   where (fn, jn) = unHandle jh
 
@@ -598,12 +603,17 @@ schedLaterJob
   => JobHandle -> Int64 -> Int -> SchedT db tp m ()
 schedLaterJob jh later step = do
   releaseLock' jh
-  job <- transactReadOnly $ \p -> P.lookup p Running fn jn
-  when (isJust job) $ do
-    let job' = fromJust job
+  isWaiting <- existsWaitList jh
+  if isWaiting then do
+    removeFromWaitList jh
+    doneJob jh ""
+  else do
+    job <- transactReadOnly $ \p -> P.lookup p Running fn jn
+    when (isJust job) $ do
+      let job' = fromJust job
 
-    nextSchedAt <- (+) later <$> getEpochTime
-    retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
+      nextSchedAt <- (+) later <$> getEpochTime
+      retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
 
   where (fn, jn) = unHandle jh
 
@@ -763,3 +773,13 @@ pushResult_ f jh = do
   wl <- asks sWaitList
   now <- getEpochTime
   FL.alter wl (f now) jh
+
+existsWaitList :: MonadIO m => JobHandle -> SchedT db tp m Bool
+existsWaitList jh = do
+  wl <- asks sWaitList
+  isJust <$> FL.lookup wl jh
+
+removeFromWaitList :: MonadIO m => JobHandle -> SchedT db tp m ()
+removeFromWaitList jh = do
+  wl <- asks sWaitList
+  FL.delete wl jh
