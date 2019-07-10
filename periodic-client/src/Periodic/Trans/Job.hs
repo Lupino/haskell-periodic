@@ -26,7 +26,7 @@ import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
 import           Periodic.Agent               (receive, send)
 import           Periodic.Node
-import           Periodic.Transport           (Transport, TransportConfig)
+import           Periodic.Transport           (Transport)
 import           Periodic.Types               (FromBS (..), LockName)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (Acquired))

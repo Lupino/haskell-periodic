@@ -57,8 +57,9 @@ executable periodic-run
                      , periodic-client
                      , periodic-common
                      , bytestring
-                     , process-extras
                      , text
+                     , process
+                     , unliftio
   default-language:    Haskell2010
 
 executable periodic-http-bridge

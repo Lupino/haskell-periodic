@@ -5,33 +5,35 @@ module Main
   ( main
   ) where
 
-import           Control.Monad                  (when)
-import           Control.Monad.IO.Class         (liftIO)
-import qualified Data.ByteString.Char8          as B (ByteString, pack)
-import qualified Data.ByteString.Lazy           as LB (null, toStrict)
-import qualified Data.ByteString.Lazy.Char8     as LB (hPut, lines, putStr)
-import           Data.List                      (isPrefixOf)
-import           Data.Maybe                     (fromMaybe)
-import qualified Data.Text                      as T (unpack)
-import           Data.Text.Encoding             (decodeUtf8With)
-import           Data.Text.Encoding.Error       (ignore)
-import           Periodic.Socket                (getHost, getService)
-import           Periodic.Trans.Job             (JobT, name, schedLater,
-                                                 withLock, workDone, workDone_,
-                                                 workFail, workload)
-import           Periodic.Trans.Worker          (WorkerT, addFunc, broadcast,
-                                                 runWorkerT, work)
-import           Periodic.Transport             (Transport)
-import           Periodic.Transport.Socket      (socketUri)
-import           Periodic.Transport.TLS         (makeClientParams', tlsConfig)
-import           Periodic.Transport.WebSockets  (clientConfig)
-import           Periodic.Transport.XOR         (xorConfig)
-import           Periodic.Types                 (FuncName (..), LockName (..))
-import           System.Environment             (getArgs, lookupEnv)
-import           System.Exit                    (ExitCode (..), exitSuccess)
-import           System.IO                      (stderr)
-import           System.Process.ByteString.Lazy (readProcessWithExitCode)
-import           Text.Read                      (readMaybe)
+import           Control.Monad                 (unless, void, when)
+import           Control.Monad.IO.Class        (liftIO)
+import qualified Data.ByteString.Char8         as B (ByteString, pack)
+import qualified Data.ByteString.Lazy          as LB (null)
+import qualified Data.ByteString.Lazy.Char8    as LB (hPut)
+import           Data.List                     (isPrefixOf)
+import           Data.Maybe                    (fromMaybe)
+import qualified Data.Text                     as T (unpack)
+import           Data.Text.Encoding            (decodeUtf8With)
+import           Data.Text.Encoding.Error      (ignore)
+import           Periodic.Socket               (getHost, getService)
+import           Periodic.Trans.Job            (JobT, name, withLock, workDone,
+                                                workFail, workload)
+import           Periodic.Trans.Worker         (WorkerT, addFunc, broadcast,
+                                                runWorkerT, work)
+import           Periodic.Transport            (Transport)
+import           Periodic.Transport.Socket     (socketUri)
+import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)
+import           Periodic.Transport.WebSockets (clientConfig)
+import           Periodic.Transport.XOR        (xorConfig)
+import           Periodic.Types                (FuncName (..), LockName (..))
+import           System.Environment            (getArgs, lookupEnv)
+import           System.Exit                   (ExitCode (..), exitSuccess)
+import           System.IO                     (hClose)
+import           System.Process                (CreateProcess (std_in),
+                                                StdStream (CreatePipe), proc,
+                                                waitForProcess,
+                                                withCreateProcess)
+import           UnliftIO                      (tryIO)
 
 
 data Options = Options
@@ -47,8 +49,6 @@ data Options = Options
   , lockCount :: Int
   , lockName  :: Maybe LockName
   , notify    :: Bool
-  , useData   :: Bool
-  , useStdout :: Bool
   , useName   :: Bool
   , showHelp  :: Bool
   }
@@ -67,8 +67,6 @@ options t h f = Options
   , lockCount = 1
   , lockName  = Nothing
   , notify    = False
-  , useData   = False
-  , useStdout = True
   , useName   = True
   , showHelp  = False
   }
@@ -88,8 +86,6 @@ parseOptions ("--lock-count":x:xs) opt = parseOptions xs opt { lockCount = read 
 parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
-parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
-parseOptions ("--no-stdout":xs)    opt = parseOptions xs opt { useStdout = False }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
 parseOptions ("-h":xs)             opt = parseOptions xs opt { showHelp = True }
 parseOptions []                    opt = (opt { showHelp = True }, "", "", [])
@@ -100,7 +96,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-stdout] [--no-name]] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--no-name]] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -116,8 +112,6 @@ printHelp = do
   putStrLn "     --lock-count Max lock count (optional: 1)"
   putStrLn "     --lock-name  The lock name (optional: no lock)"
   putStrLn "     --broadcast  Is broadcast worker"
-  putStrLn "     --data       Send work data to client"
-  putStrLn "     --no-stdout  Hidden the stdout"
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
@@ -169,18 +163,19 @@ processWorker Options{..} cmd argv = do
   n <- name
   rb <- workload
   let argv' = if useName then argv ++ [n] else argv
-  (code, out, err) <- liftIO $ readProcessWithExitCode cmd argv' rb
-  when useStdout $ liftIO $ LB.putStr out
-  liftIO $ LB.hPut stderr err
+      cp = (proc cmd argv') {std_in = CreatePipe}
+
+  code <- liftIO $ withCreateProcess cp $ \mb_inh _ _ ph -> do
+    case mb_inh of
+      Nothing -> error "processWorker: Failed to get a stdin handle."
+      Just inh -> do
+        unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
+        void $ tryIO $ hClose inh
+        waitForProcess ph
+
   case code of
     ExitFailure _ -> workFail
-    ExitSuccess | useData -> workDone_ (LB.toStrict out)
-                | LB.null err -> workDone
-                | otherwise -> do
-      let lastLine = last $ LB.lines err
-      case (readMaybe . unpackBS . LB.toStrict) lastLine of
-        Nothing    -> workDone
-        Just later -> schedLater later
+    ExitSuccess   -> workDone
 
 unpackBS :: B.ByteString -> String
 unpackBS = T.unpack . decodeUtf8With ignore
