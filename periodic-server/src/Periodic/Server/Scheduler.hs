@@ -76,6 +76,7 @@ data Action = Add Job | Remove Job | Cancel | PollJob | TryPoll JobHandle
 data WaitItem = WaitItem
   { itemTs    :: Int64
   , itemValue :: Maybe ByteString
+  , itemWait  :: Int
   }
 
 -- Cache runJob result
@@ -743,8 +744,8 @@ shutdown = do
 prepareWait :: MonadIO m => Job -> SchedT db tp m ()
 prepareWait job = pushResult_ updateWL jh
   where updateWL :: Int64 -> Maybe WaitItem -> Maybe WaitItem
-        updateWL now Nothing       = Just $ WaitItem {itemTs = now, itemValue = Nothing}
-        updateWL now (Just item) = Just $ item {itemTs = now}
+        updateWL now Nothing       = Just $ WaitItem {itemTs = now, itemValue = Nothing, itemWait = 1}
+        updateWL now (Just item) = Just $ item {itemTs = now, itemWait = itemWait item + 1}
 
         jh = getHandle job
 
@@ -756,9 +757,19 @@ waitResult state job = do
     if st then do
       w0 <- FL.lookupSTM wl jh
       case w0 of
-        Just WaitItem {itemValue = Just w1} -> pure w1
-        Just _                              -> retrySTM
-        Nothing                             -> pure ""
+        Nothing   -> pure ""
+        Just item ->
+          case itemValue item of
+            Nothing -> retrySTM
+            Just w1 -> do
+
+              if itemWait item > 1 then
+                FL.insertSTM wl jh item { itemWait = itemWait item - 1 }
+              else
+                FL.deleteSTM wl jh
+
+              pure w1
+
      else pure ""
 
   where jh = getHandle job
@@ -768,8 +779,8 @@ pushResult
   => JobHandle -> ByteString -> SchedT db tp m ()
 pushResult jh w = pushResult_ updateWL jh
   where updateWL :: Int64 -> Maybe WaitItem -> Maybe WaitItem
-        updateWL _ Nothing    = Nothing
-        updateWL now (Just _) = Just WaitItem {itemTs=now, itemValue = Just w}
+        updateWL _ Nothing       = Nothing
+        updateWL now (Just item) = Just item {itemTs=now, itemValue = Just w}
 
 pushResult_
   :: MonadIO m
