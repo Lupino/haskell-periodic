@@ -165,7 +165,7 @@ processWorker Options{..} cmd argv = do
   let argv' = if useName then argv ++ [n] else argv
       cp = (proc cmd argv') {std_in = CreatePipe}
 
-  code <- liftIO $ withCreateProcess cp $ \mb_inh _ _ ph -> do
+  code <- liftIO $ withCreateProcess cp $ \mb_inh _ _ ph ->
     case mb_inh of
       Nothing -> error "processWorker: Failed to get a stdin handle."
       Just inh -> do
