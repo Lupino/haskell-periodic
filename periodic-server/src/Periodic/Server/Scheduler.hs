@@ -73,10 +73,15 @@ import           UnliftIO.Concurrent          (threadDelay)
 
 data Action = Add Job | Remove Job | Cancel | PollJob | TryPoll JobHandle
 
+data WaitItem = WaitItem
+  { itemTs    :: Int64
+  , itemValue :: Maybe ByteString
+  }
+
 -- Cache runJob result
 --                                   expiredAt, Nothing       retrySTM
 --                                   expiredAt, Just bs       return bs
-type WaitList = IOHashMap JobHandle (Int64, Maybe ByteString)
+type WaitList = IOHashMap JobHandle WaitItem
 
 -- Distributed lock
 --                                  acquired    locked
@@ -718,12 +723,12 @@ purgeExpired = do
     ks <- FL.foldrWithKeySTM wl (foldFunc (check (now - ex))) []
     mapM_ (FL.deleteSTM wl) ks
 
-  where foldFunc :: ((Int64, Maybe ByteString) -> Bool) -> JobHandle -> (Int64, Maybe ByteString) -> [JobHandle] -> [JobHandle]
+  where foldFunc :: (WaitItem -> Bool) -> JobHandle -> WaitItem -> [JobHandle] -> [JobHandle]
         foldFunc f jh v acc | f v = jh : acc
                            | otherwise = acc
 
-        check :: Int64 -> (Int64, Maybe ByteString) -> Bool
-        check t0 (t, _) = t < t0
+        check :: Int64 -> WaitItem -> Bool
+        check t0 item = itemTs item < t0
 
 shutdown :: (MonadUnliftIO m) => SchedT db tp m ()
 shutdown = do
@@ -737,9 +742,9 @@ shutdown = do
 
 prepareWait :: MonadIO m => Job -> SchedT db tp m ()
 prepareWait job = pushResult_ updateWL jh
-  where updateWL :: Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString)
-        updateWL now Nothing       = Just (now, Nothing)
-        updateWL now (Just (_, v)) = Just (now, v)
+  where updateWL :: Int64 -> Maybe WaitItem -> Maybe WaitItem
+        updateWL now Nothing       = Just $ WaitItem {itemTs = now, itemValue = Nothing}
+        updateWL now (Just item) = Just $ item {itemTs = now}
 
         jh = getHandle job
 
@@ -751,9 +756,9 @@ waitResult state job = do
     if st then do
       w0 <- FL.lookupSTM wl jh
       case w0 of
-        Just (_, Just w1) -> pure w1
-        Just (_, Nothing) -> retrySTM
-        Nothing           -> pure ""
+        Just WaitItem {itemValue = Just w1} -> pure w1
+        Just _                              -> retrySTM
+        Nothing                             -> pure ""
      else pure ""
 
   where jh = getHandle job
@@ -762,13 +767,13 @@ pushResult
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT db tp m ()
 pushResult jh w = pushResult_ updateWL jh
-  where updateWL :: Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString)
+  where updateWL :: Int64 -> Maybe WaitItem -> Maybe WaitItem
         updateWL _ Nothing    = Nothing
-        updateWL now (Just _) = Just (now, Just w)
+        updateWL now (Just _) = Just WaitItem {itemTs=now, itemValue = Just w}
 
 pushResult_
   :: MonadIO m
-  => (Int64 -> Maybe (Int64, Maybe ByteString) -> Maybe (Int64, Maybe ByteString))
+  => (Int64 -> Maybe WaitItem -> Maybe WaitItem)
   -> JobHandle -> SchedT db tp m ()
 pushResult_ f jh = do
   wl <- asks sWaitList
@@ -785,9 +790,9 @@ lookupPrevResult job = do
   wl <- asks sWaitList
   r <- FL.lookup wl jh
   case r of
-    Nothing             -> pure Nothing
-    (Just (_, Nothing)) -> pure Nothing
-    (Just (_, Just v))  -> pure (Just v)
+    Nothing                               -> pure Nothing
+    (Just WaitItem {itemValue = Nothing}) -> pure Nothing
+    (Just WaitItem {itemValue = Just v})  -> pure (Just v)
 
   where jh = getHandle job
 
