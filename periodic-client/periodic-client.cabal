@@ -60,6 +60,7 @@ executable periodic-run
                      , text
                      , process
                      , unliftio
+                     , deepseq
   default-language:    Haskell2010
 
 executable periodic-http-bridge

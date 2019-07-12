@@ -5,11 +5,13 @@ module Main
   ( main
   ) where
 
+import           Control.Concurrent            (forkIO, killThread)
+import           Control.DeepSeq               (rnf)
 import           Control.Monad                 (unless, void, when)
 import           Control.Monad.IO.Class        (liftIO)
 import qualified Data.ByteString.Char8         as B (ByteString, pack)
-import qualified Data.ByteString.Lazy          as LB (null)
-import qualified Data.ByteString.Lazy.Char8    as LB (hPut)
+import qualified Data.ByteString.Lazy          as LB (null, toStrict)
+import qualified Data.ByteString.Lazy.Char8    as LB (hGetContents, hPut)
 import           Data.List                     (isPrefixOf)
 import           Data.Maybe                    (fromMaybe)
 import qualified Data.Text                     as T (unpack)
@@ -17,7 +19,7 @@ import           Data.Text.Encoding            (decodeUtf8With)
 import           Data.Text.Encoding.Error      (ignore)
 import           Periodic.Socket               (getHost, getService)
 import           Periodic.Trans.Job            (JobT, name, withLock, workDone,
-                                                workFail, workload)
+                                                workDone_, workFail, workload)
 import           Periodic.Trans.Worker         (WorkerT, addFunc, broadcast,
                                                 runWorkerT, work)
 import           Periodic.Transport            (Transport)
@@ -29,11 +31,14 @@ import           Periodic.Types                (FuncName (..), LockName (..))
 import           System.Environment            (getArgs, lookupEnv)
 import           System.Exit                   (ExitCode (..), exitSuccess)
 import           System.IO                     (hClose)
-import           System.Process                (CreateProcess (std_in),
-                                                StdStream (CreatePipe), proc,
-                                                waitForProcess,
+import           System.Process                (CreateProcess (std_in, std_out),
+                                                StdStream (CreatePipe, Inherit),
+                                                proc, waitForProcess,
                                                 withCreateProcess)
-import           UnliftIO                      (tryIO)
+import           UnliftIO                      (MVar, SomeException, evaluate,
+                                                mask, newEmptyMVar, onException,
+                                                putMVar, takeMVar, throwIO, try,
+                                                tryIO)
 
 
 data Options = Options
@@ -49,6 +54,7 @@ data Options = Options
   , lockCount :: Int
   , lockName  :: Maybe LockName
   , notify    :: Bool
+  , useData   :: Bool
   , useName   :: Bool
   , showHelp  :: Bool
   }
@@ -67,6 +73,7 @@ options t h f = Options
   , lockCount = 1
   , lockName  = Nothing
   , notify    = False
+  , useData   = False
   , useName   = True
   , showHelp  = False
   }
@@ -86,6 +93,7 @@ parseOptions ("--lock-count":x:xs) opt = parseOptions xs opt { lockCount = read 
 parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
+parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
 parseOptions ("-h":xs)             opt = parseOptions xs opt { showHelp = True }
 parseOptions []                    opt = (opt { showHelp = True }, "", "", [])
@@ -96,7 +104,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--no-name]] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name]] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -112,6 +120,7 @@ printHelp = do
   putStrLn "     --lock-count Max lock count (optional: 1)"
   putStrLn "     --lock-name  The lock name (optional: no lock)"
   putStrLn "     --broadcast  Is broadcast worker"
+  putStrLn "     --data       Send work data to client"
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
@@ -163,19 +172,51 @@ processWorker Options{..} cmd argv = do
   n <- name
   rb <- workload
   let argv' = if useName then argv ++ [n] else argv
-      cp = (proc cmd argv') {std_in = CreatePipe}
+      cp = (proc cmd argv') {std_in = CreatePipe, std_out= if useData then CreatePipe else Inherit}
 
-  code <- liftIO $ withCreateProcess cp $ \mb_inh _ _ ph ->
-    case mb_inh of
-      Nothing -> error "processWorker: Failed to get a stdin handle."
-      Just inh -> do
+  (code, out) <- liftIO $ withCreateProcess cp $ \mb_inh mb_outh _ ph ->
+    case (mb_inh, mb_outh) of
+      (Nothing, _) -> error "processWorker: Failed to get a stdin handle."
+      (Just inh, Nothing) -> do
         unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
         void $ tryIO $ hClose inh
-        waitForProcess ph
+        code <- waitForProcess ph
+        return (code, Nothing)
+
+      (Just inh, Just outh) -> do
+        output  <- LB.hGetContents outh
+        withForkWait (evaluate $ rnf output) $ \waitOut -> do
+          unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
+          void $ tryIO $ hClose inh
+
+          waitOut
+          hClose outh
+
+          code <- waitForProcess ph
+          return (code, Just output)
+
 
   case code of
     ExitFailure _ -> workFail
-    ExitSuccess   -> workDone
+    ExitSuccess   ->
+      case out of
+        Nothing -> workDone
+        Just wl -> workDone_ $ LB.toStrict wl
 
 unpackBS :: B.ByteString -> String
 unpackBS = T.unpack . decodeUtf8With ignore
+
+-- | Fork a thread while doing something else, but kill it if there's an
+-- exception.
+--
+-- This is important in the cases above because we want to kill the thread
+-- that is holding the Handle lock, because when we clean up the process we
+-- try to close that handle, which could otherwise deadlock.
+--
+withForkWait :: IO () -> (IO () ->  IO a) -> IO a
+withForkWait async body = do
+  waitVar <- newEmptyMVar :: IO (MVar (Either SomeException ()))
+  mask $ \restore -> do
+    tid <- forkIO $ try (restore async) >>= putMVar waitVar
+    let wait = takeMVar waitVar >>= either throwIO return
+    restore (body wait) `onException` killThread tid
