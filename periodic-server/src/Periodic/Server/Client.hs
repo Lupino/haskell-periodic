@@ -30,7 +30,7 @@ import           Periodic.Server.Scheduler
 import           Periodic.Transport           (Transport)
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..))
-import           Periodic.Types.Job           (initJob)
+import           Periodic.Types.Job           (getFuncName, initJob)
 import           Periodic.Types.ServerCommand
 import           Periodic.Utils               (getEpochTime)
 import           UnliftIO
@@ -86,13 +86,17 @@ handleAgentT lastVist = do
     Right (RunJob job) -> do
       preR <- lift $ lookupPrevResult job
       case preR of
-        Just v -> send v
+        Just v -> send $ Data v
         Nothing -> do
-          lift $ prepareWait job
-          lift $ pushJob job
-          state <- fromConn Conn.statusTVar
-          w <- lift $ waitResult state job
-          send w
+          c <- lift . canRun $ getFuncName job
+          if c then do
+            lift $ prepareWait job
+            lift $ pushJob job
+            state <- fromConn Conn.statusTVar
+            w <- lift $ waitResult state job
+            send $ Data w
+          else send NoWorker
+
     Right Status -> do
       stats <- lift $ map toBytes <$> status
       send_ $ B.intercalate "\n" stats

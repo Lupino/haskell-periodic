@@ -101,14 +101,17 @@ submitJob fn jn w later = do
   schedAt <- (+fromMaybe 0 later) <$> getEpochTime
   submitJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
 
-runJob_ :: (MonadUnliftIO m, Transport tp) => Job -> ClientT tp m ByteString
+runJob_ :: (MonadUnliftIO m, Transport tp) => Job -> ClientT tp m (Maybe ByteString)
 runJob_ j = withAgentT $ do
   send (RunJob $ setSchedAt 0 j)
-  receive_
+  ret <- receive
+  case ret of
+    Right (Data bs) -> return $ Just bs
+    _               -> return Nothing
 
 runJob
   :: (MonadUnliftIO m, Transport tp)
-  => FuncName -> JobName -> Maybe Workload -> ClientT tp m ByteString
+  => FuncName -> JobName -> Maybe Workload -> ClientT tp m (Maybe ByteString)
 runJob fn jn w = do
   schedAt <- getEpochTime
   runJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn

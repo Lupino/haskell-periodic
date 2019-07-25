@@ -9,8 +9,10 @@ import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
 
 import           Data.Binary
-import           Data.Binary.Get         (getWord32be)
-import           Data.Binary.Put         (putWord32be)
+import           Data.Binary.Get         (getRemainingLazyByteString,
+                                          getWord32be)
+import           Data.Binary.Put         (putByteString, putWord32be)
+import           Data.ByteString         (ByteString)
 import           Data.ByteString.Lazy    (toStrict)
 
 data ServerCommand =
@@ -22,6 +24,8 @@ data ServerCommand =
   | Success
   | Config Int
   | Acquired Bool
+  | NoWorker
+  | Data ByteString
 
   deriving (Show)
 
@@ -47,6 +51,8 @@ instance Binary ServerCommand where
       26 -> do
         v <- getWord8
         pure $ Acquired $ v == 1
+      29 -> pure NoWorker
+      30 -> Data . toStrict <$> getRemainingLazyByteString
       _ -> error $ "Error ServerCommand " ++ show tp
 
   put Noop            = putWord8 0
@@ -66,6 +72,10 @@ instance Binary ServerCommand where
   put (Acquired False)    = do
     putWord8 26
     putWord8 0
+  put NoWorker            = putWord8 29
+  put (Data bs)           = do
+    putWord8 30
+    putByteString bs
 
 instance Validatable ServerCommand where
   validate (JobAssign job) = validate job

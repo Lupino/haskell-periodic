@@ -2,8 +2,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 
 module Main
-  (
-    main
+  ( main
   ) where
 
 import           Control.Monad                   (when)
@@ -176,7 +175,11 @@ runJobHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 runJobHandler clientEnv = do
   job <- paramJob_
   r <- liftIO $ runClientPoolT clientEnv $ runJob_ job
-  raw $ LB.fromStrict r
+  case r of
+    Nothing -> do
+      WS.status status500
+      raw "error"
+    Just bs -> raw $ LB.fromStrict bs
 
 dropFuncHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 dropFuncHandler clientEnv = do

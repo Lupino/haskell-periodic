@@ -36,6 +36,7 @@ module Periodic.Server.Scheduler
   , prepareWait
   , lookupPrevResult
   , waitResult
+  , canRun
   ) where
 
 import           Control.Monad                (forever, mzero, unless, void,

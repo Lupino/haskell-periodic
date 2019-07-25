@@ -330,7 +330,7 @@ doRunJob :: Transport tp => [String] -> ClientT tp IO ()
 doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
 doRunJob (x:y:xs) =
-  liftIO . B.putStr
+  liftIO . putR
     =<< runJob (fromString x) (fromString y)
     =<< liftIO (go xs)
 
@@ -344,6 +344,10 @@ doRunJob (x:y:xs) =
 
         getFile :: String -> IO (Maybe Workload)
         getFile fn = Just . Workload <$> B.readFile fn
+
+        putR :: Maybe ByteString -> IO ()
+        putR Nothing   = putStrLn "Error: run job failed"
+        putR (Just bs) = B.putStr bs
 
 doStatus :: Transport tp => ClientT tp IO ()
 doStatus = do
