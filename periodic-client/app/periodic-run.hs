@@ -124,6 +124,8 @@ printHelp = do
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
+  putStrLn "Version: v1.1.5.4"
+  putStrLn ""
   exitSuccess
 
 main :: IO ()

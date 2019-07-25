@@ -7,7 +7,7 @@
 }:
 mkDerivation {
   pname = "periodic-common";
-  version = "1.1.5.0";
+  version = "1.1.5.1";
   src = ../periodic-common;
   libraryHaskellDepends = [
     base binary byteable bytestring data-default-class directory

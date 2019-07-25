@@ -121,6 +121,8 @@ printHelp = do
   putStrLn "     --cert     Public certificate (X.509 format)"
   putStrLn "     --ca       trusted certificates"
   putStrLn ""
+  putStrLn "Version: v1.1.5.4"
+  putStrLn ""
   exitSuccess
 
 printWorkloadHelp :: IO ()
