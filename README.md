@@ -88,7 +88,11 @@ Quick start
 
 #### Install with [nix](https://nixos.org/nix/)
 
-    nix-env -f default.nix -i periodicd periodic-client
+    nix-env -f release.nix -i periodicd periodic-client
+
+#### Static build
+
+    $(nix-build --no-link -A fullBuildScript)
 
 ### Start periodic server
 

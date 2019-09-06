@@ -1,29 +1,23 @@
 { mkDerivation, base, binary, boxes, byteable, bytestring
-, data-default-class, hslogger, http-types
-, unliftio, periodic-common
-, process-extras, resource-pool, scotty, stdenv, streaming-commons
-, text, transformers, unix-time, warp, static ? false
+, data-default-class, deepseq, hslogger, http-types
+, periodic-common, process, resource-pool, scotty, stdenv
+, streaming-commons, text, transformers, unix-time, unliftio, warp
 }:
-let config = import ./config.nix {static = static;};
-in mkDerivation {
+mkDerivation {
   pname = "periodic-client";
   version = "1.1.5.4";
   src = ../periodic-client;
   isLibrary = true;
   isExecutable = true;
-  enableSharedExecutables = false;
-  enableSharedLibraries = false;
   libraryHaskellDepends = [
-    base byteable bytestring hslogger unliftio
-    periodic-common resource-pool
-    transformers
+    base byteable bytestring hslogger periodic-common resource-pool
+    transformers unliftio
   ];
   executableHaskellDepends = [
-    base binary boxes bytestring data-default-class http-types
-    periodic-common process-extras scotty streaming-commons text
-    unix-time warp
+    base binary boxes bytestring data-default-class deepseq http-types
+    periodic-common process scotty streaming-commons text unix-time
+    unliftio warp
   ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
-  configureFlags = config.configureFlags;
 }

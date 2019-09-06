@@ -1,26 +1,22 @@
 { mkDerivation, async, base, binary, byteable, bytestring
-, direct-sqlite, directory, filepath, hslogger
-, mtl, network, periodic-common, unliftio
-, psqueues, stdenv, stm, transformers
-, unordered-containers, static ? false
+, direct-sqlite, filepath, hslogger, mtl, network, periodic-common
+, psqueues, stdenv, stm, transformers, unliftio
+, unordered-containers
 }:
-let config = import ./config.nix {static = static;};
-in mkDerivation {
+mkDerivation {
   pname = "periodicd";
   version = "1.1.5.4";
   src = ../periodic-server;
   isLibrary = true;
   isExecutable = true;
-  enableSharedExecutables = false;
-  enableSharedLibraries = false;
   libraryHaskellDepends = [
-    async base binary byteable bytestring direct-sqlite
-    filepath hslogger mtl network unliftio
-    periodic-common psqueues stm transformers
-    unordered-containers
+    async base binary byteable bytestring direct-sqlite filepath
+    hslogger mtl network periodic-common psqueues stm transformers
+    unliftio unordered-containers
   ];
-  executableHaskellDepends = [ base bytestring periodic-common unliftio ];
+  executableHaskellDepends = [
+    base bytestring periodic-common unliftio
+  ];
   homepage = "https://github.com/Lupino/haskell-periodic#readme";
   license = stdenv.lib.licenses.bsd3;
-  configureFlags = config.configureFlags;
 }
