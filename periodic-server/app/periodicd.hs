@@ -20,7 +20,6 @@ import           Periodic.Transport.WebSockets  (serverConfig)
 import           Periodic.Transport.XOR         (xorConfig)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
-import           UnliftIO.Directory             (createDirectoryIfMissing)
 
 data Options = Options { host      :: String
                        , xorFile   :: FilePath
@@ -36,7 +35,7 @@ data Options = Options { host      :: String
 options :: Maybe String -> Maybe String -> Options
 options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , xorFile = fromMaybe "" f
-                      , storePath = "data/data.sqlite"
+                      , storePath = "data.sqlite"
                       , useTls = False
                       , useWs = False
                       , certKey = "server-key.pem"
@@ -70,7 +69,7 @@ printHelp = do
   putStrLn "Available options:"
   putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"
   putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "  -p --path     State store path (optional: data/data.sqlite)"
+  putStrLn "  -p --path     State store path (optional: data.sqlite)"
   putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
   putStrLn "     --tls      Use tls transport"
   putStrLn "     --ws       Use websockets transport"
@@ -96,7 +95,6 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  createDirectoryIfMissing True storePath
   let sqlite = fromString storePath :: PersistConfig SQLite
 
   run opts sqlite =<< listen host
