@@ -1,5 +1,5 @@
 FROM alpine:3.9
-ENV VERSION v1.1.5.4
+ENV VERSION v1.1.5.5
 RUN apk add --no-cache wget=1.20.3-r0 && \
     wget https://github.com/Lupino/haskell-periodic/releases/download/$VERSION/periodic-linux-$VERSION.tar.bz2 && \
     apk del wget && \

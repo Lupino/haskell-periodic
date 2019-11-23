@@ -78,7 +78,7 @@ printHelp = do
   putStrLn "     --ca       Server will use these certificates to validate clients"
   putStrLn "  -h --help     Display help message"
   putStrLn ""
-  putStrLn "Version: v1.1.5.4"
+  putStrLn "Version: v1.1.5.5"
   putStrLn ""
   exitSuccess
 

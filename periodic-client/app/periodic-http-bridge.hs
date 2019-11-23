@@ -98,7 +98,7 @@ printHelp = do
   putStrLn "     --http-port HTTP port (optional: 8080)"
   putStrLn "     --pool-size Connection pool size"
   putStrLn ""
-  putStrLn "Version: v1.1.5.4"
+  putStrLn "Version: v1.1.5.5"
   putStrLn ""
   exitSuccess
 

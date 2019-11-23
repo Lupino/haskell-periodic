@@ -20,7 +20,7 @@ let
   stack2nix-script = import "${static-haskell-nix}/static-stack2nix-builder/stack2nix-script.nix" {
     inherit pkgs;
     stack-project-dir = toString ./.; # where stack.yaml is
-    hackageSnapshot = "2019-10-08T00:00:00Z"; # pins e.g. extra-deps without hashes or revisions
+    hackageSnapshot = "2019-11-20T00:00:00Z"; # pins e.g. extra-deps without hashes or revisions
   };
 
   periodicd-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {

@@ -5,7 +5,7 @@
 }:
 mkDerivation {
   pname = "periodicd";
-  version = "1.1.5.4";
+  version = "1.1.5.5";
   src = ../periodic-server;
   isLibrary = true;
   isExecutable = true;
