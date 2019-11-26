@@ -20,6 +20,12 @@ import           Periodic.Transport.WebSockets  (serverConfig)
 import           Periodic.Transport.XOR         (xorConfig)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
+import           System.IO                      (stderr)
+import           System.Log                     (Priority (..))
+import           System.Log.Formatter           (simpleLogFormatter)
+import           System.Log.Handler             (setFormatter)
+import           System.Log.Handler.Simple      (streamHandler)
+import           System.Log.Logger
 
 data Options = Options { host      :: String
                        , xorFile   :: FilePath
@@ -30,6 +36,7 @@ data Options = Options { host      :: String
                        , cert      :: FilePath
                        , caStore   :: FilePath
                        , showHelp  :: Bool
+                       , logLevel  :: Priority
                        }
 
 options :: Maybe String -> Maybe String -> Options
@@ -42,6 +49,7 @@ options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
                       , cert = "server.pem"
                       , caStore = "ca.pem"
                       , showHelp  = False
+                      , logLevel = ERROR
                       }
 
 parseOptions :: [String] -> Options -> Options
@@ -54,10 +62,11 @@ parseOptions ("--path":x:xs)     opt = parseOptions xs opt { storePath = x }
 parseOptions ("-h":xs)           opt = parseOptions xs opt { showHelp  = True }
 parseOptions ("--help":xs)       opt = parseOptions xs opt { showHelp  = True }
 parseOptions ("--tls":xs)        opt = parseOptions xs opt { useTls = True }
-parseOptions ("--ws":xs) opt = parseOptions xs opt { useWs = True }
+parseOptions ("--ws":xs)         opt = parseOptions xs opt { useWs = True }
 parseOptions ("--cert-key":x:xs) opt = parseOptions xs opt { certKey = x }
 parseOptions ("--cert":x:xs)     opt = parseOptions xs opt { cert = x }
 parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
+parseOptions ("--log":x:xs)      opt = parseOptions xs opt { logLevel = read x }
 parseOptions (_:xs)              opt = parseOptions xs opt
 
 printHelp :: IO ()
@@ -76,6 +85,7 @@ printHelp = do
   putStrLn "     --cert-key Private key associated"
   putStrLn "     --cert     Public certificate (X.509 format)"
   putStrLn "     --ca       Server will use these certificates to validate clients"
+  putStrLn "     --log      Set log level DEBUG INFO NOTICE WARNING ERROR CRITICAL ALERT EMERGENCY (optional: ERROR)"
   putStrLn "  -h --help     Display help message"
   putStrLn ""
   putStrLn "Version: v1.1.5.5"
@@ -96,6 +106,11 @@ main = do
     printHelp
 
   let sqlite = fromString storePath :: PersistConfig SQLite
+
+  removeAllHandlers
+  handle <- streamHandler stderr logLevel >>= \lh -> return $
+          setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
+  updateGlobalLogger rootLoggerName (addHandler handle . setLevel logLevel)
 
   run opts sqlite =<< listen host
 

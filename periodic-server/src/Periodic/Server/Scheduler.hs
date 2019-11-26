@@ -68,7 +68,7 @@ import           Periodic.Types.Internal      (LockName)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           Periodic.Utils               (getEpochTime)
-import           System.Log.Logger            (errorM)
+import           System.Log.Logger            (errorM, infoM)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
@@ -363,6 +363,7 @@ pushChanList act = do
 
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db tp m ()
 pushJob job = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   isRunning <- transactReadOnly $ \p -> P.member p Running fn jn
   unless isRunning doPushJob
 
@@ -575,6 +576,7 @@ assignJob env0 job =
 
 failJob :: (MonadIO m, Persist db) => JobHandle -> SchedT db tp m ()
 failJob jh = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("failJob: " ++ show jh)
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -601,6 +603,7 @@ doneJob
   :: (MonadIO m, Persist db)
   => JobHandle -> ByteString -> SchedT db tp m ()
 doneJob jh w = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
   releaseLock' jh
   transact $ \p -> P.delete p fn jn
   pushResult jh w
@@ -610,6 +613,7 @@ schedLaterJob
   :: (MonadIO m, Persist db)
   => JobHandle -> Int64 -> Int -> SchedT db tp m ()
 schedLaterJob jh later step = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("schedLaterJob: " ++ show jh)
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -629,6 +633,7 @@ acquireLock
   :: (MonadIO m, Persist db)
   => LockName -> Int -> JobHandle -> SchedT db tp m Bool
 acquireLock name maxCount jh = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show maxCount ++ " " ++ show jh)
   lockList <- asks sLockList
   j <- transactReadOnly $ \p -> P.lookup p Running fn jn
   case j of
@@ -640,11 +645,14 @@ acquireLock name maxCount jh = do
           Nothing -> do
             FL.insertSTM lockList name ([jh], [])
             pure True
-          Just (acquired, locked) ->
+          Just (acquired, []) ->
             if length acquired < maxCount then do
-              FL.insertSTM lockList name (L.nub $ acquired ++ [jh], locked)
+              FL.insertSTM lockList name (L.nub $ acquired ++ [jh], [])
               pure True
             else do
+              FL.insertSTM lockList name (acquired, [jh])
+              pure False
+          Just (acquired, locked) -> do
               FL.insertSTM lockList name (acquired, L.nub $ locked ++ [jh])
               pure False
 
@@ -658,13 +666,14 @@ releaseLock
   :: (MonadIO m, Persist db)
   => LockName -> JobHandle -> SchedT db tp m ()
 releaseLock name jh = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
   lockList <- asks sLockList
   h <- atomically $ do
     l <- FL.lookupSTM lockList name
     case l of
       Nothing -> pure Nothing
       Just (acquired, locked) ->
-        case L.uncons locked of
+        case L.uncons (L.delete jh locked) of
           Nothing -> do
             FL.insertSTM lockList name (L.delete jh acquired, [])
             pure Nothing
