@@ -574,7 +574,7 @@ assignJob :: (MonadUnliftIO m, Transport tp) => AgentEnv' tp -> Job -> m ()
 assignJob env0 job =
   runAgentT' env0 $ send (JobAssign job)
 
-failJob :: (MonadIO m, Persist db) => JobHandle -> SchedT db tp m ()
+failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db tp m ()
 failJob jh = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("failJob: " ++ show jh)
   releaseLock' jh
@@ -600,7 +600,7 @@ retryJob job = do
          jn = getName job
 
 doneJob
-  :: (MonadIO m, Persist db)
+  :: (MonadUnliftIO m, Persist db)
   => JobHandle -> ByteString -> SchedT db tp m ()
 doneJob jh w = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
@@ -610,7 +610,7 @@ doneJob jh w = do
   where (fn, jn) = unHandle jh
 
 schedLaterJob
-  :: (MonadIO m, Persist db)
+  :: (MonadUnliftIO m, Persist db)
   => JobHandle -> Int64 -> Int -> SchedT db tp m ()
 schedLaterJob jh later step = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("schedLaterJob: " ++ show jh)
@@ -629,71 +629,94 @@ schedLaterJob jh later step = do
 
   where (fn, jn) = unHandle jh
 
-acquireLock
+getLockedFuncNameList
+  :: (MonadIO m)
+  => LockName -> SchedT db tp m [FuncName]
+getLockedFuncNameList name = do
+  lockList <- asks sLockList
+  h <- FL.lookup lockList name
+  case h of
+    Nothing -> return []
+    Just (acquired, locked) -> return $ L.nub $ map (fst . unHandle) $ acquired ++ locked
+
+getRunningCount
   :: (MonadIO m, Persist db)
+  => [FuncName] -> SchedT db tp m Int64
+getRunningCount funcs = transactReadOnly $ \p ->
+  sum <$> mapM (P.size p Running) funcs
+
+acquireLock
+  :: (MonadUnliftIO m, Persist db)
   => LockName -> Int -> JobHandle -> SchedT db tp m Bool
 acquireLock name maxCount jh = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show maxCount ++ " " ++ show jh)
-  lockList <- asks sLockList
-  j <- transactReadOnly $ \p -> P.lookup p Running fn jn
-  case j of
-    Nothing -> pure True
-    Just job -> do
-      r <- atomically $ do
-        l <- FL.lookupSTM lockList name
-        case l of
-          Nothing -> do
-            FL.insertSTM lockList name ([jh], [])
-            pure True
-          Just (acquired, []) ->
-            if length acquired < maxCount then do
-              FL.insertSTM lockList name (L.nub $ acquired ++ [jh], [])
+  locker <- asks sLocker
+  L.with locker $ do
+    lockList <- asks sLockList
+    j <- transactReadOnly $ \p -> P.lookup p Running fn jn
+    case j of
+      Nothing -> pure True
+      Just job -> do
+        r <- atomically $ do
+          l <- FL.lookupSTM lockList name
+          case l of
+            Nothing -> do
+              FL.insertSTM lockList name ([jh], [])
               pure True
+            Just (acquired, locked) ->
+              if length acquired < maxCount then do
+                FL.insertSTM lockList name (L.nub $ acquired ++ [jh], [])
+                pure True
+              else do
+                FL.insertSTM lockList name (acquired, L.nub $ locked ++ [jh])
+                pure False
+
+        if r then return r
+          else do
+
+          size <- getRunningCount =<< getLockedFuncNameList name
+
+          if size <= fromIntegral maxCount then return True
             else do
-              FL.insertSTM lockList name (acquired, [jh])
-              pure False
-          Just (acquired, locked) -> do
-              FL.insertSTM lockList name (acquired, L.nub $ locked ++ [jh])
-              pure False
-
-      unless r $ transact $ \p -> P.insert p Locking fn jn job
-
-      pure r
+            transact $ \p -> P.insert p Locking fn jn job
+            return False
 
   where (fn, jn) = unHandle jh
 
 releaseLock
-  :: (MonadIO m, Persist db)
+  :: (MonadUnliftIO m, Persist db)
   => LockName -> JobHandle -> SchedT db tp m ()
 releaseLock name jh = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
-  lockList <- asks sLockList
-  h <- atomically $ do
-    l <- FL.lookupSTM lockList name
-    case l of
-      Nothing -> pure Nothing
-      Just (acquired, locked) ->
-        case L.uncons (L.delete jh locked) of
-          Nothing -> do
-            FL.insertSTM lockList name (L.delete jh acquired, [])
-            pure Nothing
-          Just (x, xs) -> do
-            FL.insertSTM lockList name (L.delete jh acquired, xs)
-            pure $ Just x
+  locker <- asks sLocker
+  L.with locker $ do
+    lockList <- asks sLockList
+    h <- atomically $ do
+      l <- FL.lookupSTM lockList name
+      case l of
+        Nothing -> pure Nothing
+        Just (acquired, locked) ->
+          case L.uncons locked of
+            Nothing -> do
+              FL.insertSTM lockList name (L.delete jh acquired, [])
+              pure Nothing
+            Just (x, xs) -> do
+              FL.insertSTM lockList name (L.delete jh acquired, xs)
+              pure $ Just x
 
-  case h of
-    Nothing -> pure ()
-    Just hh -> do
-      let (fn, jn) = unHandle hh
-      j <- transactReadOnly $ \p -> P.lookup p Locking fn jn
-      case j of
-        Nothing  -> releaseLock name hh
-        Just job -> do
-          transact $ \p -> P.insert p Pending fn jn job
-          pushChanList (Add job)
+    case h of
+      Nothing -> pure ()
+      Just hh -> do
+        let (fn, jn) = unHandle hh
+        j <- transactReadOnly $ \p -> P.lookup p Locking fn jn
+        case j of
+          Nothing  -> releaseLock name hh
+          Just job -> do
+            transact $ \p -> P.insert p Pending fn jn job
+            pushChanList (Add job)
 
 releaseLock'
-  :: (MonadIO m, Persist db)
+  :: (MonadUnliftIO m, Persist db)
   => JobHandle -> SchedT db tp m ()
 releaseLock' jh = do
   lockList <- asks sLockList
@@ -709,7 +732,7 @@ status = do
   mapM_ adjustFuncStat =<< transactReadOnly P.funcList
   FL.elems =<< asks sFuncStatList
 
-revertRunningQueue :: (MonadIO m, Persist db) => SchedT db tp m ()
+revertRunningQueue :: (MonadUnliftIO m, Persist db) => SchedT db tp m ()
 revertRunningQueue = do
   now <- getEpochTime
   tout <- fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
