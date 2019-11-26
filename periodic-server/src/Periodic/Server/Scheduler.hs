@@ -164,6 +164,7 @@ startSchedT = do
   runTask_ sPollInterval $ pushChanList PollJob
   runTask 0 $ runChanJob taskList
   runTask 100 purgeExpired
+  runTask 60 revertLockingQueue
 
   loadInt "poll-interval" sPollInterval
   loadInt "revert-interval" sRevertInterval
@@ -747,6 +748,30 @@ revertRunningQueue = do
         check now t0 job
           | getTimeout job > 0 = getSchedAt job + fromIntegral (getTimeout job) < now
           | otherwise = getSchedAt job + fromIntegral t0 < now
+
+revertLockingQueue :: (MonadUnliftIO m, Persist db) => SchedT db tp m ()
+revertLockingQueue = mapM_ checkAndReleaseLock =<< transactReadOnly P.funcList
+
+  where checkAndReleaseLock
+          :: (MonadUnliftIO m, Persist db)
+          => FuncName -> SchedT db tp m ()
+        checkAndReleaseLock fn = do
+          (sizePQ, sizeL) <- transactReadOnly $ \p -> do
+            sizePQ <- P.size p Running fn
+            sizeL <- P.size p Locking fn
+            pure (sizePQ, sizeL)
+          when (sizePQ == 0 && sizeL > 0) $ do
+            handles <- transactReadOnly $ \p -> P.foldr p Locking (:) []
+            mapM_ doRelease handles
+
+        doRelease
+          :: (MonadUnliftIO m, Persist db)
+          => Job -> SchedT db tp m ()
+        doRelease job = do
+          transact $ \p -> P.insert p Pending fn jn job
+          pushChanList (Add job)
+            where fn = getFuncName job
+                  jn = getName job
 
 purgeExpired :: MonadIO m => SchedT db tp m ()
 purgeExpired = do
