@@ -637,7 +637,7 @@ acquireLock name maxCount jh = do
   lockList <- asks sLockList
   j <- transactReadOnly $ \p -> P.lookup p Running fn jn
   case j of
-    Nothing -> pure False
+    Nothing -> pure True
     Just job -> do
       r <- atomically $ do
         l <- FL.lookupSTM lockList name
