@@ -725,8 +725,9 @@ releaseLock' jh = do
   mapM_ (`releaseLock` jh) names
 
   where foldFunc :: LockName -> ([JobHandle], [JobHandle]) -> [LockName] -> [LockName]
-        foldFunc n (acquired, _) acc | jh `elem` acquired = n : acc
-                                     | otherwise = acc
+        foldFunc n (acquired, locked) acc | jh `elem` acquired = n : acc
+                                          | jh `elem` locked   = n : acc
+                                          | otherwise          = acc
 
 status :: (MonadIO m, Persist db) => SchedT db tp m [FuncStat]
 status = do
@@ -784,7 +785,7 @@ purgeExpired = do
 
   where foldFunc :: (WaitItem -> Bool) -> JobHandle -> WaitItem -> [JobHandle] -> [JobHandle]
         foldFunc f jh v acc | f v = jh : acc
-                           | otherwise = acc
+                            | otherwise = acc
 
         check :: Int64 -> WaitItem -> Bool
         check t0 item = itemTs item < t0
