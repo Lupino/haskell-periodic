@@ -770,8 +770,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< transactReadOnly P.funcList
         doRelease job = do
           transact $ \p -> P.insert p Pending fn jn job
           pushChanList (Add job)
-            where fn = getFuncName job
-                  jn = getName job
+          where fn = getFuncName job
+                jn = getName job
 
 purgeExpired :: MonadIO m => SchedT db tp m ()
 purgeExpired = do
