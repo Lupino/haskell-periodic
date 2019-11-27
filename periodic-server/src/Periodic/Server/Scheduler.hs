@@ -762,8 +762,12 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< transactReadOnly P.funcList
             sizeL <- P.size p Locking fn
             pure (sizePQ, sizeL)
           when (sizePQ == 0 && sizeL > 0) $ do
-            handles <- transactReadOnly $ \p -> P.foldr p Locking (:) []
+            handles <- transactReadOnly $ \p -> P.foldr p Locking (foldFunc fn) []
             mapM_ doRelease handles
+
+        foldFunc :: FuncName -> Job -> [Job] -> [Job]
+        foldFunc fn job acc | getFuncName job == fn = job : acc
+                            | otherwise             = acc
 
         doRelease
           :: (MonadUnliftIO m, Persist db)
