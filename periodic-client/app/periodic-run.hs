@@ -18,7 +18,7 @@ import qualified Data.Text                     as T (unpack)
 import           Data.Text.Encoding            (decodeUtf8With)
 import           Data.Text.Encoding.Error      (ignore)
 import           Periodic.Socket               (getHost, getService)
-import           Periodic.Trans.Job            (JobT, name, withLock, workDone,
+import           Periodic.Trans.Job            (JobT, name, withLock_, workDone,
                                                 workDone_, workFail, workload)
 import           Periodic.Trans.Worker         (WorkerT, addFunc, broadcast,
                                                 runWorkerT, work)
@@ -151,7 +151,7 @@ doWork opts@Options{..} func cmd argv = do
   else
     case lockName of
       Nothing -> addFunc func w
-      Just n  -> addFunc func $ withLock n lockCount w
+      Just n  -> addFunc func $ withLock_ n lockCount w
   liftIO $ putStrLn "Worker started."
   work thread
 

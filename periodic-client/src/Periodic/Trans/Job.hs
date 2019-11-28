@@ -19,6 +19,7 @@ module Periodic.Trans.Job
   , releaseLock
 
   , withLock
+  , withLock_
   ) where
 
 import           Control.Monad                (when)
@@ -111,11 +112,16 @@ releaseLock n = do
   h <- getHandle <$> env
   withAgentT $ send (Release n h)
 
+withLock_
+  :: (MonadUnliftIO m, Transport tp)
+  => LockName -> Int -> JobT tp m () -> JobT tp m ()
+withLock_ n maxCount j = do
+  acquired <- acquireLock n maxCount
+  when acquired j
+
 withLock
   :: (MonadUnliftIO m, Transport tp)
   => LockName -> Int -> JobT tp m () -> JobT tp m ()
 withLock n maxCount j = do
-  acquired <- acquireLock n maxCount
-  when acquired $ do
-    j
-    releaseLock n
+  withLock_ n maxCount j
+  releaseLock n
