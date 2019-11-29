@@ -88,7 +88,7 @@ printHelp = do
   putStrLn "     --log      Set log level DEBUG INFO NOTICE WARNING ERROR CRITICAL ALERT EMERGENCY (optional: ERROR)"
   putStrLn "  -h --help     Display help message"
   putStrLn ""
-  putStrLn "Version: v1.1.5.5"
+  putStrLn "Version: v1.1.5.6"
   putStrLn ""
   exitSuccess
 
