@@ -158,6 +158,7 @@ initSchedEnv config sC = do
 
 startSchedT :: (MonadUnliftIO m, Persist db, Transport tp) => SchedT db tp m ()
 startSchedT = do
+  liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask_ sRevertInterval revertRunningQueue
   taskList <- newIOHashMap
@@ -514,6 +515,7 @@ adjustFuncStat fn = do
 
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db tp m ()
 removeJob job = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
   transact $ \p -> P.delete p fn jn
 
   pushChanList (Remove job)
@@ -540,14 +542,20 @@ addFunc :: (MonadIO m, Persist db) => FuncName -> SchedT db tp m ()
 addFunc n = broadcastFunc n False
 
 broadcastFunc :: (MonadIO m, Persist db) => FuncName -> Bool -> SchedT db tp m ()
-broadcastFunc n cast = alterFunc n updateStat
+broadcastFunc n cast = do
+  liftIO $ infoM "Periodic.Server.Scheduler" (h ++ ": " ++ show n)
+  alterFunc n updateStat
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just ((funcStat n) {sWorker = 1, sBroadcast = cast})
         updateStat (Just fs) = Just (fs { sWorker = sWorker fs + 1, sBroadcast = cast })
 
+        h = if cast then "broadcastFunc" else "addFunc"
+
 removeFunc :: (MonadIO m, Persist db) => FuncName -> SchedT db tp m ()
-removeFunc n = alterFunc n updateStat
+removeFunc n = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("removeFunc: " ++ show n)
+  alterFunc n updateStat
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
         updateStat Nothing   = Just (funcStat n)
@@ -555,6 +563,7 @@ removeFunc n = alterFunc n updateStat
 
 dropFunc :: (MonadUnliftIO m, Persist db) => FuncName -> SchedT db tp m ()
 dropFunc n = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("dropFunc: " ++ show n)
   SchedEnv{..} <- ask
   L.with sLocker $ do
     st <- FL.lookup sFuncStatList n
@@ -572,7 +581,8 @@ pushGrab funcList handleList ag = do
   pushAgent queue funcList handleList ag
 
 assignJob :: (MonadUnliftIO m, Transport tp) => AgentEnv' tp -> Job -> m ()
-assignJob env0 job =
+assignJob env0 job = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("assignJob: " ++ show (getHandle job))
   runAgentT' env0 $ send (JobAssign job)
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db tp m ()
@@ -796,6 +806,7 @@ purgeExpired = do
 
 shutdown :: (MonadUnliftIO m) => SchedT db tp m ()
 shutdown = do
+  liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler shutdown"
   SchedEnv{..} <- ask
   pushChanList Cancel
   alive <- atomically $ do

@@ -20,7 +20,7 @@ import           Periodic.Types.Internal (runParser)
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
-import           System.Log.Logger       (errorM)
+import           System.Log.Logger       (errorM, infoM)
 import           UnliftIO                (Exception, Typeable, throwIO, tryAny)
 
 stateName :: State -> ByteString
@@ -40,6 +40,7 @@ instance Persist SQLite where
   data PersistException SQLite = SQLiteException Error deriving (Eq, Show, Typeable)
 
   newPersist (SQLitePath path) = do
+    infoM "Periodic.Server.Persist.SQLite" ("SQLite connected " ++ show path)
     edb <- open path
     case edb of
       Left (e, _) -> throwIO $ SQLiteException e

@@ -33,7 +33,7 @@ import qualified Periodic.Server.Worker     as Worker
 import           Periodic.Transport         (Transport, TransportConfig)
 import           Periodic.Types             (ClientType (..), runParser)
 import           Periodic.Utils             (getEpochTime)
-import           System.Log.Logger          (errorM)
+import           System.Log.Logger          (errorM, infoM)
 import           UnliftIO
 import           UnliftIO.Concurrent        (threadDelay)
 
@@ -84,12 +84,15 @@ initServerEnv serveState serveSock = do
 
 serveForever :: (MonadUnliftIO m, Persist db, Transport tp) => (Socket -> TransportConfig tp) -> ServerT db tp m ()
 serveForever mk = do
+  liftIO $ infoM "Periodic.Server" "Server started"
   state <- asks serveState
   void . runMaybeT . forever $ do
     e <- lift $ tryServeOnce mk
     when (isLeft e) mzero
     alive <- readTVarIO state
     unless alive mzero
+
+  liftIO $ infoM "Periodic.Server" "Server closed"
 
 tryServeOnce
   :: (MonadUnliftIO m, Persist db, Transport tp)
@@ -117,15 +120,19 @@ handleConnection tpconfig = do
           Left _           -> Conn.close
           Right TypeClient -> do
             cid <- connid
+            liftIO $ infoM "Periodic.Server" ("Client: " ++ show cid ++ " connected")
             clientEnv <- lift $ initClientEnv connEnv schedEnv
             HM.insert clientList cid clientEnv
             lift $ startClientT clientEnv
+            liftIO $ infoM "Periodic.Server" ("Client: " ++ show cid ++ " disconnected")
             HM.delete clientList cid
           Right TypeWorker -> do
             cid <- connid
+            liftIO $ infoM "Periodic.Server" ("Worker: " ++ show cid ++ " connected")
             workerEnv <- lift $ initWorkerEnv connEnv schedEnv
             HM.insert workerList cid workerEnv
             lift $ startWorkerT workerEnv
+            liftIO $ infoM "Periodic.Server" ("Worker: " ++ show cid ++ " disconnected")
             HM.delete workerList cid
 
   where receiveThen
