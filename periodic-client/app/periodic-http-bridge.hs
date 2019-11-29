@@ -45,6 +45,7 @@ data Options = Options
   , httpHost :: String
   , httpPort :: Int
   , poolSize :: Int
+  , showHelp :: Bool
   }
 
 options :: Maybe String -> Maybe String -> Options
@@ -60,6 +61,7 @@ options h f = Options
   , httpHost = "127.0.0.1"
   , httpPort = 8080
   , poolSize = 10
+  , showHelp  = False
   }
 
 parseOptions :: [String] -> Options -> Options
@@ -76,6 +78,8 @@ parseOptions ("--ca":x:xs)        opt = parseOptions xs opt { caStore = x }
 parseOptions ("--http-host":x:xs) opt = parseOptions xs opt { httpHost = x }
 parseOptions ("--http-port":x:xs) opt = parseOptions xs opt { httpPort = read x }
 parseOptions ("--pool-size":x:xs) opt = parseOptions xs opt { poolSize = read x }
+parseOptions ("--help":xs)        opt = parseOptions xs opt { showHelp = True }
+parseOptions ("-h":xs)            opt = parseOptions xs opt { showHelp = True }
 parseOptions (_:xs)               opt = parseOptions xs opt
 
 printHelp :: IO ()
@@ -97,6 +101,7 @@ printHelp = do
   putStrLn "     --http-host HTTP host (optional: 127.0.0.1)"
   putStrLn "     --http-port HTTP port (optional: 8080)"
   putStrLn "     --pool-size Connection pool size"
+  putStrLn "  -h --help       Display help message"
   putStrLn ""
   putStrLn "Version: v1.1.5.5"
   putStrLn ""
@@ -108,6 +113,8 @@ main = do
   f <- lookupEnv "XOR_FILE"
 
   opts@Options{..} <- flip parseOptions (options h f) <$> getArgs
+
+  when showHelp printHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
