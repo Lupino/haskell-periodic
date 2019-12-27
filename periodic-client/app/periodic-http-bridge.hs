@@ -103,7 +103,7 @@ printHelp = do
   putStrLn "     --pool-size Connection pool size"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
-  putStrLn "Version: v1.1.5.6"
+  putStrLn "Version: v1.1.5.7"
   putStrLn ""
   exitSuccess
 
