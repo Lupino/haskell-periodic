@@ -1,10 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Periodic.Types.ServerCommand
-  (
-    ServerCommand (..)
+  ( ServerCommand (..)
   ) where
 
-import           Data.Byteable           (Byteable (..))
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (Job)
 
@@ -15,25 +13,17 @@ import           Data.Binary.Put         (putByteString, putWord32be)
 import           Data.ByteString         (ByteString)
 import           Data.ByteString.Lazy    (toStrict)
 
-data ServerCommand =
-    Noop
-  | JobAssign Job
-  | NoJob
-  | Pong
-  | Unknown
-  | Success
-  | Config Int
-  | Acquired Bool
-  | NoWorker
-  | Data ByteString
-
-  deriving (Show)
-
-instance Byteable ServerCommand where
-  toBytes = toStrict . encode
-
-instance Parser ServerCommand where
-  runParser = parseBinary
+data ServerCommand = Noop
+    | JobAssign Job
+    | NoJob
+    | Pong
+    | Unknown
+    | Success
+    | Config Int
+    | Acquired Bool
+    | NoWorker
+    | Data ByteString
+    deriving (Show)
 
 instance Binary ServerCommand where
   get = do

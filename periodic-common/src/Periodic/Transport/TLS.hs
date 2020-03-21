@@ -17,9 +17,9 @@ import           Control.Exception             (SomeException, bracketOnError,
                                                 catch)
 import qualified Data.ByteString.Char8         as B (append, length, null)
 import qualified Data.ByteString.Lazy          as BL (fromStrict)
+import           Metro.Class                   (Transport (..))
 import           Network.TLS                   (Context, TLSParams)
 import qualified Network.TLS                   as TLS
-import           Periodic.Transport
 import           Periodic.Transport.TLSSetting
 
 

@@ -15,9 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Periodic.Utils
-                     , Periodic.Connection
-                     , Periodic.Types
+  exposed-modules:     Periodic.Types
                      , Periodic.Types.ServerCommand
                      , Periodic.Types.ClientCommand
                      , Periodic.Types.WorkerCommand
@@ -27,26 +25,16 @@ library
                      , Periodic.Types.Error
                      , Periodic.Types.Job
                      , Periodic.Node
-                     , Periodic.Socket
-                     , Periodic.Transport
-                     , Periodic.Transport.Socket
                      , Periodic.Transport.XOR
                      , Periodic.Transport.TLSSetting
                      , Periodic.Transport.TLS
                      , Periodic.Transport.WebSockets
-                     , Periodic.Lock
-                     , Periodic.IOHashMap
                      , Periodic.IOList
-                     , Periodic.Agent
                      , Periodic.CRC32
 
   build-depends:       base >= 4.7 && < 5
                      , bytestring
-                     , network
                      , entropy
-                     , unix-time
-                     , unordered-containers
-                     , directory
 
                      , tls
                      , x509
@@ -55,19 +43,17 @@ library
                      , data-default-class
                      , x509-validation
 
-                     , byteable
-                     , hslogger
                      , hashable
-                     , stm
 
                      , text
                      , binary
-                     , transformers
                      , mtl
 
                      , websockets
 
                      , vector
+
+                     , metro
 
                      , unliftio
   default-language:    Haskell2010

@@ -1,10 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Periodic.Types.WorkerCommand
-  (
-    WorkerCommand (..)
+  ( WorkerCommand (..)
   ) where
 
-import           Data.Byteable           (Byteable (..))
 import           Data.Int                (Int64)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (FuncName, JobHandle)
@@ -16,26 +14,18 @@ import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (length)
 import           Data.ByteString.Lazy    (toStrict)
 
-data WorkerCommand =
-    GrabJob
-  | SchedLater JobHandle Int64 Int
-  | WorkDone JobHandle ByteString
-  | WorkFail JobHandle
-  | Sleep
-  | Ping
-  | CanDo FuncName
-  | CantDo FuncName
-  | Broadcast FuncName
-  | Acquire LockName Int JobHandle
-  | Release LockName JobHandle
-
-  deriving (Show)
-
-instance Byteable WorkerCommand where
-  toBytes = toStrict . encode
-
-instance Parser WorkerCommand where
-  runParser = parseBinary
+data WorkerCommand = GrabJob
+    | SchedLater JobHandle Int64 Int
+    | WorkDone JobHandle ByteString
+    | WorkFail JobHandle
+    | Sleep
+    | Ping
+    | CanDo FuncName
+    | CantDo FuncName
+    | Broadcast FuncName
+    | Acquire LockName Int JobHandle
+    | Release LockName JobHandle
+    deriving (Show)
 
 instance Binary WorkerCommand where
   get = do

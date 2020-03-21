@@ -7,21 +7,20 @@ module Periodic.Transport.XOR
   , xorConfig
   ) where
 
-import           Control.Concurrent.STM.TVar
-import           Control.Monad.STM           (atomically)
-import           Data.Bits                   (xor)
-import qualified Data.ByteString             as B
-import qualified Data.ByteString.Lazy        as LB
-import qualified Periodic.Lock               as L
-import           Periodic.Transport
+import           Data.Bits            (xor)
+import qualified Data.ByteString      as B
+import qualified Data.ByteString.Lazy as LB
+import           Metro.Class          (Transport (..))
+import qualified Metro.Lock           as L
+import           UnliftIO
 
 data XOR tp = XOR
-  { transport :: tp
-  , sn        :: TVar LB.ByteString
-  , rn        :: TVar LB.ByteString
-  , sl        :: L.Lock
-  , rl        :: L.Lock
-  }
+    { transport :: tp
+    , sn        :: TVar LB.ByteString
+    , rn        :: TVar LB.ByteString
+    , sl        :: L.Lock
+    , rl        :: L.Lock
+    }
 
 instance Transport tp => Transport (XOR tp) where
   data TransportConfig (XOR tp) = XORConfig FilePath (TransportConfig tp)

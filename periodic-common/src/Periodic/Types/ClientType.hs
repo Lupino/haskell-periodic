@@ -1,24 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
-
 module Periodic.Types.ClientType
-  (
-    ClientType (..)
+  ( ClientType (..)
   ) where
 
-import           Data.Byteable           (Byteable (..))
-
 import           Data.Binary
-import           Data.ByteString.Lazy    (toStrict)
-import           Periodic.Types.Internal
 
-data ClientType = TypeClient | TypeWorker
-  deriving (Eq, Show)
-
-instance Byteable ClientType where
-  toBytes = toStrict . encode
-
-instance Parser ClientType where
-  runParser = parseBinary
+data ClientType = TypeClient
+    | TypeWorker
+    deriving (Eq, Show)
 
 instance Binary ClientType where
   get = do

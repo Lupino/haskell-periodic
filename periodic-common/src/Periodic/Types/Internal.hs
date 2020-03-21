@@ -1,11 +1,9 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
+
 module Periodic.Types.Internal
-  (
-    Parser (..)
-  , FromBS (..)
-  , parseBinary
+  ( FromBS (..)
   , ConfigKey (..)
   , LockName (..)
   , Validatable (..)
@@ -13,7 +11,7 @@ module Periodic.Types.Internal
   , validateNum
   ) where
 
-import           Data.Binary              (Binary (..), decodeOrFail)
+import           Data.Binary              (Binary (..))
 import           Data.Binary.Get          (getByteString, getWord8)
 import           Data.Binary.Put          (putByteString, putWord8)
 import           Data.ByteString          (ByteString)
@@ -28,15 +26,6 @@ import           Data.Text.Encoding       (decodeUtf8With)
 import           Data.Text.Encoding.Error (ignore)
 import qualified Data.Text.Lazy           as LT (Text, fromStrict)
 import           GHC.Generics             (Generic)
-
-class Parser a where
-  runParser :: ByteString -> Either String a
-
-
-parseBinary :: Binary a => ByteString -> Either String a
-parseBinary bs = case decodeOrFail (LB.fromStrict bs) of
-                   Left (_, _, e)  -> Left e
-                   Right (_, _, v) -> Right v
 
 class FromBS a where
   fromBS :: ByteString -> a

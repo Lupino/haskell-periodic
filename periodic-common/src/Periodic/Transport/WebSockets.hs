@@ -10,9 +10,9 @@ module Periodic.Transport.WebSockets
 import           Data.ByteString           (ByteString, empty)
 import qualified Data.ByteString.Char8     as BC
 import qualified Data.ByteString.Lazy      as BL
+import           Metro.Class               (Transport (..))
 import           Network.WebSockets        as WS
 import qualified Network.WebSockets.Stream as WS
-import           Periodic.Transport
 
 mkStream :: Transport tp => tp -> IO WS.Stream
 mkStream transport =

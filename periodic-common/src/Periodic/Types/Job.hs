@@ -2,8 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Periodic.Types.Job
-  (
-    FuncName (..)
+  ( FuncName (..)
   , JobName (..)
   , Workload (..)
   , JobHandle
@@ -24,10 +23,8 @@ module Periodic.Types.Job
   , jobHandle
   ) where
 
-import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (empty, length)
-import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
@@ -43,12 +40,6 @@ newtype FuncName  = FuncName {unFN :: ByteString}
   deriving (Generic, Eq, Ord, Show)
 
 instance Hashable FuncName
-
-instance Byteable FuncName where
-  toBytes = toStrict . encode
-
-instance Parser FuncName where
-  runParser = parseBinary
 
 instance IsString FuncName where
   fromString = FuncName . fromString
@@ -73,12 +64,6 @@ newtype JobName   = JobName {unJN :: ByteString}
 
 instance Hashable JobName
 
-instance Byteable JobName where
-  toBytes = toStrict . encode
-
-instance Parser JobName where
-  runParser = parseBinary
-
 instance IsString JobName where
   fromString = JobName . fromString
 
@@ -98,15 +83,9 @@ instance Validatable JobName where
   validate (JobName n) = validateLength "JobName" 1 255 $ B.length n
 
 data JobHandle = JobHandle FuncName JobName
-  deriving (Generic, Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 instance Hashable JobHandle
-
-instance Byteable JobHandle where
-  toBytes = toStrict . encode
-
-instance Parser JobHandle where
-  runParser = parseBinary
 
 instance Binary JobHandle where
   get = do
@@ -126,12 +105,6 @@ newtype Workload  = Workload {unWL :: ByteString}
 
 instance Hashable Workload
 
-instance Byteable Workload where
-  toBytes = toStrict . encode
-
-instance Parser Workload where
-  runParser = parseBinary
-
 instance IsString Workload where
   fromString = Workload . fromString
 
@@ -150,23 +123,20 @@ instance Binary Workload where
 instance Validatable Workload where
   validate (Workload n) = validateLength "Workload" 0 maxBound $ B.length n
 
-data Job = Job { jFuncName :: FuncName
-               , jName     :: JobName
-               , jWorkload :: Workload
-               , jSchedAt  :: Int64
-               , jCount    :: Int
-               , jTimeout  :: Int
-               }
-  deriving (Show)
+data Job = Job
+    { jFuncName :: FuncName
+    , jName     :: JobName
+    , jWorkload :: Workload
+    , jSchedAt  :: Int64
+    , jCount    :: Int
+    , jTimeout  :: Int
+    }
+    deriving (Show)
 
-instance Byteable Job where
-  toBytes = toStrict . encode
-
-instance Parser Job where
-  runParser = parseBinary
-
-
-data JVer = V0 | V1 | V2 | V3
+data JVer = V0
+    | V1
+    | V2
+    | V3
 
 toVer :: Int -> JVer
 toVer 0 = V0

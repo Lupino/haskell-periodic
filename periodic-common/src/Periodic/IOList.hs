@@ -1,6 +1,5 @@
 module Periodic.IOList
-  (
-    IOList
+  ( IOList
   , newIOList
   , insert
   , append

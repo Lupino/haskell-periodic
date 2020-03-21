@@ -21,23 +21,23 @@ import           Periodic.Transport.XOR         (xorConfig)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
 import           System.IO                      (stderr)
-import           System.Log                     (Priority (..))
 import           System.Log.Formatter           (simpleLogFormatter)
 import           System.Log.Handler             (setFormatter)
 import           System.Log.Handler.Simple      (streamHandler)
 import           System.Log.Logger
 
-data Options = Options { host      :: String
-                       , xorFile   :: FilePath
-                       , storePath :: FilePath
-                       , useTls    :: Bool
-                       , useWs     :: Bool
-                       , certKey   :: FilePath
-                       , cert      :: FilePath
-                       , caStore   :: FilePath
-                       , showHelp  :: Bool
-                       , logLevel  :: Priority
-                       }
+data Options = Options
+    { host      :: String
+    , xorFile   :: FilePath
+    , storePath :: FilePath
+    , useTls    :: Bool
+    , useWs     :: Bool
+    , certKey   :: FilePath
+    , cert      :: FilePath
+    , caStore   :: FilePath
+    , showHelp  :: Bool
+    , logLevel  :: Priority
+    }
 
 options :: Maybe String -> Maybe String -> Options
 options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h

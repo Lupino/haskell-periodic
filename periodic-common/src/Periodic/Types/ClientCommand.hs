@@ -1,37 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Periodic.Types.ClientCommand
-  (
-    ClientCommand (..)
+  ( ClientCommand (..)
   ) where
 
 import           Data.Binary
 import           Data.Binary.Get         (getWord32be)
 import           Data.Binary.Put         (putWord32be)
-import           Data.Byteable           (Byteable (..))
-import           Data.ByteString.Lazy    (toStrict)
 import           Periodic.Types.Internal
 import           Periodic.Types.Job      (FuncName, Job, JobName)
 
-data ClientCommand =
-    SubmitJob Job
-  | Status
-  | Ping
-  | DropFunc FuncName
-  | RemoveJob FuncName JobName
-  | ConfigGet ConfigKey
-  | ConfigSet ConfigKey Int
-  | Dump
-  | Load [Job]
-  | Shutdown
-  | RunJob Job
-
-  deriving (Show)
-
-instance Byteable ClientCommand where
-  toBytes = toStrict . encode
-
-instance Parser ClientCommand where
-  runParser = parseBinary
+data ClientCommand = SubmitJob Job
+    | Status
+    | Ping
+    | DropFunc FuncName
+    | RemoveJob FuncName JobName
+    | ConfigGet ConfigKey
+    | ConfigSet ConfigKey Int
+    | Dump
+    | Load [Job]
+    | Shutdown
+    | RunJob Job
+    deriving (Show)
 
 instance Binary ClientCommand where
   get = do
