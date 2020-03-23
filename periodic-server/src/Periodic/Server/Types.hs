@@ -7,7 +7,7 @@ module Periodic.Server.Types
 import           Data.Binary                  (Binary (..), getWord8)
 import           Data.Binary.Get              (lookAhead)
 import           Periodic.IOList              (IOList)
-import           Periodic.Node                (SessionEnv)
+import           Periodic.Node                (SessionEnv1)
 import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand (ServerCommand (..))
@@ -52,4 +52,4 @@ data ClientConfig = ClientConfig
     , wJobQueue :: IOList JobHandle
     }
 
-type CSEnv = SessionEnv ClientConfig Command
+type CSEnv = SessionEnv1 ClientConfig Command

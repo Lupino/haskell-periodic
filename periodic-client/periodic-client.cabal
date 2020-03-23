@@ -38,6 +38,7 @@ library
                      , metro
                      , metro-socket
                      , binary
+                     , mtl
   default-language:    Haskell2010
 
 executable periodic
@@ -67,6 +68,8 @@ executable periodic-run
                      , process
                      , unliftio
                      , deepseq
+                     , metro
+                     , metro-socket
   default-language:    Haskell2010
 
 executable periodic-http-bridge

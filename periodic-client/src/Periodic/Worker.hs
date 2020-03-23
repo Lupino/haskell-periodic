@@ -9,10 +9,10 @@ module Periodic.Worker
   , close
   ) where
 
+import           Metro.TP.Socket       (Socket, socket)
 import           Periodic.Trans.Worker
-import           Periodic.Transport.Socket (Socket, socketUri)
 
 type WorkerM = WorkerT Socket IO
 
-runWorkerM :: String -> WorkerM a -> IO a
-runWorkerM h = runWorkerT (socketUri h)
+runWorkerM :: String -> WorkerM () -> IO ()
+runWorkerM h = runWorkerT (socket h)

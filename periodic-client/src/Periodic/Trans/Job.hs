@@ -1,5 +1,6 @@
 module Periodic.Trans.Job
   ( JobT
+  , JobEnv
   , name
   , func
   , workload
@@ -25,40 +26,47 @@ module Periodic.Trans.Job
 import           Control.Monad                (when)
 import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
-import           Periodic.Agent               (receive, send)
+import           Data.Maybe                   (fromJust)
+import           Metro.Class                  (Transport)
+import           Metro.Node                   (env, request, withSessionT)
+import           Metro.Session                (send)
 import           Periodic.Node
-import           Periodic.Transport           (Transport)
-import           Periodic.Types               (FromBS (..), LockName)
+import           Periodic.Types               (FromBS (..), LockName, getResult,
+                                               packetREQ)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (Acquired))
 import           Periodic.Types.WorkerCommand
 import           UnliftIO                     hiding (timeout)
 
-type JobT tp m = NodeT Job tp m
+type JobT = NodeT (Maybe Job) ServerCommand
+type JobEnv = SessionEnv (Maybe Job) ServerCommand
+
+job :: Monad m => JobT tp m Job
+job = fromJust <$> env
 
 name :: (FromBS a, Show a, Monad m) => JobT tp m a
 name = fromBS . unJN <$> name_
 
 name_ :: Monad m => JobT tp m JobName
-name_ = getName <$> env
+name_ = getName <$> job
 
 func :: (FromBS a, Show a, Monad m) => JobT tp m a
 func = fromBS . unFN <$> func_
 
 func_ :: Monad m => JobT tp m FuncName
-func_ = getFuncName <$> env
+func_ = getFuncName <$> job
 
 workload :: (FromBS a, Show a, Monad m) => JobT tp m a
 workload = fromBS . unWL <$> workload_
 
 workload_ :: Monad m => JobT tp m Workload
-workload_ = getWorkload <$> env
+workload_ = getWorkload <$> job
 
 count :: Monad m => JobT tp m Int
-count = getCount <$> env
+count = getCount <$> job
 
 timeout :: Monad m => JobT tp m Int
-timeout = getTimeout <$> env
+timeout = getTimeout <$> job
 
 workDone
   :: (MonadUnliftIO m, Transport tp)
@@ -69,48 +77,47 @@ workDone_
   :: (MonadUnliftIO m, Transport tp)
   => ByteString -> JobT tp m ()
 workDone_ w = do
-  h <- getHandle <$> env
-  withAgentT $ send (WorkDone h w)
+  h <- getHandle <$> job
+  withSessionT Nothing $ send (packetREQ $ WorkDone h w)
 
 workFail
   :: (MonadUnliftIO m, Transport tp)
   =>  JobT tp m ()
 workFail = do
-  h <- getHandle <$> env
-  withAgentT $ send (WorkFail h)
+  h <- getHandle <$> job
+  withSessionT Nothing $ send (packetREQ $ WorkFail h)
 
 schedLater
   :: (MonadUnliftIO m, Transport tp)
   =>  Int64 -> JobT tp m ()
 schedLater later = do
-  h <- getHandle <$> env
-  withAgentT $ send (SchedLater h later 0)
+  h <- getHandle <$> job
+  withSessionT Nothing $ send (packetREQ $ SchedLater h later 0)
 
 schedLater'
   :: (MonadUnliftIO m, Transport tp)
   =>  Int64 -> Int -> JobT tp m ()
 schedLater' later step = do
-  h <- getHandle <$> env
-  withAgentT $ send (SchedLater h later step)
+  h <- getHandle <$> job
+  withSessionT Nothing $ send (packetREQ $ SchedLater h later step)
 
 acquireLock
   :: (MonadUnliftIO m, Transport tp)
   => LockName -> Int -> JobT tp m Bool
 acquireLock n maxCount = do
-  h <- getHandle <$> env
-  withAgentT $ do
-    send (Acquire n maxCount h)
-    r <- receive
-    case r of
-      Right (Acquired v) -> pure v
-      _                  -> pure False
+  h <- getHandle <$> job
+  getResult False getAcq <$> request Nothing (packetREQ (Acquire n maxCount h))
+
+  where getAcq :: ServerCommand -> Bool
+        getAcq (Acquired v) = v
+        getAcq _            = False
 
 releaseLock
   :: (MonadUnliftIO m, Transport tp)
   => LockName -> JobT tp m ()
 releaseLock n = do
-  h <- getHandle <$> env
-  withAgentT $ send (Release n h)
+  h <- getHandle <$> job
+  withSessionT Nothing $ send (packetREQ $ Release n h)
 
 withLock_
   :: (MonadUnliftIO m, Transport tp)

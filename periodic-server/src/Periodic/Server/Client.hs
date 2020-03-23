@@ -125,7 +125,7 @@ handleWorkerSessionT _ (WC.Release n jh) = lift $ releaseLock n jh
 
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
-  => ClientConfig -> SessionT ClientConfig Command tp (SchedT db tp m) ()
+  => SessionT ClientConfig Command tp (SchedT db tp m) ()
 handleSessionT = do
   mcmd <- receive
   case mcmd of

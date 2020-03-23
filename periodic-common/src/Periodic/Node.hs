@@ -4,6 +4,7 @@ module Periodic.Node
   , NodeT
   , SessionT
   , SessionEnv
+  , SessionEnv1
   , NodeEnvList
   , runNodeT
   , sessionGen
@@ -12,7 +13,8 @@ module Periodic.Node
 
 import           Metro.IOHashMap   (IOHashMap)
 import qualified Metro.Node        as M (NodeEnv1, NodeT, runNodeT1)
-import qualified Metro.Session     as M (SessionEnv1, SessionT, getSessionId)
+import qualified Metro.Session     as M (SessionEnv, SessionEnv1, SessionT,
+                                         getSessionId)
 import           Periodic.Types    (Msgid (..), Nid (..), Packet, msgidLength)
 import           System.Entropy    (getEntropy)
 import           System.Log.Logger (errorM)
@@ -24,7 +26,8 @@ type NodeT u rpkt = M.NodeT u Nid Msgid (Packet rpkt)
 
 type SessionT u rpkt = M.SessionT u Nid Msgid (Packet rpkt)
 
-type SessionEnv u rpkt = M.SessionEnv1 u Nid Msgid (Packet rpkt)
+type SessionEnv u rpkt = M.SessionEnv u Nid Msgid (Packet rpkt)
+type SessionEnv1 u rpkt = M.SessionEnv1 u Nid Msgid (Packet rpkt)
 
 sessionGen :: IO Msgid
 sessionGen = Msgid <$> getEntropy msgidLength

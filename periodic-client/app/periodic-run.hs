@@ -17,13 +17,13 @@ import           Data.Maybe                    (fromMaybe)
 import qualified Data.Text                     as T (unpack)
 import           Data.Text.Encoding            (decodeUtf8With)
 import           Data.Text.Encoding.Error      (ignore)
-import           Periodic.Socket               (getHost, getService)
+import           Metro.Class                   (Transport)
+import           Metro.Socket                  (getHost, getService)
+import           Metro.TP.Socket               (socket)
 import           Periodic.Trans.Job            (JobT, name, withLock_, workDone,
                                                 workDone_, workFail, workload)
 import           Periodic.Trans.Worker         (WorkerT, addFunc, broadcast,
                                                 runWorkerT, work)
-import           Periodic.Transport            (Transport)
-import           Periodic.Transport.Socket     (socketUri)
 import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)
 import           Periodic.Transport.WebSockets (clientConfig)
 import           Periodic.Transport.XOR        (xorConfig)
@@ -42,22 +42,22 @@ import           UnliftIO                      (MVar, SomeException, evaluate,
 
 
 data Options = Options
-  { host      :: String
-  , xorFile   :: FilePath
-  , useTls    :: Bool
-  , useWs     :: Bool
-  , hostName  :: String
-  , certKey   :: FilePath
-  , cert      :: FilePath
-  , caStore   :: FilePath
-  , thread    :: Int
-  , lockCount :: Int
-  , lockName  :: Maybe LockName
-  , notify    :: Bool
-  , useData   :: Bool
-  , useName   :: Bool
-  , showHelp  :: Bool
-  }
+    { host      :: String
+    , xorFile   :: FilePath
+    , useTls    :: Bool
+    , useWs     :: Bool
+    , hostName  :: String
+    , certKey   :: FilePath
+    , cert      :: FilePath
+    , caStore   :: FilePath
+    , thread    :: Int
+    , lockCount :: Int
+    , lockName  :: Maybe LockName
+    , notify    :: Bool
+    , useData   :: Bool
+    , useName   :: Bool
+    , showHelp  :: Bool
+    }
 
 options :: Maybe Int -> Maybe String -> Maybe String -> Options
 options t h f = Options
@@ -157,17 +157,17 @@ doWork opts@Options{..} func cmd argv = do
 
 run :: Options -> FuncName -> String -> [String] -> IO ()
 run opts@Options {useTls = True, ..} func cmd argv = do
-  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
-  runWorkerT (tlsConfig prms (socketUri host)) $ doWork opts func cmd argv
+  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ fromMaybe "" $ getService host)
+  runWorkerT (tlsConfig prms (socket host)) $ doWork opts func cmd argv
 
 run opts@Options {useWs = True, ..} func cmd argv =
-  runWorkerT (clientConfig (socketUri host) (fromMaybe "0.0.0.0" $ getHost host) (getService host)) $ doWork opts func cmd argv
+  runWorkerT (clientConfig (socket host) (fromMaybe "0.0.0.0" $ getHost host) (fromMaybe "" $ getService host)) $ doWork opts func cmd argv
 
 run opts@Options {xorFile = "", ..} func cmd argv =
-  runWorkerT (socketUri host) $ doWork opts func cmd argv
+  runWorkerT (socket host) $ doWork opts func cmd argv
 
 run opts@Options {..} func cmd argv =
-  runWorkerT (xorConfig xorFile $ socketUri host) $ doWork opts func cmd argv
+  runWorkerT (xorConfig xorFile $ socket host) $ doWork opts func cmd argv
 
 processWorker :: Transport tp => Options -> String -> [String] -> JobT tp IO ()
 processWorker Options{..} cmd argv = do

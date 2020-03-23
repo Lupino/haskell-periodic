@@ -1,7 +1,13 @@
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module Periodic.Trans.Worker
   ( WorkerT
@@ -16,118 +22,177 @@ module Periodic.Trans.Worker
 
 import           Control.Monad                (forever, replicateM, unless,
                                                void, when)
-import           Data.Byteable                (toBytes)
-import           Data.Maybe                   (fromJust, isJust)
-import           Periodic.Agent               (AgentEnv, readerSize, receive,
-                                               runAgentT, send)
-import           Periodic.Connection          (fromConn, initClientConnEnv)
-import qualified Periodic.Connection          as Conn
-import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap           as HM (delete, insert, lookup)
+import           Control.Monad.Reader.Class   (MonadReader (ask))
+import           Control.Monad.Trans.Class    (MonadTrans, lift)
+import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
+import           Data.Maybe                   (isJust)
+import           Metro.Class                  (Transport, TransportConfig)
+import           Metro.Conn                   (initConnEnv, runConnT)
+import qualified Metro.Conn                   as Conn
+import           Metro.IOHashMap              (IOHashMap, newIOHashMap)
+import qualified Metro.IOHashMap              as HM (delete, insert, lookup)
+import           Metro.Node                   (NodeMode (..), SessionMode (..),
+                                               initEnv1, newSessionEnv,
+                                               nextSessionId, request,
+                                               runSessionT_,
+                                               setDefaultSessionTimeout,
+                                               setNodeMode, setSessionMode,
+                                               startNodeT, stopNodeT, withEnv,
+                                               withSessionT)
+import           Metro.Session                (readerSize, receive, send)
 import           Periodic.Node
-import           Periodic.Trans.Job           (JobT, func_, name, workFail)
-import           Periodic.Transport           (Transport, TransportConfig)
+import           Periodic.Trans.Job           (JobEnv, JobT, func_, name,
+                                               workFail)
 import           Periodic.Types               (ClientType (TypeWorker),
-                                               FuncName, Job)
+                                               getClientType, getResult,
+                                               packetREQ, regPacketREQ)
+import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
 import           System.Log.Logger            (errorM)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
-type TaskList tp m = IOHashMap FuncName (JobT tp m ())
-type WorkerT tp m = NodeT (TaskList tp m) tp m
+data WorkerEnv tp m = WorkerEnv (IOHashMap FuncName (JobT tp m ()))
+
+newtype WorkerT tp m a = WorkerT {unWorkerT :: ReaderT (WorkerEnv tp m) (JobT tp m) a}
+  deriving
+    ( Functor
+    , Applicative
+    , Monad
+    , MonadIO
+    , MonadReader (WorkerEnv tp m)
+    )
+
+instance MonadUnliftIO m => MonadUnliftIO (WorkerT tp m) where
+  askUnliftIO = WorkerT $
+    ReaderT $ \r ->
+      withUnliftIO $ \u ->
+        return (UnliftIO (unliftIO u . runWorkerT_ r))
+  withRunInIO inner = WorkerT $
+    ReaderT $ \r ->
+      withRunInIO $ \run ->
+        inner (run . runWorkerT_ r)
+
+instance MonadTrans (WorkerT tp) where
+  lift = WorkerT . lift . lift
+
+runWorkerT_ :: WorkerEnv tp m -> WorkerT tp m a -> JobT tp m a
+runWorkerT_ workerEnv = flip runReaderT workerEnv . unWorkerT
+
+-- type WorkerT tp m = NodeT (TaskList tp m) ServerCommand tp m
+-- type WSessionEnv = SessionEnv ServerCommand
 
 runWorkerT
   :: (MonadUnliftIO m, Transport tp)
-  => TransportConfig tp -> WorkerT tp m a -> m a
+  => TransportConfig tp -> WorkerT tp m () -> m ()
 runWorkerT config m = do
-  connEnv <- initClientConnEnv config
-  Conn.runConnectionT connEnv $ do
-    Conn.send $ toBytes TypeWorker
-    void Conn.receive
+  connEnv <- initConnEnv config
+  r <- runConnT connEnv $ do
+    Conn.send $ regPacketREQ TypeWorker
+    Conn.receive
 
-    taskList <- newIOHashMap
-    env0 <- initEnv taskList
+  let nid = case getClientType r of
+              Data v -> v
+              _      -> ""
 
-    runNodeT env0 $ do
-      void $ async $ forever $ do
+  workerEnv <- WorkerEnv <$> newIOHashMap
+  jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) sessionGen
+
+  runNodeT jobEnv1 $ do
+
+    void $ async $ startNodeT defaultSessionHandler
+    runWorkerT_ workerEnv $ do
+      void . async $ forever $ do
         threadDelay $ 100 * 1000 * 1000
         checkHealth
-      void $ async startMainLoop
       m
 
+  where mapEnv =
+          setNodeMode Multi
+          . setSessionMode SingleAction
+          . setDefaultSessionTimeout 100
+
+
+liftJob :: Monad m => JobT tp m a -> WorkerT tp m a
+liftJob = WorkerT . lift
+
 close :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
-close = stopNodeT
+close = liftJob stopNodeT
 
 ping :: (MonadUnliftIO m, Transport tp) => WorkerT tp m Bool
-ping = withAgentT $ do
-  send Ping
-  ret <- receive
-  case ret of
-    Left _     -> return False
-    Right Pong -> return True
-    Right _    -> return False
+ping = liftJob $ getResult False isPong <$> request Nothing (packetREQ Ping)
 
 addFunc
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> JobT tp m () -> WorkerT tp m ()
 addFunc f j = do
-  withAgentT $ send (CanDo f)
-  ref <- env
+  liftJob $ withSessionT Nothing $ send (packetREQ $ CanDo f)
+  WorkerEnv ref <- ask
   HM.insert ref f j
 
 broadcast
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> JobT tp m () -> WorkerT tp m ()
 broadcast f j = do
-  withAgentT $ send (Broadcast f)
-  ref <- env
+  liftJob $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
+  WorkerEnv ref <- ask
   HM.insert ref f j
 
 removeFunc
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> WorkerT tp m ()
 removeFunc f = do
-  withAgentT $ send (CantDo f)
-  ref <- env
+  wEnv <- ask
+  liftJob $ removeFunc_ wEnv f
+
+removeFunc_
+  :: (MonadUnliftIO m, Transport tp)
+  => WorkerEnv tp m -> FuncName -> JobT tp m ()
+removeFunc_ (WorkerEnv ref) f = do
+  withSessionT Nothing $ send (packetREQ $ CantDo f)
   HM.delete ref f
 
 grabJob
   :: (MonadUnliftIO m, Transport tp)
-  => AgentEnv -> WorkerT tp m (Maybe Job)
-grabJob agentEnv = do
-  pl <- fromConn . runAgentT agentEnv $ do
+  => JobEnv -> JobT tp m (Maybe Job)
+grabJob jobEnv = do
+  pl <- runSessionT_ jobEnv $ do
     size <- readerSize
-    when (size == 0) $ send GrabJob
+    when (size == 0) $ send $ packetREQ GrabJob
     timeout 10000000 receive
 
   case pl of
-    Nothing                      -> pure Nothing
-    Just (Right (JobAssign job)) -> pure (Just job)
-    _                            -> pure Nothing
+    Nothing   -> pure Nothing
+    Just rpkt -> pure $ getResult Nothing getAssignJob rpkt
+
+  where getAssignJob :: ServerCommand -> Maybe Job
+        getAssignJob (JobAssign job) = Just job
+        getAssignJob _               = Nothing
 
 
 work
   :: (MonadUnliftIO m, Transport tp)
   => Int -> WorkerT tp m ()
 work size = do
-  asyncs <- replicateM size $ async work_
-  void $ waitAnyCancel asyncs
+  wEnv <- ask
+  liftJob $ do
+    asyncs <- replicateM size $ async $ work_ wEnv
+    void $ waitAnyCancel asyncs
 
-work_ :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
-work_ = do
-  taskList <- env
-  agentEnv <- newAgentEnv
+work_ :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> JobT tp m ()
+work_ (WorkerEnv taskList) = do
+  sid <- nextSessionId
+  jobEnv <- newSessionEnv Nothing sid
   forever $ do
-    j <- grabJob agentEnv
+    j <- grabJob jobEnv
     when (isJust j) $
-      withEnv (fromJust j) $ do
+      withEnv j $ do
         f <- func_
         task <- HM.lookup taskList f
         case task of
           Nothing -> do
-            withEnv taskList $ removeFunc f
+            removeFunc_ (WorkerEnv taskList) f
             workFail
           Just task' ->
             catchAny task' $ \e -> do
