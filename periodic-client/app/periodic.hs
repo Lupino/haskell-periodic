@@ -15,10 +15,10 @@ import qualified Data.ByteString.Char8         as B (lines, pack, putStr,
 import           Data.Int                      (Int64)
 import           Data.List                     (isPrefixOf, transpose)
 import           Data.Maybe                    (fromMaybe)
-import           Periodic.Socket               (getHost, getService)
+import           Metro.Class                   (Transport)
+import           Metro.Socket                  (getHost, getService)
+import           Metro.TP.Socket               (socket)
 import           Periodic.Trans.Client
-import           Periodic.Transport            (Transport)
-import           Periodic.Transport.Socket     (socketUri)
 import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)
 import           Periodic.Transport.WebSockets (clientConfig)
 import           Periodic.Transport.XOR        (xorConfig)
@@ -34,17 +34,16 @@ import qualified Text.PrettyPrint.Boxes        as T
 
 
 data Command = Status
-             | Submit
-             | Run
-             | Remove
-             | Drop
-             | Config
-             | Shutdown
-             | Dump
-             | Load
-             | Help
-
-  deriving (Eq)
+    | Submit
+    | Run
+    | Remove
+    | Drop
+    | Config
+    | Shutdown
+    | Dump
+    | Load
+    | Help
+    deriving (Eq)
 
 parseCommand :: String -> Command
 parseCommand "status"   = Status
@@ -58,15 +57,16 @@ parseCommand "dump"     = Dump
 parseCommand "load"     = Load
 parseCommand _          = Help
 
-data Options = Options { host     :: String
-                       , xorFile  :: FilePath
-                       , useTls   :: Bool
-                       , useWs    :: Bool
-                       , hostName :: String
-                       , certKey  :: FilePath
-                       , cert     :: FilePath
-                       , caStore  :: FilePath
-                       }
+data Options = Options
+    { host     :: String
+    , xorFile  :: FilePath
+    , useTls   :: Bool
+    , useWs    :: Bool
+    , hostName :: String
+    , certKey  :: FilePath
+    , cert     :: FilePath
+    , caStore  :: FilePath
+    }
 
 options :: Maybe String -> Maybe String -> Options
 options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
@@ -247,20 +247,20 @@ main = do
   run opts cmd argv
 
 run Options {useTls = True, ..} cmd argv = do
-  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
-  clientEnv <- open (tlsConfig prms (socketUri host))
+  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ fromMaybe "" $ getService host)
+  clientEnv <- open (tlsConfig prms (socket host))
   runClientT clientEnv $ processCommand cmd argv
 
 run Options {useWs = True, ..} cmd argv = do
-  clientEnv <- open (clientConfig (socketUri host) (fromMaybe "0.0.0.0" $ getHost host) (getService host))
+  clientEnv <- open (clientConfig (socket host) (fromMaybe "0.0.0.0" $ getHost host) (fromMaybe "" $ getService host))
   runClientT clientEnv $ processCommand cmd argv
 
 run Options {xorFile = "", ..} cmd argv = do
-  clientEnv <- open (socketUri host)
+  clientEnv <- open (socket host)
   runClientT clientEnv $ processCommand cmd argv
 
 run Options {..} cmd argv = do
-  clientEnv <- open (xorConfig xorFile $ socketUri host)
+  clientEnv <- open (xorConfig xorFile $ socket host)
   runClientT clientEnv $ processCommand cmd argv
 
 processCommand :: Transport tp => Command -> [String] -> ClientT tp IO ()

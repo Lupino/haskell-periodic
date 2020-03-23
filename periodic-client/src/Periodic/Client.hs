@@ -21,16 +21,16 @@ module Periodic.Client
   , shutdown
   ) where
 
-import           Periodic.Trans.Client     hiding (ClientEnv, open)
-import qualified Periodic.Trans.Client     as C (ClientEnv, open)
-import           Periodic.Transport.Socket (Socket, socketUri)
+import           Metro.TP.Socket       (Socket, socket)
+import           Periodic.Trans.Client hiding (ClientEnv, open)
+import qualified Periodic.Trans.Client as C (ClientEnv, open)
 
 type ClientM = ClientT Socket IO
 
 type ClientEnv = C.ClientEnv Socket
 
 open :: String -> IO ClientEnv
-open = C.open . socketUri
+open = C.open . socket
 
 runClientM :: ClientEnv -> ClientM a -> IO a
 runClientM = runClientT

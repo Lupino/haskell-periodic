@@ -23,7 +23,8 @@ import           Periodic.Server.Client    (handleSessionT)
 import           Periodic.Server.Persist   (Persist, PersistConfig)
 import           Periodic.Server.Scheduler (failJob, initSchedEnv, removeFunc,
                                             runSchedT, shutdown, startSchedT)
-import           Periodic.Server.Types     (ClientConfig (..), Command)
+import           Periodic.Server.Types     (ClientConfig (..), Command,
+                                            ServerCommand (Data))
 import           Periodic.Types            (ClientType, Msgid, Nid (..), Packet,
                                             getClientType, regPacketRES)
 import           System.Entropy            (getEntropy)
@@ -42,7 +43,7 @@ startServer dbconfig mk config = do
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ connEnv -> do
     (_ :: ClientType) <- getClientType <$> runConnT connEnv receive
     nid <- getEntropy 4
-    runConnT connEnv $ send (regPacketRES nid)
+    runConnT connEnv $ send (regPacketRES $ Data nid)
     wFuncList <- newIOList
     wJobQueue <- newIOList
     return $ Just (Nid nid, ClientConfig {..})

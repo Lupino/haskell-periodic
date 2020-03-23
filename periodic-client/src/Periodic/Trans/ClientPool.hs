@@ -6,9 +6,9 @@ module Periodic.Trans.ClientPool
   ) where
 
 import           Data.Pool             (Pool, createPool, withResource)
+import           Metro.Class           (Transport, TransportConfig)
 import           Periodic.Trans.Client hiding (close)
 import qualified Periodic.Trans.Client as C (close)
-import           Periodic.Transport    (Transport, TransportConfig)
 
 type ClientPoolEnv tp = Pool (ClientEnv tp)
 

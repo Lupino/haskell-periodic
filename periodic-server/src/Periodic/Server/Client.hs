@@ -29,7 +29,6 @@ import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job           (getFuncName, initJob)
 import           Periodic.Types.Packet        (getPacketData, packetRES)
-import           Periodic.Types.ServerCommand
 import qualified Periodic.Types.WorkerCommand as WC
 import           Prelude                      hiding (elem)
 import           System.Log.Logger            (errorM)
@@ -60,7 +59,7 @@ handleClientSessionT (CC.RunJob job) = do
 
 handleClientSessionT CC.Status = do
   stats <- lift $ map toBytes <$> status
-  send $ packetRES $ B.intercalate "\n" stats
+  send . packetRES . Data $ B.intercalate "\n" stats
 
 handleClientSessionT CC.Ping = send $ packetRES Pong
 
@@ -81,7 +80,7 @@ handleClientSessionT (CC.ConfigSet (ConfigKey key) v) = do
   lift $ setConfigInt key v
   send $ packetRES Success
 
-handleClientSessionT CC.Dump = send =<< lift (packetRES . toStrict . encode <$> dumpJob)
+handleClientSessionT CC.Dump = send =<< lift (packetRES . Data . toStrict . encode <$> dumpJob)
 
 handleClientSessionT (CC.Load jobs) = do
   lift $ mapM_ pushJob jobs
@@ -126,7 +125,7 @@ handleWorkerSessionT _ (WC.Release n jh) = lift $ releaseLock n jh
 
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
-  => SessionT ClientConfig Command tp (SchedT db tp m) ()
+  => ClientConfig -> SessionT ClientConfig Command tp (SchedT db tp m) ()
 handleSessionT = do
   mcmd <- receive
   case mcmd of

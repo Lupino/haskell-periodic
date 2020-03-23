@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Periodic.Types.ServerCommand
   ( ServerCommand (..)
+  , isSuccess
+  , isPong
   ) where
 
 import           Periodic.Types.Internal
@@ -43,7 +45,7 @@ instance Binary ServerCommand where
         pure $ Acquired $ v == 1
       29 -> pure NoWorker
       30 -> Data . toStrict <$> getRemainingLazyByteString
-      _ -> error $ "Error ServerCommand " ++ show tp
+      _  -> error $ "Error ServerCommand" ++ show tp
 
   put Noop            = putWord8 0
   put (JobAssign job) = do
@@ -71,3 +73,12 @@ instance Validatable ServerCommand where
   validate (JobAssign job) = validate job
   validate (Config v)      = validateNum "ConfigValue" 0 0xFFFFFFFF v
   validate _               = Right ()
+
+
+isSuccess :: ServerCommand -> Bool
+isSuccess Success = True
+isSuccess _       = False
+
+isPong :: ServerCommand -> Bool
+isPong Pong = True
+isPong _    = False

@@ -8,6 +8,7 @@ module Periodic.Types.Packet
   , getPacketMagic
   , packetREQ
   , packetRES
+  , getResult
 
   , RegPacket
   , regPacketREQ
@@ -131,6 +132,10 @@ packetREQ = Packet REQ (CRC32 0) (Msgid "0000")
 
 packetRES :: a -> Packet a
 packetRES = Packet RES (CRC32 0) (Msgid "0000")
+
+getResult :: a -> (b -> a) -> Maybe (Packet b) -> a
+getResult defv _ Nothing  = defv
+getResult _ f (Just rpkt) = f (getPacketData rpkt)
 
 data RegPacket a = RegPacket
     { regMagic :: Magic

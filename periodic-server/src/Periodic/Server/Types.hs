@@ -2,6 +2,7 @@ module Periodic.Server.Types
   ( Command (..)
   , ClientConfig (..)
   , CSEnv
+  , ServerCommand (..)
   ) where
 import           Data.Binary                  (Binary (..), getWord8)
 import           Data.Binary.Get              (lookAhead)
@@ -9,6 +10,7 @@ import           Periodic.IOList              (IOList)
 import           Periodic.Node                (SessionEnv)
 import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Job           (FuncName, JobHandle)
+import           Periodic.Types.ServerCommand (ServerCommand (..))
 import qualified Periodic.Types.WorkerCommand as WC
 
 data Command = CC CC.ClientCommand
