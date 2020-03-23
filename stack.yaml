@@ -48,7 +48,13 @@ flags: {}
 # Extra package databases containing global packages
 extra-package-dbs: []
 
-# extra-deps: []
+extra-deps:
+- direct-sqlite-2.3.26@sha256:04e835402f1508abca383182023e4e2b9b86297b8533afbd4e57d1a5652e0c23,3718
+- git: https://github.com/Lupino/metro.git
+  commit: cfcd415c2330f1a737bc8511fca1206e060b53ab
+  subdirs:
+  - metro-socket
+  - .
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true
