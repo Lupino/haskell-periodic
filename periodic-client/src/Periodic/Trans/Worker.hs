@@ -22,7 +22,7 @@ module Periodic.Trans.Worker
 
 import           Control.Monad                (forever, replicateM, unless,
                                                void, when)
-import           Control.Monad.Reader.Class   (MonadReader (ask))
+import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
 import           Data.Maybe                   (isJust)
@@ -40,6 +40,7 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                startNodeT, stopNodeT, withEnv,
                                                withSessionT)
 import           Metro.Session                (readerSize, receive, send)
+import           Periodic.IOList              (IOList, newIOList)
 import           Periodic.Node
 import           Periodic.Trans.Job           (JobEnv, JobT, func_, name,
                                                workFail)
@@ -53,7 +54,12 @@ import           System.Log.Logger            (errorM)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
-data WorkerEnv tp m = WorkerEnv (IOHashMap FuncName (JobT tp m ()))
+type TaskList tp m = IOHashMap FuncName (JobT tp m ())
+
+data WorkerEnv tp m = WorkerEnv
+    { taskList :: TaskList tp m
+    , jobQueue :: IOList Job
+    }
 
 newtype WorkerT tp m a = WorkerT {unWorkerT :: ReaderT (WorkerEnv tp m) (JobT tp m) a}
   deriving
@@ -80,9 +86,6 @@ instance MonadTrans (WorkerT tp) where
 runWorkerT_ :: WorkerEnv tp m -> WorkerT tp m a -> JobT tp m a
 runWorkerT_ workerEnv = flip runReaderT workerEnv . unWorkerT
 
--- type WorkerT tp m = NodeT (TaskList tp m) ServerCommand tp m
--- type WSessionEnv = SessionEnv ServerCommand
-
 runWorkerT
   :: (MonadUnliftIO m, Transport tp)
   => TransportConfig tp -> WorkerT tp m () -> m ()
@@ -96,13 +99,15 @@ runWorkerT config m = do
               Data v -> v
               _      -> ""
 
-  workerEnv <- WorkerEnv <$> newIOHashMap
+  taskList <- newIOHashMap
+  jobQueue <- newIOList
+
   jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) sessionGen
 
   runNodeT jobEnv1 $ do
 
     void $ async $ startNodeT defaultSessionHandler
-    runWorkerT_ workerEnv $ do
+    runWorkerT_ WorkerEnv {..} $ do
       void . async $ forever $ do
         threadDelay $ 100 * 1000 * 1000
         checkHealth
@@ -128,7 +133,7 @@ addFunc
   => FuncName -> JobT tp m () -> WorkerT tp m ()
 addFunc f j = do
   liftJob $ withSessionT Nothing $ send (packetREQ $ CanDo f)
-  WorkerEnv ref <- ask
+  ref <- asks taskList
   HM.insert ref f j
 
 broadcast
@@ -136,20 +141,20 @@ broadcast
   => FuncName -> JobT tp m () -> WorkerT tp m ()
 broadcast f j = do
   liftJob $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
-  WorkerEnv ref <- ask
+  ref <- asks taskList
   HM.insert ref f j
 
 removeFunc
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> WorkerT tp m ()
 removeFunc f = do
-  wEnv <- ask
-  liftJob $ removeFunc_ wEnv f
+  tskList <- asks taskList
+  liftJob $ removeFunc_ tskList f
 
 removeFunc_
   :: (MonadUnliftIO m, Transport tp)
-  => WorkerEnv tp m -> FuncName -> JobT tp m ()
-removeFunc_ (WorkerEnv ref) f = do
+  => TaskList tp m -> FuncName -> JobT tp m ()
+removeFunc_ ref f = do
   withSessionT Nothing $ send (packetREQ $ CantDo f)
   HM.delete ref f
 
@@ -166,47 +171,50 @@ grabJob jobEnv = do
     Nothing   -> pure Nothing
     Just rpkt -> pure $ getResult Nothing getAssignJob rpkt
 
-  where getAssignJob :: ServerCommand -> Maybe Job
-        getAssignJob (JobAssign job) = Just job
-        getAssignJob _               = Nothing
-
+getAssignJob :: ServerCommand -> Maybe Job
+getAssignJob (JobAssign job) = Just job
+getAssignJob _               = Nothing
 
 work
   :: (MonadUnliftIO m, Transport tp)
   => Int -> WorkerT tp m ()
 work size = do
-  wEnv <- ask
+  tskList <- asks taskList
   liftJob $ do
-    asyncs <- replicateM size $ async $ work_ wEnv
+    asyncs <- replicateM size $ async $ work_ tskList
     void $ waitAnyCancel asyncs
 
-work_ :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> JobT tp m ()
-work_ (WorkerEnv taskList) = do
+work_ :: (MonadUnliftIO m, Transport tp) => TaskList tp m -> JobT tp m ()
+work_ tskList = do
   sid <- nextSessionId
-  jobEnv <- newSessionEnv Nothing sid
+  jobEnv <- newSessionEnv (Just (-1)) sid
   forever $ do
     j <- grabJob jobEnv
-    when (isJust j) $
-      withEnv j $ do
-        f <- func_
-        task <- HM.lookup taskList f
-        case task of
-          Nothing -> do
-            removeFunc_ (WorkerEnv taskList) f
+    processJob tskList j
+
+processJob :: (MonadUnliftIO m, Transport tp) => TaskList tp m -> Maybe Job -> JobT tp m ()
+processJob tskList mjob = do
+  when (isJust mjob) $
+    withEnv mjob $ do
+      f <- func_
+      task <- HM.lookup tskList f
+      case task of
+        Nothing -> do
+          removeFunc_ tskList f
+          workFail
+        Just task' ->
+          catchAny task' $ \e -> do
+            n <- name
+            liftIO $ errorM "Periodic.Trans.Worker"
+                   $ concat [ "Failing on running job { name = "
+                            , n
+                            , ", "
+                            , show f
+                            , " }"
+                            , "\nError: "
+                            , show e
+                            ]
             workFail
-          Just task' ->
-            catchAny task' $ \e -> do
-              n <- name
-              liftIO $ errorM "Periodic.Worker"
-                     $ concat [ "Failing on running job { name = "
-                              , n
-                              , ", "
-                              , show f
-                              , " }"
-                              , "\nError: "
-                              , show e
-                              ]
-              workFail
 
 checkHealth
   :: (MonadUnliftIO m, Transport tp)
