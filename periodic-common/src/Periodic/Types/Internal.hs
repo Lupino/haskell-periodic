@@ -9,6 +9,9 @@ module Periodic.Types.Internal
   , Validatable (..)
   , validateLength
   , validateNum
+  , Nid (..)
+  , Msgid (..)
+  , msgidLength
   ) where
 
 import           Data.Binary              (Binary (..))
@@ -104,3 +107,17 @@ instance Validatable LockName where
 
 instance Validatable ConfigKey where
   validate (ConfigKey k) = validateLength "ConfigKey" 1 255 $ length k
+
+newtype Nid = Nid ByteString
+  deriving (Generic, Eq, Ord, Show)
+
+instance Hashable Nid
+
+newtype Msgid = Msgid ByteString
+  deriving (Generic, Eq, Ord, Show)
+
+instance Hashable Msgid
+
+
+msgidLength :: Int
+msgidLength = 4

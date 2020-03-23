@@ -52,33 +52,38 @@ import qualified Data.HashPSQ                 as PSQ
 import           Data.Int                     (Int64)
 import qualified Data.List                    as L (delete, nub, uncons)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
-import           Periodic.Agent               (AgentEnv', aAlive, runAgentT',
-                                               send)
-import           Periodic.IOHashMap           (IOHashMap, newIOHashMap)
-import qualified Periodic.IOHashMap           as FL
+import           Metro.Class                  (Transport)
+import           Metro.IOHashMap              (IOHashMap, newIOHashMap)
+import qualified Metro.IOHashMap              as FL
+import qualified Metro.Lock                   as L (Lock, new, with)
+import           Metro.Session                (runSessionT1, send, sessionState)
+import           Metro.Utils                  (getEpochTime)
 import           Periodic.IOList              (IOList)
 import qualified Periodic.IOList              as IL
-import qualified Periodic.Lock                as L (Lock, new, with)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
 import           Periodic.Server.Persist      (Persist, State (..))
 import qualified Periodic.Server.Persist      as P
-import           Periodic.Transport           (Transport)
+import           Periodic.Server.Types        (CSEnv)
+import           Periodic.Types               (packetRES)
 import           Periodic.Types.Internal      (LockName)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
-import           Periodic.Utils               (getEpochTime)
 import           System.Log.Logger            (errorM, infoM)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
-data Action = Add Job | Remove Job | Cancel | PollJob | TryPoll JobHandle
+data Action = Add Job
+    | Remove Job
+    | Cancel
+    | PollJob
+    | TryPoll JobHandle
 
 data WaitItem = WaitItem
-  { itemTs    :: Int64
-  , itemValue :: Maybe ByteString
-  , itemWait  :: Int
-  }
+    { itemTs    :: Int64
+    , itemValue :: Maybe ByteString
+    , itemWait  :: Int
+    }
 
 -- Cache runJob result
 --                                   expiredAt, Nothing       retrySTM
@@ -90,24 +95,32 @@ type WaitList = IOHashMap JobHandle WaitItem
 type LockList = IOHashMap LockName ([JobHandle], [JobHandle])
 
 data SchedEnv db tp = SchedEnv
-  { sPollInterval   :: TVar Int -- main poll loop every time interval
-  , sRevertInterval :: TVar Int -- revert process queue loop every time interval
-  , sTaskTimeout    :: TVar Int -- the task do timeout
-  , sMaxBatchSize   :: TVar Int -- max poll batch size
-  , sKeepalive      :: TVar Int -- client or worker keepalive
-  , sExpiration     :: TVar Int -- run job cache expiration
-  , sAutoPoll       :: TVar Bool -- auto poll job when job done or failed
-  , sPolled         :: TVar Bool -- auto poll lock
-  , sCleanup        :: IO ()
-  , sFuncStatList   :: FuncStatList
-  , sLocker         :: L.Lock
-  , sGrabQueue      :: GrabQueue tp
-  , sAlive          :: TVar Bool -- sched state, when false sched is exited.
-  , sChanList       :: TVar [Action]
-  , sWaitList       :: WaitList
-  , sLockList       :: LockList
-  , sPersist        :: db
-  }
+    { sPollInterval   :: TVar Int -- main poll loop every time interval
+    -- revert process queue loop every time interval
+    , sRevertInterval :: TVar Int -- revert process queue loop every time interval
+    -- the task do timeout
+    , sTaskTimeout    :: TVar Int -- the task do timeout
+    -- max poll batch size
+    , sMaxBatchSize   :: TVar Int -- max poll batch size
+    -- client or worker keepalive
+    , sKeepalive      :: TVar Int -- client or worker keepalive
+    -- run job cache expiration
+    , sExpiration     :: TVar Int -- run job cache expiration
+    -- auto poll job when job done or failed
+    , sAutoPoll       :: TVar Bool -- auto poll job when job done or failed
+    -- auto poll lock
+    , sPolled         :: TVar Bool -- auto poll lock
+    , sCleanup        :: IO ()
+    , sFuncStatList   :: FuncStatList
+    , sLocker         :: L.Lock
+    , sGrabQueue      :: GrabQueue tp
+    -- sched state, when false sched is exited.
+    , sAlive          :: TVar Bool -- sched state, when false sched is exited.
+    , sChanList       :: TVar [Action]
+    , sWaitList       :: WaitList
+    , sLockList       :: LockList
+    , sPersist        :: db
+    }
 
 newtype SchedT db tp m a = SchedT {unSchedT :: ReaderT (SchedEnv db tp) m a}
   deriving
@@ -462,7 +475,7 @@ schedJob_ taskList job = do
         popAgentThen tl = do
           SchedEnv{..} <- ask
           (jq, env0) <- atomically $ popAgentSTM sGrabQueue fn
-          alive <- runAgentT' env0 aAlive
+          alive <- runSessionT1 env0 sessionState
           if alive then do
             IL.insert jq (getHandle job)
             nextSchedAt <- getEpochTime
@@ -483,7 +496,7 @@ schedJob_ taskList job = do
           mapM_ (doSubmitJob . snd) agents
           unless (null agents) endSchedJob -- wait to resched the broadcast job
 
-        doSubmitJob :: (MonadUnliftIO m, Transport tp) => AgentEnv' tp -> SchedT db tp m (Either SomeException ())
+        doSubmitJob :: (MonadUnliftIO m, Transport tp) => CSEnv tp -> SchedT db tp m (Either SomeException ())
         doSubmitJob agent = do
           SchedEnv{..} <- ask
           tryAny $ assignJob agent job
@@ -575,15 +588,15 @@ dropFunc n = do
 
   pushChanList PollJob
 
-pushGrab :: MonadIO m => IOList FuncName -> IOList JobHandle -> AgentEnv' tp -> SchedT db tp m ()
+pushGrab :: MonadIO m => IOList FuncName -> IOList JobHandle -> CSEnv tp -> SchedT db tp m ()
 pushGrab funcList handleList ag = do
   queue <- asks sGrabQueue
   pushAgent queue funcList handleList ag
 
-assignJob :: (MonadUnliftIO m, Transport tp) => AgentEnv' tp -> Job -> m ()
+assignJob :: (MonadUnliftIO m, Transport tp) => CSEnv tp -> Job -> m ()
 assignJob env0 job = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("assignJob: " ++ show (getHandle job))
-  runAgentT' env0 $ send (JobAssign job)
+  runSessionT1 env0 $ send $ packetRES (JobAssign job)
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db tp m ()
 failJob jh = do

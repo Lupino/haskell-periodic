@@ -1,30 +1,27 @@
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
 module Main
-  (
-    main
+  ( main
   ) where
 
+
 import           Control.Monad                  (when)
-import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromMaybe)
 import           Data.String                    (fromString)
+import           Metro.SocketServer             (socketServer)
+import           Metro.TP.Debug                 (DebugMode (..), debugConfig)
+import           Metro.Utils                    (setupLog)
 import           Periodic.Server                (startServer)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
 import           Periodic.Server.Persist.SQLite (SQLite)
-import           Periodic.Socket                (Socket, listen)
-import           Periodic.Transport.Socket      (rawSocket)
 import           Periodic.Transport.TLS         (makeServerParams', tlsConfig)
 import           Periodic.Transport.WebSockets  (serverConfig)
 import           Periodic.Transport.XOR         (xorConfig)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
-import           System.IO                      (stderr)
-import           System.Log.Formatter           (simpleLogFormatter)
-import           System.Log.Handler             (setFormatter)
-import           System.Log.Handler.Simple      (streamHandler)
-import           System.Log.Logger
+import           System.Log                     (Priority (..))
 
 data Options = Options
     { host      :: String
@@ -101,29 +98,22 @@ main = do
 
   when showHelp printHelp
 
-  when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
-    putStrLn $ "Invalid host " ++ host
-    printHelp
-
   let sqlite = fromString storePath :: PersistConfig SQLite
 
-  removeAllHandlers
-  handle <- streamHandler stderr logLevel >>= \lh -> return $
-          setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
-  updateGlobalLogger rootLoggerName (addHandler handle . setLevel logLevel)
+  setupLog logLevel
 
-  run opts sqlite =<< listen host
+  run opts sqlite
 
-run :: Persist db => Options -> PersistConfig db -> Socket -> IO ()
-run Options {useTls = True, ..} config sock = do
+run :: Persist db => Options -> PersistConfig db -> IO ()
+run Options {useTls = True, ..} config = do
     prms <- makeServerParams' cert [] certKey caStore
-    startServer config sock $ tlsConfig prms . rawSocket
+    startServer config (tlsConfig prms) (socketServer host)
 
-run Options {useWs = True} config sock =
-    startServer config sock $ serverConfig . rawSocket
+run Options {useWs = True, host} config =
+    startServer config serverConfig (socketServer host)
 
-run Options {xorFile = ""} config sock =
-    startServer config sock rawSocket
+run Options {xorFile = "", host} config =
+    startServer config (debugConfig "Periodic" Raw) (socketServer host)
 
-run Options {xorFile = f} config sock =
-    startServer config sock $ xorConfig f . rawSocket
+run Options {xorFile = f, host} config =
+    startServer config (xorConfig f) (socketServer host)

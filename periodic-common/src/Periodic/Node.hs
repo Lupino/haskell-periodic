@@ -3,24 +3,25 @@ module Periodic.Node
   , NodeEnv
   , NodeT
   , SessionT
+  , SessionEnv
   , NodeEnvList
   , runNodeT
+  , sessionGen
   ) where
 
-import           Data.ByteString (ByteString)
 import           Metro.IOHashMap (IOHashMap)
 import qualified Metro.Node      as M (NodeEnv1, NodeT, runNodeT1)
-import qualified Metro.Session   as M (SessionT)
-import           Periodic.Types  (Msgid (..), Packet, msgidLength)
+import qualified Metro.Session   as M (SessionEnv1, SessionT)
+import           Periodic.Types  (Msgid (..), Nid (..), Packet, msgidLength)
 import           System.Entropy  (getEntropy)
-
-newtype Nid = Nid ByteString
 
 type NodeEnv u cmd = M.NodeEnv1 u Nid Msgid (Packet cmd)
 
 type NodeT u cmd = M.NodeT u Nid Msgid (Packet cmd)
 
 type SessionT u cmd = M.SessionT u Nid Msgid (Packet cmd)
+
+type SessionEnv u cmd = M.SessionEnv1 u Nid Msgid (Packet cmd)
 
 sessionGen :: IO Msgid
 sessionGen = Msgid <$> getEntropy msgidLength

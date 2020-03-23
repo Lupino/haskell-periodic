@@ -8,15 +8,16 @@ module Periodic.Server.Persist.SQLite
   ) where
 
 import           Control.Monad           (void)
+import           Data.Binary             (decodeOrFail)
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString, append)
+import           Data.ByteString.Lazy    (fromStrict)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust, listToMaybe)
 import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist
-import           Periodic.Types.Internal (runParser)
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
@@ -240,9 +241,9 @@ bindFnAndJn fn (JobName jn) stmt = do
 
 mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
 mkFoldFunc f bs acc =
-  case runParser bs of
-    Left _    -> acc
-    Right job -> f job acc
+  case decodeOrFail (fromStrict bs) of
+    Left _            -> acc
+    Right (_, _, job) -> f job acc
 
 foldStmt :: (ByteString -> a -> a) -> a -> Statement -> IO a
 foldStmt f acc stmt = do

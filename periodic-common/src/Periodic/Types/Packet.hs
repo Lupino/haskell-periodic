@@ -3,8 +3,6 @@
 
 module Periodic.Types.Packet
   ( Magic (..)
-  , Msgid (..)
-  , msgidLength
   , Packet
   , getPacketData
   , getPacketMagic
@@ -12,29 +10,24 @@ module Periodic.Types.Packet
   , packetRES
 
   , RegPacket
-  , regPacket
+  , regPacketREQ
+  , regPacketRES
   , getClientType
   ) where
 
-import           Data.Binary               (Binary (..), decode, decodeOrFail,
-                                            encode)
-import           Data.Binary.Get           (getByteString, getWord32be)
-import           Data.Binary.Put           (putByteString, putWord32be)
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString           as B (drop, empty, length)
-import           Data.ByteString.Lazy      (fromStrict, toStrict)
-import           Metro.Class               (GetPacketId (..), RecvPacket (..),
-                                            SendPacket (..), SetPacketId (..))
-import           Periodic.CRC32            (CRC32 (..), digest)
-import           Periodic.Types.ClientType (ClientType (..))
-import           Periodic.Types.Error      (Error (..))
-import           UnliftIO                  (throwIO)
-
-newtype Msgid = Msgid ByteString
-  deriving (Show, Eq)
-
-msgidLength :: Int
-msgidLength = 4
+import           Data.Binary             (Binary (..), decode, decodeOrFail,
+                                          encode)
+import           Data.Binary.Get         (getByteString, getWord32be)
+import           Data.Binary.Put         (putByteString, putWord32be)
+import           Data.ByteString         (ByteString)
+import qualified Data.ByteString         as B (drop, empty, length)
+import           Data.ByteString.Lazy    (fromStrict, toStrict)
+import           Metro.Class             (GetPacketId (..), RecvPacket (..),
+                                          SendPacket (..), SetPacketId (..))
+import           Periodic.CRC32          (CRC32 (..), digest)
+import           Periodic.Types.Error    (Error (..))
+import           Periodic.Types.Internal (Msgid (..))
+import           UnliftIO                (throwIO)
 
 data Magic = REQ
     | RES
@@ -44,12 +37,12 @@ instance Binary Magic where
   get = do
     bs <- getByteString 4
     case bs of
-      "\0REQ" -> pure REQ
-      "\0RES" -> pure RES
-      _       -> fail $ "No such magic " ++ show bs
+      "\x00REQ" -> pure REQ
+      "\x00RES" -> pure RES
+      _         -> fail $ "No such magic " ++ show bs
 
-  put REQ = putByteString "\0REQ"
-  put RES = putByteString "\0RES"
+  put REQ = putByteString "\x00REQ"
+  put RES = putByteString "\x00RES"
 
 magicLength :: Int
 magicLength = 4
@@ -139,14 +132,14 @@ packetREQ = Packet REQ (CRC32 0) (Msgid "0000")
 packetRES :: a -> Packet a
 packetRES = Packet RES (CRC32 0) (Msgid "0000")
 
-data RegPacket = RegPacket
+data RegPacket a = RegPacket
     { regMagic :: Magic
     , regCRC   :: CRC32
-    , regType  :: ClientType
+    , regType  :: a
     }
     deriving (Show, Eq)
 
-instance Binary RegPacket where
+instance Binary a => Binary (RegPacket a) where
   get = do
     (magic, crc) <- getHead
     RegPacket magic crc <$> get
@@ -154,13 +147,16 @@ instance Binary RegPacket where
     put magic
     putBS $ toStrict (encode body)
 
-instance RecvPacket RegPacket where
+instance Binary a => RecvPacket (RegPacket a) where
   recvPacket = commonRecvPacket regCRC
 
-instance SendPacket RegPacket where
+instance Binary a => SendPacket (RegPacket a) where
 
-regPacket :: ClientType -> RegPacket
-regPacket = RegPacket REQ (CRC32 0)
+regPacketREQ :: a -> RegPacket a
+regPacketREQ = RegPacket REQ (CRC32 0)
 
-getClientType :: RegPacket -> ClientType
+regPacketRES :: a -> RegPacket a
+regPacketRES = RegPacket RES (CRC32 0)
+
+getClientType :: RegPacket a -> a
 getClientType = regType

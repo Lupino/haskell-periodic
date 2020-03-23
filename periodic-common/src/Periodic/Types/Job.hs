@@ -23,8 +23,10 @@ module Periodic.Types.Job
   , jobHandle
   ) where
 
+import           Data.Byteable           (Byteable (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as B (empty, length)
+import           Data.ByteString.Lazy    (toStrict)
 import           Data.Hashable
 import           Data.Int                (Int64)
 import           GHC.Generics            (Generic)
@@ -132,6 +134,9 @@ data Job = Job
     , jTimeout  :: Int
     }
     deriving (Show)
+
+instance Byteable Job where
+  toBytes = toStrict . encode
 
 data JVer = V0
     | V1

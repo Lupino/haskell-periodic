@@ -2,30 +2,30 @@
 {-# LANGUAGE RecordWildCards   #-}
 
 module Periodic.Server.FuncStat
-  (
-    FuncStat (..)
+  ( FuncStat (..)
   , funcStat
   , FuncStatList
   ) where
 
 import           Data.Byteable
-import qualified Data.ByteString.Char8 as B (drop, intercalate, pack)
+import qualified Data.ByteString.Char8 as B (intercalate, pack)
 import           Data.Int              (Int64)
-import           Periodic.IOHashMap    (IOHashMap)
-import           Periodic.Types        (FuncName)
+import           Metro.IOHashMap       (IOHashMap)
+import           Periodic.Types        (FuncName (..))
 
-data FuncStat = FuncStat { sSchedAt   :: Int64
-                         , sWorker    :: Int64
-                         , sJob       :: Int64
-                         , sRunning   :: Int64
-                         , sLocking   :: Int64
-                         , sFuncName  :: FuncName
-                         , sBroadcast :: Bool
-                         }
+data FuncStat = FuncStat
+    { sSchedAt   :: Int64
+    , sWorker    :: Int64
+    , sJob       :: Int64
+    , sRunning   :: Int64
+    , sLocking   :: Int64
+    , sFuncName  :: FuncName
+    , sBroadcast :: Bool
+    }
 
 instance Byteable FuncStat where
   toBytes FuncStat{..} = B.intercalate ","
-    [ B.drop 1 $ toBytes sFuncName
+    [ unFN sFuncName
     , B.pack $ show sWorker
     , B.pack $ show sJob
     , B.pack $ show sRunning

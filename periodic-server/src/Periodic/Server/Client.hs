@@ -6,119 +6,136 @@
 
 module Periodic.Server.Client
   ( ClientT
-  , ClientEnv
-  , initClientEnv
-  , close
-  , startClientT
-  , runClientT
-  , getLastVist
+  , handleSessionT
   ) where
 
+import           Control.Monad                (unless, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (encode)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
-import           Data.Int                     (Int64)
-import           Periodic.Agent               (AgentT, receive, send, send_)
-import           Periodic.Connection          (ConnEnv, fromConn,
-                                               runConnectionT)
-import qualified Periodic.Connection          as Conn
+import           Metro.Class                  (Transport)
+import           Metro.Conn                   (fromConn)
+import qualified Metro.Conn                   as Conn
+import           Metro.Session                (env, getSessionEnv1, receive,
+                                               send)
+import           Periodic.IOList              (delete, elem, insert)
 import           Periodic.Node
 import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
-import           Periodic.Transport           (Transport)
-import           Periodic.Types.ClientCommand
+import           Periodic.Server.Types
+import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job           (getFuncName, initJob)
+import           Periodic.Types.Packet        (getPacketData, packetRES)
 import           Periodic.Types.ServerCommand
-import           Periodic.Utils               (getEpochTime)
+import qualified Periodic.Types.WorkerCommand as WC
+import           Prelude                      hiding (elem)
+import           System.Log.Logger            (errorM)
 import           UnliftIO
 
 
-type ClientT db tp m = NodeT (TVar Int64) tp (SchedT db tp m)
+type ClientT db tp m = NodeT ClientConfig Command tp (SchedT db tp m)
 
-data ClientEnv db tp = ClientEnv
-  { nodeEnv  :: NodeEnv (TVar Int64)
-  , schedEnv :: SchedEnv db tp
-  , connEnv  :: ConnEnv tp
-  }
+handleClientSessionT
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => CC.ClientCommand -> SessionT ClientConfig Command tp (SchedT db tp m) ()
+handleClientSessionT (CC.SubmitJob job) = do
+  lift $ pushJob job
+  send $ packetRES Success
+handleClientSessionT (CC.RunJob job) = do
+  preR <- lift $ lookupPrevResult job
+  case preR of
+    Just v -> send $ packetRES $ Data v
+    Nothing -> do
+      c <- lift . canRun $ getFuncName job
+      if c then do
+        lift $ prepareWait job
+        lift $ pushJob job
+        state <- fromConn Conn.statusTVar
+        w <- lift $ waitResult state job
+        send . packetRES $ Data w
+      else send $ packetRES NoWorker
 
-runClientT :: Monad m => ClientEnv db tp -> ClientT db tp m a -> m a
-runClientT ClientEnv {..} =
-  runSchedT schedEnv
-    . runConnectionT connEnv
-    . runNodeT nodeEnv
+handleClientSessionT CC.Status = do
+  stats <- lift $ map toBytes <$> status
+  send $ packetRES $ B.intercalate "\n" stats
 
-initClientEnv
-  :: MonadIO m
-  => ConnEnv tp
-  -> SchedEnv db tp
-  -> m (ClientEnv db tp)
-initClientEnv connEnv schedEnv = do
-  lastVist <- newTVarIO =<< getEpochTime
-  nodeEnv <- initEnv lastVist
-  return ClientEnv{..}
+handleClientSessionT CC.Ping = send $ packetRES Pong
 
-startClientT :: (MonadUnliftIO m, Persist db, Transport tp) => ClientEnv db tp -> m ()
-startClientT env0 = runClientT env0 $
-  startMainLoop_ . handleAgentT =<< env
+handleClientSessionT (CC.DropFunc fn) = do
+  lift $ dropFunc fn
+  send $ packetRES Success
 
-close :: (MonadIO m, Transport tp) => ClientT db tp m ()
-close = stopNodeT
+handleClientSessionT (CC.RemoveJob fn jn) = do
+  lift $ removeJob $ initJob fn jn
+  send $ packetRES Success
+handleClientSessionT CC.Shutdown = lift shutdown
 
-getLastVist :: MonadIO m => ClientT db tp m Int64
-getLastVist = do
-  ref <- env
-  readTVarIO ref
+handleClientSessionT (CC.ConfigGet (ConfigKey key)) = do
+  v <- lift $ getConfigInt key
+  send $ packetRES $ Config v
 
-handleAgentT :: (MonadUnliftIO m, Persist db, Transport tp) => TVar Int64 -> AgentT tp (SchedT db tp m) ()
-handleAgentT lastVist = do
-  t <- getEpochTime
-  atomically $ writeTVar lastVist t
+handleClientSessionT (CC.ConfigSet (ConfigKey key) v) = do
+  lift $ setConfigInt key v
+  send $ packetRES Success
 
-  cmd <- receive
-  case cmd of
-    Left _         -> fromConn Conn.close -- close client
-    Right (SubmitJob job) -> do
-      lift $ pushJob job
-      send Success
-    Right (RunJob job) -> do
-      preR <- lift $ lookupPrevResult job
-      case preR of
-        Just v -> send $ Data v
-        Nothing -> do
-          c <- lift . canRun $ getFuncName job
-          if c then do
-            lift $ prepareWait job
-            lift $ pushJob job
-            state <- fromConn Conn.statusTVar
-            w <- lift $ waitResult state job
-            send $ Data w
-          else send NoWorker
+handleClientSessionT CC.Dump = send =<< lift (packetRES . toStrict . encode <$> dumpJob)
 
-    Right Status -> do
-      stats <- lift $ map toBytes <$> status
-      send_ $ B.intercalate "\n" stats
-    Right Ping -> send Pong
-    Right (DropFunc fn) -> do
-      lift $ dropFunc fn
-      send Success
-    Right (RemoveJob fn jn) -> do
-      lift $ removeJob $ initJob fn jn
-      send Success
-    Right Shutdown -> lift shutdown
+handleClientSessionT (CC.Load jobs) = do
+  lift $ mapM_ pushJob jobs
+  send $ packetRES Success
 
-    Right (ConfigGet (ConfigKey key)) -> do
-      v <- lift $ getConfigInt key
-      send $ Config v
+handleWorkerSessionT
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db tp m) ()
+handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
+  env0 <- getSessionEnv1
+  lift $ pushGrab wFuncList wJobQueue env0
+handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
+  lift $ doneJob jh w
+  delete wJobQueue jh
+handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
+  lift $ failJob jh
+  delete wJobQueue jh
+handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
+  lift $ schedLaterJob jh l s
+  delete wJobQueue jh
+handleWorkerSessionT ClientConfig {..} WC.Sleep = send $ packetRES Noop
+handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
+handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
+  has <- elem wFuncList fn
+  unless has $ do
+    lift $ addFunc fn
+    insert wFuncList fn
+handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
+  has <- elem wFuncList fn
+  when has $ do
+    lift $ removeFunc fn
+    delete wFuncList fn
+handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
+  has <- elem wFuncList fn
+  unless has $ do
+    lift $ broadcastFunc fn True
+    insert wFuncList fn
+handleWorkerSessionT _ (WC.Acquire n c jh) = do
+  r <- lift $ acquireLock n c jh
+  send $ packetRES $ Acquired r
+handleWorkerSessionT _ (WC.Release n jh) = lift $ releaseLock n jh
 
-    Right (ConfigSet (ConfigKey k) v) -> do
-      lift $ setConfigInt k v
-      send Success
-
-    Right Dump -> send_ =<< lift (toStrict . encode <$> dumpJob)
-
-    Right (Load jobs) -> do
-      lift $ mapM_ pushJob jobs
-      send Success
+handleSessionT
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => SessionT ClientConfig Command tp (SchedT db tp m) ()
+handleSessionT = do
+  mcmd <- receive
+  case mcmd of
+    Nothing -> do
+      liftIO $ errorM "Periodic.Server.Client" $ "Client error"
+      fromConn Conn.close -- close client
+    Just pkt -> do
+      case getPacketData pkt of
+        CC cmd -> handleClientSessionT cmd
+        WC cmd -> do
+          env0 <- env
+          handleWorkerSessionT env0 cmd
