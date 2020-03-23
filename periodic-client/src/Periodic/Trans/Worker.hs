@@ -193,7 +193,7 @@ work_ tskList = do
     processJob tskList j
 
 processJob :: (MonadUnliftIO m, Transport tp) => TaskList tp m -> Maybe Job -> JobT tp m ()
-processJob tskList mjob = do
+processJob tskList mjob =
   when (isJust mjob) $
     withEnv mjob $ do
       f <- func_

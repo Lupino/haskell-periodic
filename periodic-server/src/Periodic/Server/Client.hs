@@ -130,9 +130,9 @@ handleSessionT = do
   mcmd <- receive
   case mcmd of
     Nothing -> do
-      liftIO $ errorM "Periodic.Server.Client" $ "Client error"
+      liftIO $ errorM "Periodic.Server.Client" "Client error"
       fromConn Conn.close -- close client
-    Just pkt -> do
+    Just pkt ->
       case getPacketData pkt of
         CC cmd -> handleClientSessionT cmd
         WC cmd -> do
