@@ -15,12 +15,12 @@ import           Data.List                       (isPrefixOf)
 import           Data.Maybe                      (fromMaybe)
 import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
+import           Metro.Class                     (Transport)
+import           Metro.Socket                    (getHost, getService)
+import           Metro.TP.Socket                 (socket)
 import           Network.HTTP.Types              (status204, status500)
 import           Network.Wai.Handler.Warp        (setHost, setPort)
-import           Periodic.Socket                 (getHost, getService)
 import           Periodic.Trans.ClientPool
-import           Periodic.Transport              (Transport)
-import           Periodic.Transport.Socket       (socketUri)
 import           Periodic.Transport.TLS          (makeClientParams', tlsConfig)
 import           Periodic.Transport.WebSockets   (clientConfig)
 import           Periodic.Transport.XOR          (xorConfig)
@@ -34,19 +34,19 @@ import qualified Web.Scotty                      as WS (status)
 
 
 data Options = Options
-  { host     :: String
-  , xorFile  :: FilePath
-  , useTls   :: Bool
-  , useWs    :: Bool
-  , hostName :: String
-  , certKey  :: FilePath
-  , cert     :: FilePath
-  , caStore  :: FilePath
-  , httpHost :: String
-  , httpPort :: Int
-  , poolSize :: Int
-  , showHelp :: Bool
-  }
+    { host     :: String
+    , xorFile  :: FilePath
+    , useTls   :: Bool
+    , useWs    :: Bool
+    , hostName :: String
+    , certKey  :: FilePath
+    , cert     :: FilePath
+    , caStore  :: FilePath
+    , httpHost :: String
+    , httpPort :: Int
+    , poolSize :: Int
+    , showHelp :: Bool
+    }
 
 options :: Maybe String -> Maybe String -> Options
 options h f = Options
@@ -125,20 +125,20 @@ main = do
                $ setHost (Host httpHost) (settings def)}
 
 run Options {useTls = True, ..} sopts = do
-  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ getService host)
-  clientEnv <- openPool (tlsConfig prms (socketUri host)) poolSize
+  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ fromMaybe "" $ getService host)
+  clientEnv <- openPool (tlsConfig prms (socket host)) poolSize
   scottyOpts sopts $ application clientEnv
 
 run Options {useWs = True, ..} sopts = do
-  clientEnv <- openPool (clientConfig (socketUri host) (fromMaybe "0.0.0.0" $ getHost host) (getService host)) poolSize
+  clientEnv <- openPool (clientConfig (socket host) (fromMaybe "0.0.0.0" $ getHost host) (fromMaybe "" $ getService host)) poolSize
   scottyOpts sopts $ application clientEnv
 
 run Options {xorFile = "", ..} sopts = do
-  clientEnv <- openPool (socketUri host) poolSize
+  clientEnv <- openPool (socket host) poolSize
   scottyOpts sopts $ application clientEnv
 
 run Options {..} sopts = do
-  clientEnv <- openPool (xorConfig xorFile $ socketUri host) poolSize
+  clientEnv <- openPool (xorConfig xorFile $ socket host) poolSize
   scottyOpts sopts $ application clientEnv
 
 application :: Transport tp => ClientPoolEnv tp ->  ScottyM ()
