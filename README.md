@@ -51,7 +51,7 @@ startWorkerM "unix:///tmp/periodic/sock" $ do
   addFunc "random_print" $ do
     n <- name
     liftIO $ putStrLn h
-    c <- counter
+    c <- count
     if c > 10 then workDone
               else schedLater' 5 1
 
