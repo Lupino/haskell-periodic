@@ -11,7 +11,6 @@ import           Control.Monad                  (when)
 import           Data.Maybe                     (fromMaybe)
 import           Data.String                    (fromString)
 import           Metro.SocketServer             (socketServer)
-import           Metro.TP.Debug                 (DebugMode (..), debugConfig)
 import           Metro.Utils                    (setupLog)
 import           Periodic.Server                (startServer)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
@@ -113,7 +112,7 @@ run Options {useWs = True, host} config =
     startServer config serverConfig (socketServer host)
 
 run Options {xorFile = "", host} config =
-    startServer config (debugConfig "Periodic" Raw) (socketServer host)
+    startServer config id (socketServer host)
 
 run Options {xorFile = f, host} config =
     startServer config (xorConfig f) (socketServer host)
