@@ -1,6 +1,6 @@
 module Periodic.Worker
   ( WorkerM
-  , runWorkerM
+  , startWorkerM
   , ping
   , addFunc
   , broadcast
@@ -14,5 +14,5 @@ import           Periodic.Trans.Worker
 
 type WorkerM = WorkerT Socket IO
 
-runWorkerM :: String -> WorkerM () -> IO ()
-runWorkerM h = runWorkerT (socket h)
+startWorkerM :: String -> WorkerM () -> IO ()
+startWorkerM h = startWorkerT (socket h)

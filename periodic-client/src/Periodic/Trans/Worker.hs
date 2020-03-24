@@ -11,7 +11,7 @@
 
 module Periodic.Trans.Worker
   ( WorkerT
-  , runWorkerT
+  , startWorkerT
   , ping
   , addFunc
   , broadcast
@@ -74,22 +74,22 @@ instance MonadUnliftIO m => MonadUnliftIO (WorkerT tp m) where
   askUnliftIO = WorkerT $
     ReaderT $ \r ->
       withUnliftIO $ \u ->
-        return (UnliftIO (unliftIO u . runWorkerT_ r))
+        return (UnliftIO (unliftIO u . runWorkerT r))
   withRunInIO inner = WorkerT $
     ReaderT $ \r ->
       withRunInIO $ \run ->
-        inner (run . runWorkerT_ r)
+        inner (run . runWorkerT r)
 
 instance MonadTrans (WorkerT tp) where
   lift = WorkerT . lift . lift
 
-runWorkerT_ :: WorkerEnv tp m -> WorkerT tp m a -> JobT tp m a
-runWorkerT_ workerEnv = flip runReaderT workerEnv . unWorkerT
+runWorkerT :: WorkerEnv tp m -> WorkerT tp m a -> JobT tp m a
+runWorkerT workerEnv = flip runReaderT workerEnv . unWorkerT
 
-runWorkerT
+startWorkerT
   :: (MonadUnliftIO m, Transport tp)
   => TransportConfig tp -> WorkerT tp m () -> m ()
-runWorkerT config m = do
+startWorkerT config m = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
     Conn.send $ regPacketREQ TypeWorker
@@ -107,7 +107,7 @@ runWorkerT config m = do
   runNodeT jobEnv1 $ do
 
     void $ async $ startNodeT defaultSessionHandler
-    runWorkerT_ WorkerEnv {..} $ do
+    runWorkerT WorkerEnv {..} $ do
       void . async $ forever $ do
         threadDelay $ 100 * 1000 * 1000
         checkHealth

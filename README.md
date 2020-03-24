@@ -47,7 +47,7 @@ import Periodic.Worker
 import Periodic.Job
 import Control.Monad.IO.Class (liftIO)
 
-runWorkerM "unix:///tmp/periodic/sock" $ do
+startWorkerM "unix:///tmp/periodic/sock" $ do
   addFunc "random_print" $ do
     n <- name
     liftIO $ putStrLn h
@@ -105,12 +105,12 @@ module Main
   ) where
 
 import Periodic.Job (JobT, name, workDone)
-import Periodic.Worker (addFunc, runWorkerM, work)
+import Periodic.Worker (addFunc, startWorkerM, work)
 import Control.Monad.IO.Class (liftIO)
 
 main :: IO ()
 main = do
-  runWorkerM "unix:///tmp/periodic.sock" $ do
+  startWorkerM "unix:///tmp/periodic.sock" $ do
     addFunc "show_file" showFile
     work 10
 
