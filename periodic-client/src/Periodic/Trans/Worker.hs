@@ -18,10 +18,10 @@ module Periodic.Trans.Worker
   , removeFunc
   , work
   , close
+  , runJobT
   ) where
 
-import           Control.Monad                (forever, replicateM, unless,
-                                               void, when)
+import           Control.Monad                (forever, replicateM, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
@@ -33,15 +33,15 @@ import           Metro.IOHashMap              (IOHashMap, newIOHashMap)
 import qualified Metro.IOHashMap              as HM (delete, insert, lookup)
 import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                initEnv1, newSessionEnv,
-                                               nextSessionId, request,
-                                               runSessionT_,
+                                               nextSessionId, runSessionT_,
                                                setDefaultSessionTimeout,
                                                setNodeMode, setSessionMode,
-                                               startNodeT, stopNodeT, withEnv,
+                                               startNodeT, withEnv,
                                                withSessionT)
 import           Metro.Session                (readerSize, receive, send)
 import           Periodic.IOList              (IOList, newIOList)
 import           Periodic.Node
+import qualified Periodic.Trans.BaseClient    as BT (checkHealth, close, ping)
 import           Periodic.Trans.Job           (JobEnv, JobT, func_, name,
                                                workFail)
 import           Periodic.Types               (ClientType (TypeWorker),
@@ -119,20 +119,20 @@ startWorkerT config m = do
           . setDefaultSessionTimeout 100
 
 
-liftJob :: Monad m => JobT tp m a -> WorkerT tp m a
-liftJob = WorkerT . lift
+runJobT :: Monad m => JobT tp m a -> WorkerT tp m a
+runJobT = WorkerT . lift
 
 close :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
-close = liftJob stopNodeT
+close = runJobT BT.close
 
 ping :: (MonadUnliftIO m, Transport tp) => WorkerT tp m Bool
-ping = liftJob $ getResult False isPong <$> request Nothing (packetREQ Ping)
+ping = runJobT BT.ping
 
 addFunc
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> JobT tp m () -> WorkerT tp m ()
 addFunc f j = do
-  liftJob $ withSessionT Nothing $ send (packetREQ $ CanDo f)
+  runJobT $ withSessionT Nothing $ send (packetREQ $ CanDo f)
   ref <- asks taskList
   HM.insert ref f j
 
@@ -140,7 +140,7 @@ broadcast
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> JobT tp m () -> WorkerT tp m ()
 broadcast f j = do
-  liftJob $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
+  runJobT $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
   ref <- asks taskList
   HM.insert ref f j
 
@@ -149,7 +149,7 @@ removeFunc
   => FuncName -> WorkerT tp m ()
 removeFunc f = do
   tskList <- asks taskList
-  liftJob $ removeFunc_ tskList f
+  runJobT $ removeFunc_ tskList f
 
 removeFunc_
   :: (MonadUnliftIO m, Transport tp)
@@ -180,7 +180,7 @@ work
   => Int -> WorkerT tp m ()
 work size = do
   tskList <- asks taskList
-  liftJob $ do
+  runJobT $ do
     asyncs <- replicateM size $ async $ work_ tskList
     void $ waitAnyCancel asyncs
 
@@ -219,8 +219,4 @@ processJob tskList mjob =
 checkHealth
   :: (MonadUnliftIO m, Transport tp)
   => WorkerT tp m ()
-checkHealth = do
-  ret <- timeout 10000000 ping
-  case ret of
-    Nothing -> close
-    Just r  -> unless r close
+checkHealth = runJobT BT.checkHealth

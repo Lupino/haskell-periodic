@@ -15,7 +15,8 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Periodic.Trans.Client
+  exposed-modules:     Periodic.Trans.BaseClient
+                     , Periodic.Trans.Client
                      , Periodic.Trans.ClientPool
                      , Periodic.Trans.Job
                      , Periodic.Trans.Worker

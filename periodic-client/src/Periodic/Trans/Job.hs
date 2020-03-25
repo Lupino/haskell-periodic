@@ -21,6 +21,7 @@ module Periodic.Trans.Job
 
   , withLock
   , withLock_
+  , module Periodic.Trans.BaseClient
   ) where
 
 import           Control.Monad                (when)
@@ -31,6 +32,8 @@ import           Metro.Class                  (Transport)
 import           Metro.Node                   (env, request, withSessionT)
 import           Metro.Session                (send)
 import           Periodic.Node
+import           Periodic.Trans.BaseClient    (BaseClientT, runJob, runJob_,
+                                               submitJob, submitJob_)
 import           Periodic.Types               (FromBS (..), LockName, getResult,
                                                packetREQ)
 import           Periodic.Types.Job
@@ -38,7 +41,7 @@ import           Periodic.Types.ServerCommand (ServerCommand (Acquired))
 import           Periodic.Types.WorkerCommand
 import           UnliftIO                     hiding (timeout)
 
-type JobT = NodeT (Maybe Job) ServerCommand
+type JobT = BaseClientT (Maybe Job)
 type JobEnv = SessionEnv (Maybe Job) ServerCommand
 
 job :: Monad m => JobT tp m Job
