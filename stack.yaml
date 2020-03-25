@@ -51,10 +51,13 @@ extra-package-dbs: []
 extra-deps:
 - direct-sqlite-2.3.26@sha256:04e835402f1508abca383182023e4e2b9b86297b8533afbd4e57d1a5652e0c23,3718
 - git: https://github.com/Lupino/metro.git
-  commit: ed1abdfa9289a30568281c920fb464b04a0807c9
+  commit: ae0c2fd0baa918fe99a48aad836656a51fd2992b
   subdirs:
-  - metro-socket
   - .
+  - metro-socket
+  - metro-transport-xor
+  - metro-transport-tls
+  - metro-transport-websockets
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true

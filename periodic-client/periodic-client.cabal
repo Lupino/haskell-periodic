@@ -54,6 +54,9 @@ executable periodic
                      , binary
                      , metro
                      , metro-socket
+                     , metro-transport-xor
+                     , metro-transport-tls
+                     , metro-transport-websockets
   default-language:    Haskell2010
 
 executable periodic-run
@@ -70,6 +73,9 @@ executable periodic-run
                      , deepseq
                      , metro
                      , metro-socket
+                     , metro-transport-xor
+                     , metro-transport-tls
+                     , metro-transport-websockets
   default-language:    Haskell2010
 
 executable periodic-http-bridge
@@ -87,6 +93,9 @@ executable periodic-http-bridge
                      , http-types
                      , metro
                      , metro-socket
+                     , metro-transport-xor
+                     , metro-transport-tls
+                     , metro-transport-websockets
   default-language:    Haskell2010
 
 source-repository head

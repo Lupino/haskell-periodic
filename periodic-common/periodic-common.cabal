@@ -25,10 +25,6 @@ library
                      , Periodic.Types.Error
                      , Periodic.Types.Job
                      , Periodic.Node
-                     , Periodic.Transport.XOR
-                     , Periodic.Transport.TLSSetting
-                     , Periodic.Transport.TLS
-                     , Periodic.Transport.WebSockets
                      , Periodic.IOList
                      , Periodic.CRC32
 

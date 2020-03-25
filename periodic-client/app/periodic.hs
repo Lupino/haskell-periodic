@@ -6,31 +6,31 @@ module Main
     main
   ) where
 
-import           Control.Monad                 (void, when)
-import           Control.Monad.IO.Class        (liftIO)
-import           Data.Binary                   (decodeFile, encodeFile)
-import           Data.ByteString               (ByteString)
-import qualified Data.ByteString.Char8         as B (lines, pack, putStr,
-                                                     readFile, split, unpack)
-import           Data.Int                      (Int64)
-import           Data.List                     (isPrefixOf, transpose)
-import           Data.Maybe                    (fromMaybe)
-import           Metro.Class                   (Transport)
-import           Metro.Socket                  (getHost, getService)
-import           Metro.TP.Socket               (socket)
+import           Control.Monad          (void, when)
+import           Control.Monad.IO.Class (liftIO)
+import           Data.Binary            (decodeFile, encodeFile)
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString.Char8  as B (lines, pack, putStr, readFile,
+                                              split, unpack)
+import           Data.Int               (Int64)
+import           Data.List              (isPrefixOf, transpose)
+import           Data.Maybe             (fromMaybe)
+import           Metro.Class            (Transport)
+import           Metro.Socket           (getHost, getService)
+import           Metro.TP.Socket        (socket)
+import           Metro.TP.TLS           (makeClientParams', tlsConfig)
+import           Metro.TP.WebSockets    (clientConfig)
+import           Metro.TP.XOR           (xorConfig)
 import           Periodic.Trans.Client
-import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)
-import           Periodic.Transport.WebSockets (clientConfig)
-import           Periodic.Transport.XOR        (xorConfig)
-import           Periodic.Types                (Workload (..))
-import           System.Environment            (getArgs, lookupEnv)
-import           System.Exit                   (exitSuccess)
-import           Text.Read                     (readMaybe)
+import           Periodic.Types         (Workload (..))
+import           System.Environment     (getArgs, lookupEnv)
+import           System.Exit            (exitSuccess)
+import           Text.Read              (readMaybe)
 
-import           Data.String                   (fromString)
+import           Data.String            (fromString)
 import           Data.UnixTime
-import           System.IO.Unsafe              (unsafePerformIO)
-import qualified Text.PrettyPrint.Boxes        as T
+import           System.IO.Unsafe       (unsafePerformIO)
+import qualified Text.PrettyPrint.Boxes as T
 
 
 data Command = Status

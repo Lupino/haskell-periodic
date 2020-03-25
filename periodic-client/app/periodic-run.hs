@@ -5,40 +5,40 @@ module Main
   ( main
   ) where
 
-import           Control.Concurrent            (forkIO, killThread)
-import           Control.DeepSeq               (rnf)
-import           Control.Monad                 (unless, void, when)
-import           Control.Monad.IO.Class        (liftIO)
-import qualified Data.ByteString.Char8         as B (ByteString, pack)
-import qualified Data.ByteString.Lazy          as LB (null, toStrict)
-import qualified Data.ByteString.Lazy.Char8    as LB (hGetContents, hPut)
-import           Data.List                     (isPrefixOf)
-import           Data.Maybe                    (fromMaybe)
-import qualified Data.Text                     as T (unpack)
-import           Data.Text.Encoding            (decodeUtf8With)
-import           Data.Text.Encoding.Error      (ignore)
-import           Metro.Class                   (Transport)
-import           Metro.Socket                  (getHost, getService)
-import           Metro.TP.Socket               (socket)
-import           Periodic.Trans.Job            (JobT, name, withLock_, workDone,
-                                                workDone_, workFail, workload)
-import           Periodic.Trans.Worker         (WorkerT, addFunc, broadcast,
-                                                startWorkerT, work)
-import           Periodic.Transport.TLS        (makeClientParams', tlsConfig)
-import           Periodic.Transport.WebSockets (clientConfig)
-import           Periodic.Transport.XOR        (xorConfig)
-import           Periodic.Types                (FuncName (..), LockName (..))
-import           System.Environment            (getArgs, lookupEnv)
-import           System.Exit                   (ExitCode (..), exitSuccess)
-import           System.IO                     (hClose)
-import           System.Process                (CreateProcess (std_in, std_out),
-                                                StdStream (CreatePipe, Inherit),
-                                                proc, waitForProcess,
-                                                withCreateProcess)
-import           UnliftIO                      (MVar, SomeException, evaluate,
-                                                mask, newEmptyMVar, onException,
-                                                putMVar, takeMVar, throwIO, try,
-                                                tryIO)
+import           Control.Concurrent         (forkIO, killThread)
+import           Control.DeepSeq            (rnf)
+import           Control.Monad              (unless, void, when)
+import           Control.Monad.IO.Class     (liftIO)
+import qualified Data.ByteString.Char8      as B (ByteString, pack)
+import qualified Data.ByteString.Lazy       as LB (null, toStrict)
+import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
+import           Data.List                  (isPrefixOf)
+import           Data.Maybe                 (fromMaybe)
+import qualified Data.Text                  as T (unpack)
+import           Data.Text.Encoding         (decodeUtf8With)
+import           Data.Text.Encoding.Error   (ignore)
+import           Metro.Class                (Transport)
+import           Metro.Socket               (getHost, getService)
+import           Metro.TP.Socket            (socket)
+import           Metro.TP.TLS               (makeClientParams', tlsConfig)
+import           Metro.TP.WebSockets        (clientConfig)
+import           Metro.TP.XOR               (xorConfig)
+import           Periodic.Trans.Job         (JobT, name, withLock_, workDone,
+                                             workDone_, workFail, workload)
+import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
+                                             startWorkerT, work)
+import           Periodic.Types             (FuncName (..), LockName (..))
+import           System.Environment         (getArgs, lookupEnv)
+import           System.Exit                (ExitCode (..), exitSuccess)
+import           System.IO                  (hClose)
+import           System.Process             (CreateProcess (std_in, std_out),
+                                             StdStream (CreatePipe, Inherit),
+                                             proc, waitForProcess,
+                                             withCreateProcess)
+import           UnliftIO                   (MVar, SomeException, evaluate,
+                                             mask, newEmptyMVar, onException,
+                                             putMVar, takeMVar, throwIO, try,
+                                             tryIO)
 
 
 data Options = Options
