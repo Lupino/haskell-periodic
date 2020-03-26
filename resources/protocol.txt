@@ -101,6 +101,11 @@ header is:
                         23  CONFIG_SET    Client
                         24  CONFIG        Client
                         25  RUN_JOB       Client
+                        26  ACQUIRED      Worker
+                        27  ACQUIRE       Worker
+                        28  RELEASE       Worker
+                        29  NO_WORKER     Client
+                        30  DATA          Client
 
 ## Client/Worker Requests
 These request types may be sent by either a client or a worker:
@@ -127,7 +132,7 @@ These request types may only be sent by a client:
         - Job binary packet
    RUN_JOB
         A client issues one of these when a job needs to be run. The
-        server will respond with a binary packet.
+        server will respond with a DATA packet or NO_WORKER packet.
         Arguments:
         - Job binary packet
     STATUS
@@ -197,6 +202,15 @@ These response types may only be sent to a client:
         This is sent in response to one of the CONFIG_GET packets.
         Arguments:
         - 4 byte value (int32).
+    DATA
+        This is sent in response to one of the STATUS/RUN_JOB/DUMP packets.
+        Arguments:
+        - 4 byte value (int32).
+        - ? byte binary
+    NO_WORKER
+        This is sent in response to one of the RUN_JOB packets.
+        Arguments:
+        - None
 
 ## Worker Requests
 These request types may only be sent by a worker:
