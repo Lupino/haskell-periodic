@@ -19,6 +19,7 @@ module Periodic.Trans.Worker
   , work
   , close
   , runJobT
+  , getClientEnv
   ) where
 
 import           Control.Monad                (forever, replicateM, void, when)
@@ -41,7 +42,8 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
 import           Metro.Session                (readerSize, receive, send)
 import           Periodic.IOList              (IOList, newIOList)
 import           Periodic.Node
-import qualified Periodic.Trans.BaseClient    as BT (checkHealth, close, ping)
+import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
+                                                     close, getClientEnv, ping)
 import           Periodic.Trans.Job           (JobEnv, JobT, func_, name,
                                                workFail)
 import           Periodic.Types               (ClientType (TypeWorker),
@@ -121,6 +123,11 @@ startWorkerT config m = do
 
 runJobT :: Monad m => JobT tp m a -> WorkerT tp m a
 runJobT = WorkerT . lift
+
+getClientEnv
+  :: (Monad m, Transport tp)
+  => WorkerT tp m (BT.BaseClientEnv (Maybe Job) tp)
+getClientEnv = runJobT BT.getClientEnv
 
 close :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
 close = runJobT BT.close

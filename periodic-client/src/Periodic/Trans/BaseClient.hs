@@ -3,6 +3,7 @@
 module Periodic.Trans.BaseClient
   ( BaseClientT
   , BaseClientEnv
+  , getClientEnv
   , close
   , runBaseClientT
 
@@ -19,7 +20,7 @@ import           Data.ByteString              (ByteString)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromMaybe)
 import           Metro.Class                  (Transport)
-import           Metro.Node                   (request, stopNodeT)
+import           Metro.Node                   (getEnv1, request, stopNodeT)
 import           Metro.Utils                  (getEpochTime)
 import           Periodic.Node
 import           Periodic.Types               (getResult, packetREQ)
@@ -69,3 +70,6 @@ checkHealth = do
   case ret of
     Nothing -> close
     Just r  -> unless r close
+
+getClientEnv :: (Monad m, Transport tp) => BaseClientT u tp m (BaseClientEnv u tp)
+getClientEnv = getEnv1
