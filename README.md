@@ -84,11 +84,7 @@ Quick start
 
     stack install
 
-#### Install with [nix](https://nixos.org/nix/)
-
-    nix-env -f release.nix -i periodicd periodic-client
-
-#### Static build
+#### Static build with [nix](https://nixos.org/nix/)
 
     $(nix-build --no-link -A fullBuildScript)
 
