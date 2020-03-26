@@ -121,7 +121,7 @@ printHelp = do
   putStrLn "     --cert     Public certificate (X.509 format)"
   putStrLn "     --ca       trusted certificates"
   putStrLn ""
-  putStrLn "Version: v1.1.5.7"
+  putStrLn "Version: v1.1.6.0"
   putStrLn ""
   exitSuccess
 
