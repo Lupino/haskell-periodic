@@ -32,26 +32,11 @@ library
                      , bytestring
                      , byteable
                      , entropy
-
-                     , tls
-                     , x509
-                     , x509-store
-                     , pem
-                     , data-default-class
-                     , x509-validation
-
                      , hashable
-
                      , text
                      , binary
-                     , mtl
-
-                     , websockets
-
                      , vector
-
                      , metro
-
                      , unliftio
                      , hslogger
   default-language:    Haskell2010
