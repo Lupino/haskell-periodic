@@ -46,10 +46,16 @@ let
     ${pkgs.nix}/bin/nix-build -A periodicd -A periodic-client --argstr stack2nix-output-path "$STACK2NIX_OUTPUT_PATH" "$@"
   '';
 
+  periodicd =
+    periodicd-builder.haskell-static-nix_output.pkgs.staticHaskellHelpers.addStaticLinkerFlagsWithPkgconfig
+      periodicd-builder.static_package
+      (with periodicd-builder.haskell-static-nix_output.pkgs; [ openssl postgresql ])
+      "--libs libpq";
+
 in
   {
-    periodicd = periodicd-builder.static_package;
     periodic-client = periodic-client-builder.static_package;
+    inherit periodicd;
     inherit fullBuildScript;
     # For debugging:
     inherit stack2nix-script;
