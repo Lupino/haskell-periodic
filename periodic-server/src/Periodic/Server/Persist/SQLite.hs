@@ -61,6 +61,7 @@ instance Persist SQLite where
   size             (SQLite db) = doSize db
   foldr            (SQLite db) = doFoldr db
   foldr'           (SQLite db) = doFoldr' db
+  dumpJob          (SQLite db) = doDumpJob db
   configSet        (SQLite db) = doConfigSet db
   configGet        (SQLite db) = doConfigGet db
   insertFuncName   (SQLite db) = doInsertFuncName db
@@ -158,6 +159,10 @@ doFoldr' db state fns f acc = F.foldrM (foldFunc f) acc fns
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 fn =
           doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f0)
+
+doDumpJob :: Database -> IO [Job]
+doDumpJob db = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
+  where sql = Utf8 $ "SELECT value FROM jobs"
 
 doFuncList :: Database -> IO [FuncName]
 doFuncList db =

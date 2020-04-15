@@ -56,6 +56,7 @@ instance Persist PSQL where
   size             (PSQL conn) = doSize conn
   foldr            (PSQL conn) = doFoldr conn
   foldr'           (PSQL conn) = doFoldr' conn
+  dumpJob          (PSQL conn) = doDumpJob conn
   configSet        (PSQL conn) = doConfigSet conn
   configGet        (PSQL conn) = doConfigGet conn
   insertFuncName   (PSQL conn) = doInsertFuncName conn
@@ -253,6 +254,10 @@ doFoldr' conn state fns f acc = F.foldrM (foldFunc f) acc fns
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 fn acc0 =
           fold conn sql (unFN fn, stateName state) acc0 (mkFoldFunc f0)
+
+doDumpJob :: Connection -> IO [Job]
+doDumpJob conn = fold_ conn sql [] (mkFoldFunc (:))
+  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs
 
 doFuncList :: Connection -> IO [FuncName]
 doFuncList conn =

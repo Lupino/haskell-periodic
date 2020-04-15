@@ -538,11 +538,7 @@ removeJob job = do
         jh = getHandle job
 
 dumpJob :: (MonadIO m, Persist db) => SchedT db tp m [Job]
-dumpJob = transactReadOnly $ \p -> do
-  js0 <- P.foldr p Pending (:) []
-  js1 <- P.foldr p Running (:) []
-  js2 <- P.foldr p Locking (:) []
-  return $ js0 ++ js1 ++ js2
+dumpJob = transactReadOnly $ \p -> P.dumpJob p
 
 alterFunc :: (MonadIO m, Persist db) => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT db tp m ()
 alterFunc n f = do
