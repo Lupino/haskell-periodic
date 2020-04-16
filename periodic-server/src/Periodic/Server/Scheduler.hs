@@ -773,6 +773,11 @@ countLock f fn = do
         mapFunc :: LockInfo -> Int
         mapFunc = length . filter filterFunc . f
 
+getMaxLockCount :: MonadUnliftIO m => SchedT db tp m Int
+getMaxLockCount = do
+  lockList <- asks sLockList
+  maximum . map maxCount <$> FL.elems lockList
+
 
 status :: (MonadIO m, Persist db) => SchedT db tp m [FuncStat]
 status = do
@@ -811,8 +816,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
                  ++ " Locked:" ++ show sizeLocked
                  ++ " Acquired:" ++ show sizeAcquired
           when (sizeLocked > 0 && sizeAcquired == 0) $ do
-            maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-            handles <- liftIO $ P.foldrLocking p maxBatchSize fn (:) []
+            count <- getMaxLockCount
+            handles <- liftIO $ P.foldrLocking p count fn (:) []
             mapM_ doRelease handles
 
         doRelease
