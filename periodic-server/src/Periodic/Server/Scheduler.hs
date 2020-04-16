@@ -784,7 +784,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
                  ++ " Locked:" ++ show sizeLocked
                  ++ " Acquired:" ++ show sizeAcquired
           when (sizeLocked > 0 && sizeAcquired == 0) $ do
-            handles <- liftIO $ P.foldrLocking p 10 fn (:) []
+            maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+            handles <- liftIO $ P.foldrLocking p maxBatchSize fn (:) []
             mapM_ doRelease handles
 
         doRelease
