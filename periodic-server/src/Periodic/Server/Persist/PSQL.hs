@@ -55,20 +55,20 @@ instance Persist PSQL where
     allPending pool
     return $ PSQL pool
 
-  member           (PSQL pool) = doMember pool
-  lookup           (PSQL pool) = doLookup pool
-  insert           (PSQL pool) = doInsert pool
-  delete           (PSQL pool) = doDelete pool
-  size             (PSQL pool) = doSize pool
-  foldr            (PSQL pool) = doFoldr pool
-  foldr'           (PSQL pool) = doFoldr' pool
-  dumpJob          (PSQL pool) = doDumpJob pool
-  configSet        (PSQL pool) = doConfigSet pool
-  configGet        (PSQL pool) = doConfigGet pool
-  insertFuncName   (PSQL pool) = doInsertFuncName pool
-  removeFuncName   (PSQL pool) = doRemoveFuncName pool
-  funcList         (PSQL pool) = doFuncList pool
-  minSchedAt       (PSQL pool) = doMinSchedAt pool Pending
+  member         (PSQL pool) = doMember pool
+  lookup         (PSQL pool) = doLookup pool
+  insert         (PSQL pool) = doInsert pool
+  delete         (PSQL pool) = doDelete pool
+  size           (PSQL pool) = doSize pool
+  foldr          (PSQL pool) = doFoldr pool
+  foldrPending   (PSQL pool) = doFoldrPending pool
+  dumpJob        (PSQL pool) = doDumpJob pool
+  configSet      (PSQL pool) = doConfigSet pool
+  configGet      (PSQL pool) = doConfigGet pool
+  insertFuncName (PSQL pool) = doInsertFuncName pool
+  removeFuncName (PSQL pool) = doRemoveFuncName pool
+  funcList       (PSQL pool) = doFuncList pool
+  minSchedAt     (PSQL pool) = doMinSchedAt pool Pending
 
 instance Exception (PersistException PSQL)
 
@@ -250,14 +250,14 @@ doFoldr pool state f acc = withResource pool $ \conn ->
   fold conn sql (Only $ stateName state) acc (mkFoldFunc f)
   where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE state=?"
 
-doFoldr' :: Pool Connection -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldr' pool state fns f acc = withResource pool $ \conn ->
+doFoldrPending :: Pool Connection -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+doFoldrPending pool ts fns f acc = withResource pool $ \conn ->
   F.foldrM (foldFunc conn f) acc fns
 
-  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE func=? AND state=?"
+  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE func=? AND state=? AND sched_at < ?"
         foldFunc :: Connection -> (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc conn f0 fn acc0 =
-          fold conn sql (unFN fn, stateName state) acc0 (mkFoldFunc f0)
+          fold conn sql (unFN fn, stateName Pending, ts) acc0 (mkFoldFunc f0)
 
 doDumpJob :: Pool Connection -> IO [Job]
 doDumpJob pool = withResource pool $ \conn ->

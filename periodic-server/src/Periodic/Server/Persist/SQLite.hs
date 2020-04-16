@@ -11,6 +11,7 @@ import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString, append)
+import qualified Data.ByteString.Char8   as B (pack)
 import           Data.ByteString.Lazy    (fromStrict)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
@@ -54,20 +55,20 @@ instance Persist SQLite where
         commitTx db
         return $ SQLite db
 
-  member           (SQLite db) = doMember db
-  lookup           (SQLite db) = doLookup db
-  insert           (SQLite db) = doInsert db
-  delete           (SQLite db) = doDelete db
-  size             (SQLite db) = doSize db
-  foldr            (SQLite db) = doFoldr db
-  foldr'           (SQLite db) = doFoldr' db
-  dumpJob          (SQLite db) = doDumpJob db
-  configSet        (SQLite db) = doConfigSet db
-  configGet        (SQLite db) = doConfigGet db
-  insertFuncName   (SQLite db) = doInsertFuncName db
-  removeFuncName   (SQLite db) = doRemoveFuncName db
-  funcList         (SQLite db) = doFuncList db
-  minSchedAt       (SQLite db) = doMinSchedAt db Pending
+  member         (SQLite db) = doMember db
+  lookup         (SQLite db) = doLookup db
+  insert         (SQLite db) = doInsert db
+  delete         (SQLite db) = doDelete db
+  size           (SQLite db) = doSize db
+  foldr          (SQLite db) = doFoldr db
+  foldrPending   (SQLite db) = doFoldrPending db
+  dumpJob        (SQLite db) = doDumpJob db
+  configSet      (SQLite db) = doConfigSet db
+  configGet      (SQLite db) = doConfigGet db
+  insertFuncName (SQLite db) = doInsertFuncName db
+  removeFuncName (SQLite db) = doRemoveFuncName db
+  funcList       (SQLite db) = doFuncList db
+  minSchedAt     (SQLite db) = doMinSchedAt db Pending
 
 instance Exception (PersistException SQLite)
 
@@ -137,9 +138,12 @@ doFoldr :: Database -> State -> (Job -> a -> a) -> a -> IO a
 doFoldr db state f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
   where sql = Utf8 $ "SELECT value FROM jobs WHERE state=" `append` stateName state
 
-doFoldr' :: Database -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldr' db state fns f acc = F.foldrM (foldFunc f) acc fns
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state=" `append` stateName state
+doFoldrPending :: Database -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+doFoldrPending db ts fns f acc = F.foldrM (foldFunc f) acc fns
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
+                   <> stateName Pending
+                   <> " AND sched_at<"
+                   <> B.pack (show ts)
 
         foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc  f0 fn =
