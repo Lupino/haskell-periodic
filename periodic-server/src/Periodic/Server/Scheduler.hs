@@ -378,9 +378,17 @@ pushJob job = do
 
         doPushJob :: (MonadIO m, Persist db) => SchedT db tp m ()
         doPushJob = do
-          pushChanList (Add job)
+          job' <- fixedSchedAt job
+          pushChanList (Add job')
           p <- asks sPersist
-          liftIO $ P.insert p Pending fn jn job
+          liftIO $ P.insert p Pending fn jn job'
+
+fixedSchedAt :: MonadIO m => Job -> SchedT db tp m Job
+fixedSchedAt job = do
+  now <- getEpochTime
+  if getSchedAt job < now then do
+    return $ setSchedAt now job
+  else return job
 
 reSchedJob :: (MonadUnliftIO m, Persist db, Transport tp) => TaskList -> Job -> SchedT db tp m ()
 reSchedJob taskList job = do
