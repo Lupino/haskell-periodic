@@ -62,6 +62,7 @@ instance Persist PSQL where
   size           (PSQL pool) = doSize pool
   foldr          (PSQL pool) = doFoldr pool
   foldrPending   (PSQL pool) = doFoldrPending pool
+  foldrLocking   (PSQL pool) = doFoldrLocking pool
   dumpJob        (PSQL pool) = doDumpJob pool
   configSet      (PSQL pool) = doConfigSet pool
   configGet      (PSQL pool) = doConfigGet pool
@@ -258,6 +259,11 @@ doFoldrPending pool ts fns f acc = withResource pool $ \conn ->
         foldFunc :: Connection -> (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc conn f0 fn acc0 =
           fold conn sql (unFN fn, stateName Pending, ts) acc0 (mkFoldFunc f0)
+
+doFoldrLocking :: Pool Connection -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
+doFoldrLocking pool limit fn f acc = withResource pool $ \conn ->
+  fold conn sql (unFN fn, stateName Locking, limit) acc (mkFoldFunc f)
+  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE func=? AND state=? LIMIT ?"
 
 doDumpJob :: Pool Connection -> IO [Job]
 doDumpJob pool = withResource pool $ \conn ->

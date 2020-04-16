@@ -778,13 +778,10 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
           p <- asks sPersist
           sizePQ <- liftIO $ P.size p Running fn
           sizeL <- liftIO $ P.size p Locking fn
+          maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
           when (sizePQ == 0 && sizeL > 0) $ do
-            handles <- liftIO $ P.foldr p Locking (foldFunc fn) []
+            handles <- liftIO $ P.foldrLocking p maxBatchSize fn (:) []
             mapM_ doRelease handles
-
-        foldFunc :: FuncName -> Job -> [Job] -> [Job]
-        foldFunc fn job acc | getFuncName job == fn = job : acc
-                            | otherwise             = acc
 
         doRelease
           :: (MonadUnliftIO m, Persist db)
