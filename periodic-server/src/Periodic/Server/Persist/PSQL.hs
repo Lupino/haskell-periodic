@@ -17,6 +17,7 @@ import qualified Data.Foldable              as F (foldrM)
 import           Data.Int                   (Int64)
 import           Data.List                  (intercalate)
 import           Data.Maybe                 (fromMaybe, isJust, listToMaybe)
+import           Data.Pool                  (Pool, createPool, withResource)
 import           Data.String                (IsString (..))
 import           Database.PostgreSQL.Simple
 import           Periodic.Server.Persist    (Persist (PersistConfig, PersistException),
@@ -33,7 +34,11 @@ stateName Pending = "0"
 stateName Running = "1"
 stateName Locking = "2"
 
-newtype PSQL = PSQL Connection
+newtype PSQL = PSQL (Pool Connection)
+
+numStripes = 1
+idleTime = 10
+maxResources = 10
 
 instance Persist PSQL where
   data PersistConfig PSQL = PSQLPath ByteString
@@ -41,28 +46,29 @@ instance Persist PSQL where
 
   newPersist (PSQLPath path) = do
     infoM "Periodic.Server.Persist.PSQL" ("PSQL connected " ++ show path)
-    conn <- connectPostgreSQL path
-    withTransaction conn $ do
-      createConfigTable conn
-      createJobTable conn
-      createFuncTable conn
-      allPending conn
-    return $ PSQL conn
+    pool <- createPool (connectPostgreSQL path) close numStripes idleTime maxResources
+    withResource pool $ \conn ->
+      withTransaction conn $ do
+        createConfigTable conn
+        createJobTable conn
+        createFuncTable conn
+    allPending pool
+    return $ PSQL pool
 
-  member           (PSQL conn) = doMember conn
-  lookup           (PSQL conn) = doLookup conn
-  insert           (PSQL conn) = doInsert conn
-  delete           (PSQL conn) = doDelete conn
-  size             (PSQL conn) = doSize conn
-  foldr            (PSQL conn) = doFoldr conn
-  foldr'           (PSQL conn) = doFoldr' conn
-  dumpJob          (PSQL conn) = doDumpJob conn
-  configSet        (PSQL conn) = doConfigSet conn
-  configGet        (PSQL conn) = doConfigGet conn
-  insertFuncName   (PSQL conn) = doInsertFuncName conn
-  removeFuncName   (PSQL conn) = doRemoveFuncName conn
-  funcList         (PSQL conn) = doFuncList conn
-  minSchedAt       (PSQL conn) = doMinSchedAt conn Pending
+  member           (PSQL pool) = doMember pool
+  lookup           (PSQL pool) = doLookup pool
+  insert           (PSQL pool) = doInsert pool
+  delete           (PSQL pool) = doDelete pool
+  size             (PSQL pool) = doSize pool
+  foldr            (PSQL pool) = doFoldr pool
+  foldr'           (PSQL pool) = doFoldr' pool
+  dumpJob          (PSQL pool) = doDumpJob pool
+  configSet        (PSQL pool) = doConfigSet pool
+  configGet        (PSQL pool) = doConfigGet pool
+  insertFuncName   (PSQL pool) = doInsertFuncName pool
+  removeFuncName   (PSQL pool) = doRemoveFuncName pool
+  funcList         (PSQL pool) = doFuncList pool
+  minSchedAt       (PSQL pool) = doMinSchedAt pool Pending
 
 instance Exception (PersistException PSQL)
 
@@ -106,8 +112,8 @@ instance IsString IndexName where
 getOnlyDefault :: FromRow (Only a) => a -> [Only a] -> a
 getOnlyDefault a = maybe a fromOnly . listToMaybe
 
-insertOrUpdate :: ToRow a => TableName -> Columns -> Columns -> a -> Connection -> IO Int64
-insertOrUpdate tn ucols vcols a conn = execute conn sql a
+insertOrUpdate :: ToRow a => TableName -> Columns -> Columns -> a -> Pool Connection -> IO Int64
+insertOrUpdate tn ucols vcols a pool = withResource pool $ \conn -> execute conn sql a
   where cols = ucols ++ vcols
         v = replicate (length cols) "?"
 
@@ -128,8 +134,8 @@ insertOrUpdate tn ucols vcols a conn = execute conn sql a
           , doSql
           ]
 
-update :: ToRow a => TableName -> Columns -> String -> a -> Connection -> IO Int64
-update tn cols partSql a conn = execute conn sql a
+update :: ToRow a => TableName -> Columns -> String -> a -> Pool Connection -> IO Int64
+update tn cols partSql a pool = withResource pool $ \conn -> execute conn sql a
   where setSql = intercalate ", " $ map appendSet cols
         whereSql = if null partSql then "" else " WHERE " ++ partSql
         sql = fromString $ concat
@@ -151,20 +157,22 @@ selectOne tn cols partSql a conn = listToMaybe <$> query conn sql a
           , whereSql
           ]
 
-selectOneOnly :: (ToRow a, FromRow (Only b), Show b) => TableName -> Column -> String -> a -> Connection -> IO (Maybe b)
-selectOneOnly tn col partSql a conn =
+selectOneOnly
+  :: (ToRow a, FromRow (Only b), Show b)
+  => TableName -> Column -> String -> a -> Pool Connection -> IO (Maybe b)
+selectOneOnly tn col partSql a pool = withResource pool $ \conn ->
   fmap fromOnly <$> selectOne tn [col] partSql a conn
 
-count :: ToRow a => TableName -> String -> a -> Connection -> IO Int64
-count tn partSql a conn =
+count :: ToRow a => TableName -> String -> a -> Pool Connection -> IO Int64
+count tn partSql a pool = withResource pool $ \conn ->
   getOnlyDefault 0 <$> query conn sql a
   where whereSql = " WHERE " ++ partSql
         sql = fromString $ concat
           [ "SELECT count(*) FROM ", getTableName tn, whereSql
           ]
 
-delete :: ToRow a => TableName -> String -> a -> Connection -> IO Int64
-delete tn partSql a conn = execute conn sql a
+delete :: ToRow a => TableName -> String -> a -> Pool Connection -> IO Int64
+delete tn partSql a pool = withResource pool $ \conn -> execute conn sql a
   where whereSql = " WHERE " ++ partSql
         sql = fromString $ concat
           [ "DELETE FROM ", getTableName tn, whereSql
@@ -206,13 +214,13 @@ createFuncTable =
     , "CONSTRAINT func_pk PRIMARY KEY (func)"
     ]
 
-allPending :: Connection -> IO ()
+allPending :: Pool Connection -> IO ()
 allPending = void . update jobs ["state"] "" (Only (stateName Pending))
 
-doLookup :: Connection -> State -> FuncName -> JobName -> IO (Maybe Job)
-doLookup conn state fn jn = do
+doLookup :: Pool Connection -> State -> FuncName -> JobName -> IO (Maybe Job)
+doLookup pool state fn jn = do
   r <- selectOneOnly jobs "value" "func=? AND name=? AND state=?"
-        (unFN fn, unJN jn, stateName state) conn
+        (unFN fn, unJN jn, stateName state) pool
   case r of
     Nothing -> return Nothing
     Just bs ->
@@ -222,68 +230,70 @@ doLookup conn state fn jn = do
           return Nothing
         Right job -> return $ Just job
 
-doMember :: Connection -> State -> FuncName -> JobName -> IO Bool
-doMember conn st fn jn = isJust <$> doLookup conn st fn jn
+doMember :: Pool Connection -> State -> FuncName -> JobName -> IO Bool
+doMember pool st fn jn = isJust <$> doLookup pool st fn jn
 
-doInsert :: Connection -> State -> FuncName -> JobName -> Job -> IO ()
-doInsert conn state fn jn job = do
-  doInsertFuncName conn fn
+doInsert :: Pool Connection -> State -> FuncName -> JobName -> Job -> IO ()
+doInsert pool state fn jn job = do
+  doInsertFuncName pool fn
   void $ insertOrUpdate jobs
     ["func", "name"]
     ["value", "state", "sched_at"]
     (unFN fn, unJN jn, encode $ toBytes job, stateName state, getSchedAt job)
-    conn
+    pool
 
-doInsertFuncName :: Connection -> FuncName -> IO ()
-doInsertFuncName conn fn = void $ insertOrUpdate funcs ["func"] [] (Only $ unFN fn) conn
+doInsertFuncName :: Pool Connection -> FuncName -> IO ()
+doInsertFuncName pool fn = void $ insertOrUpdate funcs ["func"] [] (Only $ unFN fn) pool
 
-doFoldr :: Connection -> State -> (Job -> a -> a) -> a -> IO a
-doFoldr conn state f acc =
+doFoldr :: Pool Connection -> State -> (Job -> a -> a) -> a -> IO a
+doFoldr pool state f acc = withResource pool $ \conn ->
   fold conn sql (Only $ stateName state) acc (mkFoldFunc f)
   where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE state=?"
 
-doFoldr' :: Connection -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldr' conn state fns f acc = F.foldrM (foldFunc f) acc fns
+doFoldr' :: Pool Connection -> State -> [FuncName] -> (Job -> a -> a) -> a -> IO a
+doFoldr' pool state fns f acc = withResource pool $ \conn ->
+  F.foldrM (foldFunc conn f) acc fns
 
   where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE func=? AND state=?"
-        foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
-        foldFunc  f0 fn acc0 =
+        foldFunc :: Connection -> (Job -> a -> a) -> FuncName -> a -> IO a
+        foldFunc conn f0 fn acc0 =
           fold conn sql (unFN fn, stateName state) acc0 (mkFoldFunc f0)
 
-doDumpJob :: Connection -> IO [Job]
-doDumpJob conn = fold_ conn sql [] (mkFoldFunc (:))
+doDumpJob :: Pool Connection -> IO [Job]
+doDumpJob pool = withResource pool $ \conn ->
+  fold_ conn sql [] (mkFoldFunc (:))
   where sql = fromString $ "SELECT value FROM " ++ getTableName jobs
 
-doFuncList :: Connection -> IO [FuncName]
-doFuncList conn =
+doFuncList :: Pool Connection -> IO [FuncName]
+doFuncList pool = withResource pool $ \conn ->
   map (FuncName . fromOnly) <$> query_ conn sql
   where sql = fromString $ "SELECT func FROM " ++ getTableName funcs
 
-doDelete :: Connection -> FuncName -> JobName -> IO ()
-doDelete conn fn jn = void $ delete jobs "func=? AND name=?" (unFN fn, unJN jn) conn
+doDelete :: Pool Connection -> FuncName -> JobName -> IO ()
+doDelete pool fn jn = void $ delete jobs "func=? AND name=?" (unFN fn, unJN jn) pool
 
-doRemoveFuncName :: Connection -> FuncName -> IO ()
-doRemoveFuncName conn fn = do
-  void $ delete jobs "func=?" (Only $ unFN fn) conn
-  void $ delete funcs "func=?" (Only $ unFN fn) conn
+doRemoveFuncName :: Pool Connection -> FuncName -> IO ()
+doRemoveFuncName pool fn = do
+  void $ delete jobs "func=?" (Only $ unFN fn) pool
+  void $ delete funcs "func=?" (Only $ unFN fn) pool
 
-doMinSchedAt :: Connection -> State -> FuncName -> IO Int64
-doMinSchedAt conn state fn =
+doMinSchedAt :: Pool Connection -> State -> FuncName -> IO Int64
+doMinSchedAt pool state fn =
   fromMaybe 0
     . fromMaybe Nothing
     <$> selectOneOnly jobs "min(sched_at)" "func=? AND state=?"
     (unFN fn, stateName state)
-    conn
+    pool
 
-doSize :: Connection -> State -> FuncName -> IO Int64
-doSize conn state fn = count jobs "func=? AND state=?" (unFN fn, stateName state) conn
+doSize :: Pool Connection -> State -> FuncName -> IO Int64
+doSize pool state fn = count jobs "func=? AND state=?" (unFN fn, stateName state) pool
 
-doConfigSet :: Connection -> String -> Int -> IO ()
-doConfigSet conn name v =
-  void $ insertOrUpdate configs ["name"] ["value"] (name, v) conn
+doConfigSet :: Pool Connection -> String -> Int -> IO ()
+doConfigSet pool name v =
+  void $ insertOrUpdate configs ["name"] ["value"] (name, v) pool
 
-doConfigGet :: Connection -> String -> IO (Maybe Int)
-doConfigGet conn name = selectOneOnly configs  "value" "name=?" (Only name) conn
+doConfigGet :: Pool Connection -> String -> IO (Maybe Int)
+doConfigGet pool name = selectOneOnly configs  "value" "name=?" (Only name) pool
 
 mkFoldFunc :: (Job -> a -> a) -> a -> Only ByteString -> IO a
 mkFoldFunc f acc (Only bs) =
