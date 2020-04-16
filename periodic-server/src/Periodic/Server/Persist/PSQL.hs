@@ -63,16 +63,11 @@ instance Persist PSQL where
   removeFuncName   (PSQL conn) = doRemoveFuncName conn
   funcList         (PSQL conn) = doFuncList conn
   minSchedAt       (PSQL conn) = doMinSchedAt conn Pending
-  transact         (PSQL conn) = doTransact conn
-  transactReadOnly (PSQL conn) = doTransact conn
 
 instance Exception (PersistException PSQL)
 
 instance IsString (PersistConfig PSQL) where
   fromString = PSQLPath . fromString
-
-doTransact :: Connection -> IO a -> IO a
-doTransact _ = id
 
 newtype TableName = TableName String
   deriving (Show)

@@ -21,8 +21,8 @@ import           Periodic.Server.Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
-import           System.Log.Logger       (errorM, infoM)
-import           UnliftIO                (Exception, Typeable, throwIO, tryAny)
+import           System.Log.Logger       (infoM)
+import           UnliftIO                (Exception, Typeable, throwIO)
 
 stateName :: State -> ByteString
 stateName Pending = "0"
@@ -68,8 +68,6 @@ instance Persist SQLite where
   removeFuncName   (SQLite db) = doRemoveFuncName db
   funcList         (SQLite db) = doFuncList db
   minSchedAt       (SQLite db) = doMinSchedAt db Pending
-  transact         (SQLite db) = doTransact db
-  transactReadOnly (SQLite db) = doTransact db
 
 instance Exception (PersistException SQLite)
 
@@ -84,19 +82,6 @@ commitTx db = void $ exec db "COMMIT TRANSACTION"
 
 rollbackTx :: Database -> IO ()
 rollbackTx db = void $ exec db "ROLLBACK TRANSACTION"
-
-doTransact :: Database -> IO a -> IO a
-doTransact db io = do
-  beginTx db
-  r <- tryAny io
-  case r of
-    Left e -> do
-      errorM "Periodic.Server.Persist.SQLite" $ show e
-      rollbackTx db
-      throwIO e
-    Right v -> do
-      commitTx db
-      pure v
 
 createConfigTable :: Database -> IO ()
 createConfigTable db = void . exec db $ Utf8 $

@@ -36,6 +36,3 @@ class (Exception (PersistException db)) => Persist db where
   removeFuncName   :: db -> FuncName -> IO ()
   funcList         :: db -> IO [FuncName]
   minSchedAt       :: db -> FuncName -> IO Int64
-  transact         :: forall a. db -> IO a -> IO a
-  transactReadOnly :: forall a. db -> IO a -> IO a
-

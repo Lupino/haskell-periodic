@@ -189,14 +189,15 @@ startSchedT = do
 
 loadInt :: (MonadIO m, Persist db) => String -> TVar Int -> SchedT db tp m ()
 loadInt name ref = do
-  v <- transactReadOnly $ flip P.configGet name
+  v <- liftIO . flip P.configGet name =<< asks sPersist
   case v of
     Nothing -> pure ()
     Just v' -> atomically $ writeTVar ref v'
 
 saveInt :: (MonadIO m, Persist db) => String -> Int -> TVar Int -> SchedT db tp m ()
 saveInt name v ref = do
-  transact $ \p -> P.configSet p name v
+  p <- asks sPersist
+  liftIO $ P.configSet p name v
   atomically $ writeTVar ref v
 
 setConfigInt :: (MonadIO m, Persist db) => String -> Int -> SchedT db tp m ()
@@ -238,19 +239,6 @@ runTask_ d m = void . async $ do
     alive <- readTVarIO sAlive
     if alive then lift m
              else mzero
-
-withPersist :: (MonadIO m, Persist db) => (db -> IO a) -> SchedT db tp m a
-withPersist f = do
-  persist <- asks sPersist
-  liftIO $ f persist
-
-transact :: (MonadIO m, Persist db) => (db -> IO a) -> SchedT db tp m a
-transact f = withPersist $ \persist ->
-  P.transact persist $ f persist
-
-transactReadOnly :: (MonadIO m, Persist db) => (db -> IO a) -> SchedT db tp m a
-transactReadOnly f = withPersist $ \persist ->
-  P.transactReadOnly persist $ f persist
 
 runChanJob
   :: (MonadUnliftIO m, Persist db, Transport tp)
@@ -339,7 +327,8 @@ pollJob_ taskList funcList = do
   let check job = notElem (getHandle job) handles && (getSchedAt job < next)
 
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-  jobs <- transactReadOnly $ \p ->
+  p <- asks sPersist
+  jobs <- liftIO $
     P.foldr' p Pending funcList (foldFunc (maxBatchSize * 2) check now) PSQ.empty
 
   mapM_ (checkJob taskList) jobs
@@ -361,7 +350,8 @@ pollJob_ taskList funcList = do
           w <- findTask tl job
           case w of
             Nothing -> do
-              isProc <- transactReadOnly $ \p -> P.member p Running fn jn
+              p <- asks sPersist
+              isProc <- liftIO $ P.member p Running fn jn
               unless isProc $ reSchedJob tl job
             Just w0 -> do
               r <- canRun fn
@@ -379,7 +369,8 @@ pushChanList act = do
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db tp m ()
 pushJob job = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
-  isRunning <- transactReadOnly $ \p -> P.member p Running fn jn
+  p <- asks sPersist
+  isRunning <- liftIO $ P.member p Running fn jn
   unless isRunning doPushJob
 
   where fn = getFuncName job
@@ -388,7 +379,8 @@ pushJob job = do
         doPushJob :: (MonadIO m, Persist db) => SchedT db tp m ()
         doPushJob = do
           pushChanList (Add job)
-          transact $ \p -> P.insert p Pending fn jn job
+          p <- asks sPersist
+          liftIO $ P.insert p Pending fn jn job
 
 reSchedJob :: (MonadUnliftIO m, Persist db, Transport tp) => TaskList -> Job -> SchedT db tp m ()
 reSchedJob taskList job = do
@@ -479,11 +471,11 @@ schedJob_ taskList job = do
           if alive then do
             IL.insert jq (getHandle job)
             nextSchedAt <- getEpochTime
-            transact $ \p -> P.insert p Running fn jn $ setSchedAt nextSchedAt job
+            liftIO $ P.insert sPersist Running fn jn $ setSchedAt nextSchedAt job
             r <- doSubmitJob env0
             case r of
               Left _ -> do
-                transact $ \p -> P.insert p Pending fn jn $ setSchedAt nextSchedAt job
+                liftIO $ P.insert sPersist Pending fn jn $ setSchedAt nextSchedAt job
                 IL.delete jq jh
                 schedJob_ tl job
               Right _ -> endSchedJob
@@ -506,14 +498,12 @@ schedJob_ taskList job = do
 
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db tp m ()
 adjustFuncStat fn = do
-  (size, sizePQ, sizeL, sc) <- transactReadOnly $ \p -> do
-    size <- P.size p Pending fn
-    sizePQ <- P.size p Running fn
-    sizeL <- P.size p Locking fn
-    sc <- P.minSchedAt p fn
-    pure (size, sizePQ, sizeL, sc)
-
   SchedEnv{..} <- ask
+  size <- liftIO $ P.size sPersist Pending fn
+  sizePQ <- liftIO $ P.size sPersist Running fn
+  sizeL <- liftIO $ P.size sPersist Locking fn
+  sc <- liftIO $ P.minSchedAt sPersist fn
+
   schedAt <- if sc > 0 then pure sc else getEpochTime
 
   FL.alter sFuncStatList (update (size + sizePQ + sizeL) sizePQ sizeL schedAt) fn
@@ -529,7 +519,8 @@ adjustFuncStat fn = do
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db tp m ()
 removeJob job = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
-  transact $ \p -> P.delete p fn jn
+  p <- asks sPersist
+  liftIO $ P.delete p fn jn
 
   pushChanList (Remove job)
   pushResult jh ""
@@ -538,13 +529,13 @@ removeJob job = do
         jh = getHandle job
 
 dumpJob :: (MonadIO m, Persist db) => SchedT db tp m [Job]
-dumpJob = transactReadOnly $ \p -> P.dumpJob p
+dumpJob = liftIO . P.dumpJob =<< asks sPersist
 
 alterFunc :: (MonadIO m, Persist db) => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT db tp m ()
 alterFunc n f = do
   SchedEnv{..} <- ask
   FL.alter sFuncStatList f n
-  transact $ \p -> P.insertFuncName p n
+  liftIO $ P.insertFuncName sPersist n
   pushChanList PollJob
 
 addFunc :: (MonadIO m, Persist db) => FuncName -> SchedT db tp m ()
@@ -579,7 +570,7 @@ dropFunc n = do
     case st of
       Just FuncStat{sWorker=0} -> do
         FL.delete sFuncStatList n
-        liftIO $ P.transact sPersist $ P.removeFuncName sPersist n
+        liftIO $ P.removeFuncName sPersist n
       _                        -> pure ()
 
   pushChanList PollJob
@@ -603,7 +594,8 @@ failJob jh = do
     removeFromWaitList jh
     doneJob jh ""
   else do
-    job <- transactReadOnly $ \p -> P.lookup p Running fn jn
+    p <- asks sPersist
+    job <- liftIO $ P.lookup p Running fn jn
     when (isJust job) $ do
       nextSchedAt <- getEpochTime
       retryJob $ setSchedAt nextSchedAt $ fromJust job
@@ -612,7 +604,8 @@ failJob jh = do
 
 retryJob :: (MonadIO m, Persist db) => Job -> SchedT db tp m ()
 retryJob job = do
-  transact $ \p -> P.insert p Pending fn jn job
+  p <- asks sPersist
+  liftIO $ P.insert p Pending fn jn job
 
   pushChanList (Add job)
 
@@ -625,7 +618,8 @@ doneJob
 doneJob jh w = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
   releaseLock' jh
-  transact $ \p -> P.delete p fn jn
+  p <- asks sPersist
+  liftIO $ P.delete p fn jn
   pushResult jh w
   where (fn, jn) = unHandle jh
 
@@ -640,7 +634,8 @@ schedLaterJob jh later step = do
     removeFromWaitList jh
     doneJob jh ""
   else do
-    job <- transactReadOnly $ \p -> P.lookup p Running fn jn
+    p <- asks sPersist
+    job <- liftIO $ P.lookup p Running fn jn
     when (isJust job) $ do
       let job' = fromJust job
 
@@ -662,8 +657,9 @@ getLockedFuncNameList name = do
 getRunningCount
   :: (MonadIO m, Persist db)
   => [FuncName] -> SchedT db tp m Int64
-getRunningCount funcs = transactReadOnly $ \p ->
-  sum <$> mapM (P.size p Running) funcs
+getRunningCount funcs = do
+  p <- asks sPersist
+  liftIO $ sum <$> mapM (P.size p Running) funcs
 
 acquireLock
   :: (MonadUnliftIO m, Persist db)
@@ -673,7 +669,8 @@ acquireLock name maxCount jh = do
   locker <- asks sLocker
   L.with locker $ do
     lockList <- asks sLockList
-    j <- transactReadOnly $ \p -> P.lookup p Running fn jn
+    p <- asks sPersist
+    j <- liftIO $ P.lookup p Running fn jn
     case j of
       Nothing -> pure True
       Just job -> do
@@ -698,7 +695,7 @@ acquireLock name maxCount jh = do
 
           if size <= fromIntegral maxCount then return True
             else do
-            transact $ \p -> P.insert p Locking fn jn job
+            liftIO $ P.insert p Locking fn jn job
             return False
 
   where (fn, jn) = unHandle jh
@@ -709,6 +706,7 @@ releaseLock
 releaseLock name jh = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
   locker <- asks sLocker
+  p <- asks sPersist
   L.with locker $ do
     lockList <- asks sLockList
     h <- atomically $ do
@@ -728,11 +726,11 @@ releaseLock name jh = do
       Nothing -> pure ()
       Just hh -> do
         let (fn, jn) = unHandle hh
-        j <- transactReadOnly $ \p -> P.lookup p Locking fn jn
+        j <- liftIO $ P.lookup p Locking fn jn
         case j of
           Nothing  -> releaseLock name hh
           Just job -> do
-            transact $ \p -> P.insert p Pending fn jn job
+            liftIO $ P.insert p Pending fn jn job
             pushChanList (Add job)
 
 releaseLock'
@@ -750,14 +748,15 @@ releaseLock' jh = do
 
 status :: (MonadIO m, Persist db) => SchedT db tp m [FuncStat]
 status = do
-  mapM_ adjustFuncStat =<< transactReadOnly P.funcList
+  mapM_ adjustFuncStat =<< liftIO . P.funcList =<< asks sPersist
   FL.elems =<< asks sFuncStatList
 
 revertRunningQueue :: (MonadUnliftIO m, Persist db) => SchedT db tp m ()
 revertRunningQueue = do
   now <- getEpochTime
   tout <- fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
-  handles <- transactReadOnly $ \p -> P.foldr p Running (foldFunc (check now tout)) []
+  p <- asks sPersist
+  handles <- liftIO $ P.foldr p Running (foldFunc (check now tout)) []
   mapM_ (failJob . getHandle) handles
 
   where foldFunc :: (Job -> Bool) -> Job -> [Job] -> [Job]
@@ -770,18 +769,17 @@ revertRunningQueue = do
           | otherwise = getSchedAt job + fromIntegral t0 < now
 
 revertLockingQueue :: (MonadUnliftIO m, Persist db) => SchedT db tp m ()
-revertLockingQueue = mapM_ checkAndReleaseLock =<< transactReadOnly P.funcList
+revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks sPersist
 
   where checkAndReleaseLock
           :: (MonadUnliftIO m, Persist db)
           => FuncName -> SchedT db tp m ()
         checkAndReleaseLock fn = do
-          (sizePQ, sizeL) <- transactReadOnly $ \p -> do
-            sizePQ <- P.size p Running fn
-            sizeL <- P.size p Locking fn
-            pure (sizePQ, sizeL)
+          p <- asks sPersist
+          sizePQ <- liftIO $ P.size p Running fn
+          sizeL <- liftIO $ P.size p Locking fn
           when (sizePQ == 0 && sizeL > 0) $ do
-            handles <- transactReadOnly $ \p -> P.foldr p Locking (foldFunc fn) []
+            handles <- liftIO $ P.foldr p Locking (foldFunc fn) []
             mapM_ doRelease handles
 
         foldFunc :: FuncName -> Job -> [Job] -> [Job]
@@ -792,7 +790,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< transactReadOnly P.funcList
           :: (MonadUnliftIO m, Persist db)
           => Job -> SchedT db tp m ()
         doRelease job = do
-          transact $ \p -> P.insert p Pending fn jn job
+          p <- asks sPersist
+          liftIO $ P.insert p Pending fn jn job
           pushChanList (Add job)
           where fn = getFuncName job
                 jn = getName job
