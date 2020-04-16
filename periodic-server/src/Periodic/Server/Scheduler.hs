@@ -691,36 +691,41 @@ releaseLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> JobHandle -> SchedT db tp m ()
 releaseLock name jh = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
   locker <- asks sLocker
-  p <- asks sPersist
-  L.with locker $ do
-    lockList <- asks sLockList
-    h <- atomically $ do
-      l <- FL.lookupSTM lockList name
-      case l of
-        Nothing -> pure Nothing
-        Just (acquired, locked) ->
-          if jh `elem` acquired then
-            case locked of
-              [] -> do
-                FL.insertSTM lockList name (L.delete jh acquired, [])
-                pure Nothing
-              x:xs -> do
-                FL.insertSTM lockList name (L.delete jh acquired, xs)
-                pure $ Just x
-          else pure Nothing
+  L.with locker $ releaseLock_ name jh
 
-    case h of
-      Nothing -> pure ()
-      Just hh -> do
-        let (fn, jn) = unHandle hh
-        j <- liftIO $ P.lookup p Locking fn jn
-        case j of
-          Nothing  -> releaseLock name hh
-          Just job -> do
-            liftIO $ P.insert p Pending fn jn job
-            pushChanList (Add job)
+releaseLock_
+  :: (MonadUnliftIO m, Persist db)
+  => LockName -> JobHandle -> SchedT db tp m ()
+releaseLock_ name jh = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
+  p <- asks sPersist
+  lockList <- asks sLockList
+  h <- atomically $ do
+    l <- FL.lookupSTM lockList name
+    case l of
+      Nothing -> pure Nothing
+      Just (acquired, locked) ->
+        if jh `elem` acquired then
+          case locked of
+            [] -> do
+              FL.insertSTM lockList name (L.delete jh acquired, [])
+              pure Nothing
+            x:xs -> do
+              FL.insertSTM lockList name (L.delete jh acquired, xs)
+              pure $ Just x
+        else pure Nothing
+
+  case h of
+    Nothing -> pure ()
+    Just hh -> do
+      let (fn, jn) = unHandle hh
+      j <- liftIO $ P.lookup p Locking fn jn
+      case j of
+        Nothing  -> releaseLock_ name hh
+        Just job -> do
+          liftIO $ P.insert p Pending fn jn job
+          pushChanList (Add job)
 
 releaseLock'
   :: (MonadUnliftIO m, Persist db)
