@@ -92,7 +92,13 @@ type WaitList = IOHashMap JobHandle WaitItem
 
 -- Distributed lock
 --                                  acquired    locked
-type LockList = IOHashMap LockName ([JobHandle], [JobHandle])
+data LockInfo = LockInfo
+    { acquired :: [JobHandle]
+    , locked   :: [JobHandle]
+    , maxCount :: Int
+    }
+
+type LockList = IOHashMap LockName LockInfo
 
 data SchedEnv db tp = SchedEnv
     { sPollInterval   :: TVar Int -- main poll loop every time interval
@@ -655,8 +661,8 @@ schedLaterJob jh later step = do
 acquireLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> Int -> JobHandle -> SchedT db tp m Bool
-acquireLock name maxCount jh = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show maxCount ++ " " ++ show jh)
+acquireLock name count jh = do
+  liftIO $ infoM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show count ++ " " ++ show jh)
   locker <- asks sLocker
   L.with locker $ do
     lockList <- asks sLockList
@@ -669,17 +675,28 @@ acquireLock name maxCount jh = do
           l <- FL.lookupSTM lockList name
           case l of
             Nothing -> do
-              FL.insertSTM lockList name ([jh], [])
+              FL.insertSTM lockList name LockInfo
+                { acquired = [jh]
+                , locked = []
+                , maxCount = count
+                }
               pure True
-            Just (acquired, locked) ->
+            Just (info@LockInfo {..}) -> do
+              let newCount = max maxCount count
               if jh `elem` acquired then pure True
               else if jh `elem` locked then pure False
               else
                 if length acquired < maxCount then do
-                  FL.insertSTM lockList name (acquired ++ [jh], locked)
+                  FL.insertSTM lockList name info
+                    { acquired = acquired ++ [jh]
+                    , maxCount = newCount
+                    }
                   pure True
                 else do
-                  FL.insertSTM lockList name (acquired, locked ++ [jh])
+                  FL.insertSTM lockList name info
+                    { locked = locked ++ [jh]
+                    , maxCount = newCount
+                    }
                   pure False
 
         unless r $ liftIO $ P.insert p Locking fn jn job
@@ -705,14 +722,19 @@ releaseLock_ name jh = do
     l <- FL.lookupSTM lockList name
     case l of
       Nothing -> pure Nothing
-      Just (acquired, locked) ->
+      Just (info@LockInfo {..}) ->
         if jh `elem` acquired then
           case locked of
             [] -> do
-              FL.insertSTM lockList name (L.delete jh acquired, [])
+              FL.insertSTM lockList name info
+                { acquired = L.delete jh acquired
+                }
               pure Nothing
             x:xs -> do
-              FL.insertSTM lockList name (L.delete jh acquired, xs)
+              FL.insertSTM lockList name info
+                { acquired = L.delete jh acquired
+                , locked   = xs
+                }
               pure $ Just x
         else pure Nothing
 
@@ -735,12 +757,12 @@ releaseLock' jh = do
   names <- atomically $ FL.foldrWithKeySTM lockList foldFunc []
   mapM_ (`releaseLock` jh) names
 
-  where foldFunc :: LockName -> ([JobHandle], [JobHandle]) -> [LockName] -> [LockName]
-        foldFunc n (acquired, locked) acc | jh `elem` acquired = n : acc
-                                          | jh `elem` locked   = n : acc
-                                          | otherwise          = acc
+  where foldFunc :: LockName -> LockInfo -> [LockName] -> [LockName]
+        foldFunc n LockInfo {..} acc | jh `elem` acquired = n : acc
+                                     | jh `elem` locked   = n : acc
+                                     | otherwise          = acc
 
-countLock :: MonadUnliftIO m => (([JobHandle], [JobHandle]) -> [JobHandle]) -> FuncName -> SchedT db tp m Int
+countLock :: MonadUnliftIO m => (LockInfo -> [JobHandle]) -> FuncName -> SchedT db tp m Int
 countLock f fn = do
   lockList <- asks sLockList
   sum . map mapFunc <$> FL.elems lockList
@@ -748,7 +770,7 @@ countLock f fn = do
         filterFunc jh = fn0 == fn
           where (fn0, _) = unHandle jh
 
-        mapFunc :: ([JobHandle], [JobHandle]) -> Int
+        mapFunc :: LockInfo -> Int
         mapFunc = length . filter filterFunc . f
 
 
@@ -782,8 +804,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
           => FuncName -> SchedT db tp m ()
         checkAndReleaseLock fn = do
           p <- asks sPersist
-          sizeLocked <- countLock snd fn
-          sizeAcquired <- countLock fst fn
+          sizeLocked <- countLock locked fn
+          sizeAcquired <- countLock acquired fn
           liftIO $ infoM "Peridic.Server.Scheduler"
                  $ "LockInfo " ++ show fn
                  ++ " Locked:" ++ show sizeLocked
