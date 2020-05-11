@@ -150,7 +150,9 @@ update tn cols partSql a pool = withResource pool $ \conn -> execute conn sql a
                                | otherwise = col ++ " = ?"
 
 
-selectOne :: (ToRow a, FromRow b, Show b) => TableName -> Columns -> String -> a -> Connection -> IO (Maybe b)
+selectOne
+  :: (ToRow a, FromRow b, Show b)
+  => TableName -> Columns -> String -> a -> Connection -> IO (Maybe b)
 selectOne tn cols partSql a conn = listToMaybe <$> query conn sql a
   where whereSql = " WHERE " ++ partSql
         sql = fromString $ concat
@@ -161,8 +163,8 @@ selectOne tn cols partSql a conn = listToMaybe <$> query conn sql a
 selectOneOnly
   :: (ToRow a, FromRow (Only b), Show b)
   => TableName -> Column -> String -> a -> Pool Connection -> IO (Maybe b)
-selectOneOnly tn col partSql a pool = withResource pool $ \conn ->
-  fmap fromOnly <$> selectOne tn [col] partSql a conn
+selectOneOnly tn col partSql a pool =
+  withResource pool $ fmap (fmap fromOnly) . selectOne tn [col] partSql a
 
 count :: ToRow a => TableName -> String -> a -> Pool Connection -> IO Int64
 count tn partSql a pool = withResource pool $ \conn ->
@@ -227,7 +229,8 @@ doLookup pool state fn jn = do
     Just bs ->
       case decodeJob bs of
         Left e -> do
-          errorM "Periodic.Server.Persist.PSQL" $ "doLookup error: decode " ++ show bs ++ " " ++ show e
+          errorM "Periodic.Server.Persist.PSQL"
+                 $ "doLookup error: decode " ++ show bs ++ " " ++ show e
           return Nothing
         Right job -> return $ Just job
 
@@ -255,7 +258,8 @@ doFoldrPending :: Pool Connection -> Int64 -> [FuncName] -> (Job -> a -> a) -> a
 doFoldrPending pool ts fns f acc = withResource pool $ \conn ->
   F.foldrM (foldFunc conn f) acc fns
 
-  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE func=? AND state=? AND sched_at < ?"
+  where sql = fromString $ "SELECT value FROM "
+                ++ getTableName jobs ++ " WHERE func=? AND state=? AND sched_at < ?"
         foldFunc :: Connection -> (Job -> a -> a) -> FuncName -> a -> IO a
         foldFunc conn f0 fn acc0 =
           fold conn sql (unFN fn, stateName Pending, ts) acc0 (mkFoldFunc f0)
@@ -263,7 +267,8 @@ doFoldrPending pool ts fns f acc = withResource pool $ \conn ->
 doFoldrLocking :: Pool Connection -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
 doFoldrLocking pool limit fn f acc = withResource pool $ \conn ->
   fold conn sql (unFN fn, stateName Locking, limit) acc (mkFoldFunc f)
-  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE func=? AND state=? LIMIT ?"
+  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs
+                ++ " WHERE func=? AND state=? ORDER BY sched_at ASC LIMIT ?"
 
 doDumpJob :: Pool Connection -> IO [Job]
 doDumpJob pool = withResource pool $ \conn ->

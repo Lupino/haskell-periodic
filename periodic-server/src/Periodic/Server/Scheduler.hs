@@ -377,22 +377,19 @@ pushJob job = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   p <- asks sPersist
   isRunning <- liftIO $ P.member p Running fn jn
-  unless isRunning doPushJob
+  unless isRunning $ do
+    job' <- fixedSchedAt job
+    liftIO $ P.insert p Pending fn jn job'
+    pushChanList (Add job')
 
   where fn = getFuncName job
         jn = getName job
 
-        doPushJob :: (MonadIO m, Persist db) => SchedT db tp m ()
-        doPushJob = do
-          job' <- fixedSchedAt job
-          pushChanList (Add job')
-          p <- asks sPersist
-          liftIO $ P.insert p Pending fn jn job'
 
 fixedSchedAt :: MonadIO m => Job -> SchedT db tp m Job
 fixedSchedAt job = do
   now <- getEpochTime
-  if getSchedAt job < now then do
+  if getSchedAt job < now then
     return $ setSchedAt now job
   else return job
 
@@ -681,7 +678,7 @@ acquireLock name count jh = do
                 , maxCount = count
                 }
               pure True
-            Just (info@LockInfo {..}) -> do
+            Just info@LockInfo {..} -> do
               let newCount = max maxCount count
               if jh `elem` acquired then pure True
               else if jh `elem` locked then pure False
@@ -722,7 +719,7 @@ releaseLock_ name jh = do
     l <- FL.lookupSTM lockList name
     case l of
       Nothing -> pure Nothing
-      Just (info@LockInfo {..}) ->
+      Just info@LockInfo {..} ->
         if jh `elem` acquired then
           case locked of
             [] -> do
@@ -818,17 +815,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
           when (sizeLocked > 0 && sizeAcquired == 0) $ do
             count <- getMaxLockCount
             handles <- liftIO $ P.foldrLocking p count fn (:) []
-            mapM_ doRelease handles
+            mapM_ pushJob handles
 
-        doRelease
-          :: (MonadUnliftIO m, Persist db)
-          => Job -> SchedT db tp m ()
-        doRelease job = do
-          p <- asks sPersist
-          liftIO $ P.insert p Pending fn jn job
-          pushChanList (Add job)
-          where fn = getFuncName job
-                jn = getName job
 
 purgeExpired :: MonadIO m => SchedT db tp m ()
 purgeExpired = do

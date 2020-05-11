@@ -154,11 +154,11 @@ doFoldrLocking :: Database -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
 doFoldrLocking db limit fn f = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f)
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
                    <> stateName Locking
-                   <> " LIMIT " <> B.pack (show limit)
+                   <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)
 
 doDumpJob :: Database -> IO [Job]
 doDumpJob db = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
-  where sql = Utf8 $ "SELECT value FROM jobs"
+  where sql = Utf8 "SELECT value FROM jobs"
 
 doFuncList :: Database -> IO [FuncName]
 doFuncList db =
