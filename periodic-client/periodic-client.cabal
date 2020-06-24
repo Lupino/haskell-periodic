@@ -42,63 +42,6 @@ library
                      , mtl
   default-language:    Haskell2010
 
-executable periodic
-  hs-source-dirs:      app
-  main-is:             periodic.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       base
-                     , periodic-client
-                     , periodic-common
-                     , bytestring
-                     , boxes
-                     , unix-time
-                     , binary
-                     , metro
-                     , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
-  default-language:    Haskell2010
-
-executable periodic-run
-  hs-source-dirs:      app
-  main-is:             periodic-run.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       base
-                     , periodic-client
-                     , periodic-common
-                     , bytestring
-                     , text
-                     , process
-                     , unliftio
-                     , deepseq
-                     , metro
-                     , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
-  default-language:    Haskell2010
-
-executable periodic-http-bridge
-  hs-source-dirs:      app
-  main-is:             periodic-http-bridge.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       base
-                     , periodic-client
-                     , periodic-common
-                     , bytestring
-                     , scotty
-                     , warp
-                     , data-default-class
-                     , streaming-commons
-                     , http-types
-                     , metro
-                     , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
-  default-language:    Haskell2010
-
 source-repository head
   type:     git
   location: https://github.com/Lupino/haskell-periodic

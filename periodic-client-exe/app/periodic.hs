@@ -2,8 +2,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 
 module Main
-  (
-    main
+  ( main
   ) where
 
 import           Control.Monad          (void, when)

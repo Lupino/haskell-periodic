@@ -30,9 +30,9 @@ let
     # disableOptimization = true; # for compile speed
   };
 
-  periodic-client-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {
+  periodic-client-exe-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {
     normalPkgs = pkgs;
-    cabalPackageName = "periodic-client";
+    cabalPackageName = "periodic-client-exe";
     inherit compiler stack2nix-output-path;
     # disableOptimization = true; # for compile speed
   };
@@ -43,7 +43,7 @@ let
     set -eu -o pipefail
     STACK2NIX_OUTPUT_PATH=$(${stack2nix-script})
     export NIX_PATH=nixpkgs=${pkgs.path}
-    ${pkgs.nix}/bin/nix-build -A periodicd -A periodic-client --argstr stack2nix-output-path "$STACK2NIX_OUTPUT_PATH" "$@"
+    ${pkgs.nix}/bin/nix-build -A periodicd -A periodic-client-exe --argstr stack2nix-output-path "$STACK2NIX_OUTPUT_PATH" "$@"
   '';
 
   periodicd =
@@ -54,11 +54,11 @@ let
 
 in
   {
-    periodic-client = periodic-client-builder.static_package;
+    periodic-client-exe = periodic-client-exe-builder.static_package;
     inherit periodicd;
     inherit fullBuildScript;
     # For debugging:
     inherit stack2nix-script;
-    inherit periodic-client-builder;
+    inherit periodic-client-exe-builder;
     inherit periodicd-builder;
   }
