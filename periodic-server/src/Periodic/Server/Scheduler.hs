@@ -458,7 +458,7 @@ schedJob_ taskList job = do
   r <- canRun fn
   when r $ do
     now <- getEpochTime
-    when (schedAt > now) . threadDelay . fromIntegral $ (schedAt - now) * 1000000
+    when (schedAt > now + 1) . threadDelay . fromIntegral $ (schedAt - now) * 1000000
     FuncStat{..} <- atomically $ do
       st <- FL.lookupSTM sFuncStatList fn
       case st of
