@@ -1,7 +1,6 @@
-let
-  compilerVersion = "ghc883";
-  compilerSet = pkgs.haskell.packages."${compilerVersion}";
+{ compiler ? "default" }:
 
+let
   pkgs = import <nixpkgs> { inherit config; };
   gitIgnore = pkgs.nix-gitignore.gitignoreSourcePure;
 
@@ -53,12 +52,19 @@ let
     };
   };
 
+  haskellPackages = if compiler == "default"
+                       then pkgs.haskellPackages
+                       else pkgs.haskell.packages.${compiler};
+
+
 in {
   inherit pkgs;
-  shell = compilerSet.shellFor {
+  periodic-server = haskellPackages.periodic-server;
+  periodic-client-exe = haskellPackages.periodic-client-exe;
+  shell = haskellPackages.shellFor {
     packages = p: [p.periodic-client-exe p.periodic-server];
     buildInputs = with pkgs; [
-      compilerSet.cabal-install
+      haskellPackages.cabal-install
     ];
   };
 }

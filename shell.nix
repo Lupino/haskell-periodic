@@ -1,1 +1,2 @@
-(import ./default.nix).shell
+{ compiler ? "default" }:
+(import ./default.nix { inherit compiler; }).shell
