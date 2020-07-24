@@ -26,7 +26,8 @@ import           Control.Monad                (forever, replicateM, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
-import           Metro.Class                  (Transport, TransportConfig)
+import           Metro.Class                  (Transport, TransportConfig,
+                                               getPacketId)
 import           Metro.Conn                   (initConnEnv, runConnT)
 import qualified Metro.Conn                   as Conn
 import           Metro.IOHashMap              (IOHashMap, newIOHashMap)
@@ -36,9 +37,9 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                nextSessionId, runSessionT_,
                                                setDefaultSessionTimeout,
                                                setNodeMode, setSessionMode,
-                                               startNodeT, withEnv,
+                                               startNodeT_, withEnv,
                                                withSessionT)
-import           Metro.Session                (getSessionId, receive, send)
+import           Metro.Session                (send)
 import           Periodic.IOList              (IOList, newIOList)
 import qualified Periodic.IOList              as IL (append, clearSTM,
                                                      toListSTM)
@@ -47,7 +48,7 @@ import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
                                                      close, getClientEnv, ping)
 import           Periodic.Trans.Job           (JobT, func_, name, workFail)
 import           Periodic.Types               (ClientType (TypeWorker), Msgid,
-                                               getClientType, getResult,
+                                               Packet, getClientType, getResult,
                                                packetREQ, regPacketREQ)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
@@ -114,7 +115,7 @@ startWorkerT config m = do
 
   runNodeT jobEnv1 $ do
 
-    void $ async $ startNodeT $ assignJobHandler jobList
+    void $ async $ startNodeT_ (filterPacketM jobList) defaultSessionHandler
     runWorkerT wEnv $ do
       void . async $ forever $ do
         threadDelay $ 100 * 1000 * 1000
@@ -126,6 +127,14 @@ startWorkerT config m = do
           setNodeMode Multi
           . setSessionMode SingleAction
           . setDefaultSessionTimeout 100
+
+filterPacketM :: MonadIO m => JobList -> Packet ServerCommand -> m Bool
+filterPacketM jl rpkt = do
+  case getResult Nothing getAssignJob (Just rpkt) of
+    Nothing  -> return True
+    Just job -> do
+      IL.append jl (getPacketId rpkt, job)
+      return False
 
 
 runJobT :: Monad m => JobT tp m a -> WorkerT tp m a
@@ -180,28 +189,22 @@ work
   :: (MonadUnliftIO m, Transport tp)
   => Int -> WorkerT tp m ()
 work size = do
-  jl <- asks jobList
   tskSize <- asks taskSize
   runJobT $ do
-    asyncs <- replicateM size $ async $ work_ jl tskSize size
+    asyncs <- replicateM size $ async $ work_ tskSize size
     void $ waitAnyCancel asyncs
 
-work_ :: (MonadUnliftIO m, Transport tp) => JobList -> TVar Int -> Int -> JobT tp m ()
-work_ jl tskSize size = do
+work_ :: (MonadUnliftIO m, Transport tp) => TVar Int -> Int -> JobT tp m ()
+work_ tskSize size = do
   sid <- nextSessionId
   jobEnv <- newSessionEnv (Just (-1)) sid
-  runSessionT_ jobEnv $ do
-    io0 <- async . forever $ do
-      atomically $ do
-        s <- readTVar tskSize
-        when (s >= size) retrySTM
+  runSessionT_ jobEnv $ forever $ do
+    atomically $ do
+      s <- readTVar tskSize
+      when (s >= size) retrySTM
 
-      send $ packetREQ GrabJob
-      threadDelay 10000000 -- 10s
-
-    io1 <- async . forever $ assignJobHandler jl
-
-    void $ waitAnyCancel [io0, io1]
+    send $ packetREQ GrabJob
+    threadDelay 10000000 -- 10s
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> (Msgid, Job) -> JobT tp m ()
 processJob WorkerEnv{..} (sid, job) = do
@@ -240,15 +243,6 @@ checkHealth
   :: (MonadUnliftIO m, Transport tp)
   => WorkerT tp m ()
 checkHealth = runJobT BT.checkHealth
-
-assignJobHandler :: (MonadIO m, Transport tp) => JobList -> SessionT u ServerCommand tp m ()
-assignJobHandler jl = do
-  pid <- getSessionId
-  r <- getResult Nothing getAssignJob <$> receive
-  case r of
-    Nothing ->
-      liftIO $ errorM "Periodic.Node" $ "Session [" ++ show pid ++ "] not found."
-    Just job -> IL.append jl (pid, job)
 
 processJobQueue :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> JobT tp m ()
 processJobQueue wEnv@WorkerEnv {..} = forever $ do

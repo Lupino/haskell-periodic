@@ -53,7 +53,7 @@ extra-package-dbs: []
 extra-deps:
 - direct-sqlite-2.3.26@sha256:04e835402f1508abca383182023e4e2b9b86297b8533afbd4e57d1a5652e0c23,3718
 - git: https://github.com/Lupino/metro.git
-  commit: bd50f7c6b6aec42acd1696b586a59c287177f709
+  commit: 364b113ec98111c8507843aedceade3e6897f2e2
   subdirs:
   - .
   - metro-socket
