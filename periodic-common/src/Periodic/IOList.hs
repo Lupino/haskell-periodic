@@ -9,13 +9,14 @@ module Periodic.IOList
   , deleteSTM
   , toList
   , toListSTM
+  , clearSTM
   , fromList
   ) where
 
 import qualified Data.List as L
 import           Prelude   hiding (elem)
 import           UnliftIO  (MonadIO, STM, TVar, atomically, modifyTVar',
-                            newTVarIO, readTVar, readTVarIO)
+                            newTVarIO, readTVar, readTVarIO, writeTVar)
 
 
 newtype IOList a = IOList (TVar [a])
@@ -49,3 +50,6 @@ toList (IOList h) = readTVarIO h
 
 toListSTM :: IOList a -> STM [a]
 toListSTM (IOList h) = readTVar h
+
+clearSTM :: IOList a -> STM ()
+clearSTM (IOList h) = writeTVar h []

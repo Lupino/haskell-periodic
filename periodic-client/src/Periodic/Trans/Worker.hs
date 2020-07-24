@@ -40,7 +40,8 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                withSessionT)
 import           Metro.Session                (getSessionId, receive, send)
 import           Periodic.IOList              (IOList, newIOList)
-import qualified Periodic.IOList              as IL (append, toListSTM)
+import qualified Periodic.IOList              as IL (append, clearSTM,
+                                                     toListSTM)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
                                                      close, getClientEnv, ping)
@@ -254,6 +255,8 @@ processJobQueue wEnv@WorkerEnv {..} = forever $ do
   jobs <- atomically $ do
     v <- IL.toListSTM jobList
     if null v then retrySTM
-              else return v
+              else do
+                IL.clearSTM jobList
+                return v
 
   mapM_ (async . processJob wEnv) jobs
