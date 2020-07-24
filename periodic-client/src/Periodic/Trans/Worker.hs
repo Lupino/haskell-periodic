@@ -197,7 +197,7 @@ work size = do
         s <- readTVar tskSize
         when (s >= size) retrySTM
 
-      mapM_ (flip runSessionT_ (send $ packetREQ GrabJob)) envs
+      mapM_ (`runSessionT_` (send $ packetREQ GrabJob)) envs
       threadDelay 10000000 -- 10s
 
 
