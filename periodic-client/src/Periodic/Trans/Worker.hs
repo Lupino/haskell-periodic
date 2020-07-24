@@ -191,20 +191,15 @@ work
 work size = do
   tskSize <- asks taskSize
   runJobT $ do
-    asyncs <- replicateM size $ async $ work_ tskSize size
-    void $ waitAnyCancel asyncs
+    envs <- mapM (newSessionEnv (Just (-1))) =<< replicateM size nextSessionId
+    forever $ do
+      atomically $ do
+        s <- readTVar tskSize
+        when (s >= size) retrySTM
 
-work_ :: (MonadUnliftIO m, Transport tp) => TVar Int -> Int -> JobT tp m ()
-work_ tskSize size = do
-  sid <- nextSessionId
-  jobEnv <- newSessionEnv (Just (-1)) sid
-  runSessionT_ jobEnv $ forever $ do
-    atomically $ do
-      s <- readTVar tskSize
-      when (s >= size) retrySTM
+      mapM_ (flip runSessionT_ (send $ packetREQ GrabJob)) envs
+      threadDelay 10000000 -- 10s
 
-    send $ packetREQ GrabJob
-    threadDelay 10000000 -- 10s
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> (Msgid, Job) -> JobT tp m ()
 processJob WorkerEnv{..} (sid, job) = do
