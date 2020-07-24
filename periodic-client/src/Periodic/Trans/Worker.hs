@@ -38,16 +38,14 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                setNodeMode, setSessionMode,
                                                startNodeT, withEnv,
                                                withSessionT)
-import           Metro.Session                (getSessionId, readerSize,
-                                               receive, send)
+import           Metro.Session                (getSessionId, receive, send)
 import           Periodic.IOList              (IOList, newIOList)
 import qualified Periodic.IOList              as IL (append, toListSTM)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
                                                      close, getClientEnv, ping)
-import           Periodic.Trans.Job           (JobEnv, JobT, func_, name,
-                                               workFail)
-import           Periodic.Types               (ClientType (TypeWorker),
+import           Periodic.Trans.Job           (JobT, func_, name, workFail)
+import           Periodic.Types               (ClientType (TypeWorker), Msgid,
                                                getClientType, getResult,
                                                packetREQ, regPacketREQ)
 import           Periodic.Types.Job
@@ -59,9 +57,11 @@ import           UnliftIO.Concurrent          (threadDelay)
 
 type TaskList tp m = IOHashMap FuncName (JobT tp m ())
 
+type JobList = IOList (Msgid, Job)
+
 data WorkerEnv tp m = WorkerEnv
     { taskList :: TaskList tp m
-    , jobQueue :: IOList Job
+    , jobList  :: JobList
     , taskSize :: TVar Int
     }
 
@@ -104,7 +104,7 @@ startWorkerT config m = do
               _      -> ""
 
   taskList <- newIOHashMap
-  jobQueue <- newIOList
+  jobList <- newIOList
   taskSize <- newTVarIO 0
 
   jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) sessionGen
@@ -113,7 +113,7 @@ startWorkerT config m = do
 
   runNodeT jobEnv1 $ do
 
-    void $ async $ startNodeT $ assignJobHandler jobQueue
+    void $ async $ startNodeT $ assignJobHandler jobList
     runWorkerT wEnv $ do
       void . async $ forever $ do
         threadDelay $ 100 * 1000 * 1000
@@ -171,19 +171,6 @@ removeFunc_ ref f = do
   withSessionT Nothing $ send (packetREQ $ CantDo f)
   HM.delete ref f
 
-grabJob
-  :: (MonadUnliftIO m, Transport tp)
-  => JobEnv -> JobT tp m (Maybe Job)
-grabJob jobEnv = do
-  pl <- runSessionT_ jobEnv $ do
-    size <- readerSize
-    when (size == 0) $ send $ packetREQ GrabJob
-    timeout 10000000 receive
-
-  case pl of
-    Nothing   -> pure Nothing
-    Just rpkt -> pure $ getResult Nothing getAssignJob rpkt
-
 getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
 getAssignJob _               = Nothing
@@ -192,32 +179,31 @@ work
   :: (MonadUnliftIO m, Transport tp)
   => Int -> WorkerT tp m ()
 work size = do
-  jq <- asks jobQueue
+  jl <- asks jobList
   tskSize <- asks taskSize
   runJobT $ do
-    asyncs <- replicateM size $ async $ work_ jq tskSize size
+    asyncs <- replicateM size $ async $ work_ jl tskSize size
     void $ waitAnyCancel asyncs
 
-work_ :: (MonadUnliftIO m, Transport tp) => IOList Job -> TVar Int -> Int -> JobT tp m ()
-work_ jq tskSize size = do
+work_ :: (MonadUnliftIO m, Transport tp) => JobList -> TVar Int -> Int -> JobT tp m ()
+work_ jl tskSize size = do
   sid <- nextSessionId
   jobEnv <- newSessionEnv (Just (-1)) sid
   runSessionT_ jobEnv $ do
     io0 <- async . forever $ do
       atomically $ do
         s <- readTVar tskSize
-        if s >= size then retrySTM
-                     else return ()
+        when (s >= size) retrySTM
 
       send $ packetREQ GrabJob
       threadDelay 10000000 -- 10s
 
-    io1 <- async . forever $ assignJobHandler jq
+    io1 <- async . forever $ assignJobHandler jl
 
     void $ waitAnyCancel [io0, io1]
 
-processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> Job -> JobT tp m ()
-processJob WorkerEnv{..} job = do
+processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> (Msgid, Job) -> JobT tp m ()
+processJob WorkerEnv{..} (sid, job) = do
   atomically $ do
     s <- readTVar taskSize
     writeTVar taskSize (s + 1)
@@ -245,28 +231,29 @@ processJob WorkerEnv{..} job = do
   atomically $ do
     s <- readTVar taskSize
     writeTVar taskSize (s - 1)
-  withSessionT Nothing $ send (packetREQ GrabJob)
+
+  jobEnv <- newSessionEnv (Just (-1)) sid
+  runSessionT_ jobEnv $ send (packetREQ GrabJob)
 
 checkHealth
   :: (MonadUnliftIO m, Transport tp)
   => WorkerT tp m ()
 checkHealth = runJobT BT.checkHealth
 
-assignJobHandler :: (MonadIO m, Transport tp) => IOList Job -> SessionT u ServerCommand tp m ()
-assignJobHandler jq = do
+assignJobHandler :: (MonadIO m, Transport tp) => JobList -> SessionT u ServerCommand tp m ()
+assignJobHandler jl = do
+  pid <- getSessionId
   r <- getResult Nothing getAssignJob <$> receive
   case r of
-    Nothing -> do
-      pid <- getSessionId
+    Nothing ->
       liftIO $ errorM "Periodic.Node" $ "Session [" ++ show pid ++ "] not found."
-    Just job -> do
-      IL.append jq job
+    Just job -> IL.append jl (pid, job)
 
 processJobQueue :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> JobT tp m ()
 processJobQueue wEnv@WorkerEnv {..} = forever $ do
   jobs <- atomically $ do
-    v <- IL.toListSTM jobQueue
+    v <- IL.toListSTM jobList
     if null v then retrySTM
               else return v
 
-  mapM_ (void . async . processJob wEnv) jobs
+  mapM_ (async . processJob wEnv) jobs
