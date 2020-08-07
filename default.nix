@@ -4,6 +4,13 @@ let
   pkgs = import <nixpkgs> { inherit config; };
   gitIgnore = pkgs.nix-gitignore.gitignoreSourcePure;
 
+  metroRepo = pkgs.fetchFromGitHub {
+    owner = "Lupino";
+    repo = "metro";
+    rev = "364b113ec98111c8507843aedceade3e6897f2e2";
+    sha256 = "0j84164nbf20w8mdx6r9rkhmmx4as4bjm0mnj9jkgaxxl3i9vm89";
+  };
+
   config = {
     packageOverrides = super: let self = super.pkgs; in rec {
       haskell = super.haskell // {
@@ -12,41 +19,11 @@ let
           periodic-server = super.callCabal2nix "periodic-server" (gitIgnore [./.gitignore] ./periodic-server) {};
           periodic-client = super.callCabal2nix "periodic-client" (gitIgnore [./.gitignore] ./periodic-client) {};
           periodic-client-exe = super.callCabal2nix "periodic-client-exe" (gitIgnore [./.gitignore] ./periodic-client-exe) {};
-          metro = super.callCabal2nix "metro" (
-            pkgs.fetchFromGitHub {
-              owner = "Lupino";
-              repo = "metro";
-              rev = "f0f3eed1e792ffe624e32c477778a42e444ff472";
-              sha256 = "00fvkk4hyvqkd8dipmc69mc94raapbv0b3lxnhi618myr6lb64si";
-            }) {};
-          metro-socket = super.callCabal2nix "metro-socket" ((
-            pkgs.fetchFromGitHub {
-              owner = "Lupino";
-              repo = "metro";
-              rev = "f0f3eed1e792ffe624e32c477778a42e444ff472";
-              sha256 = "00fvkk4hyvqkd8dipmc69mc94raapbv0b3lxnhi618myr6lb64si";
-            }) + /metro-socket) {};
-          metro-transport-tls = super.callCabal2nix "metro-transport-tls" ((
-            pkgs.fetchFromGitHub {
-              owner = "Lupino";
-              repo = "metro";
-              rev = "f0f3eed1e792ffe624e32c477778a42e444ff472";
-              sha256 = "00fvkk4hyvqkd8dipmc69mc94raapbv0b3lxnhi618myr6lb64si";
-            }) + /metro-transport-tls) {};
-          metro-transport-websockets = super.callCabal2nix "metro-transport-websockets" ((
-            pkgs.fetchFromGitHub {
-              owner = "Lupino";
-              repo = "metro";
-              rev = "f0f3eed1e792ffe624e32c477778a42e444ff472";
-              sha256 = "00fvkk4hyvqkd8dipmc69mc94raapbv0b3lxnhi618myr6lb64si";
-            }) + /metro-transport-websockets) {};
-          metro-transport-xor = super.callCabal2nix "metro-transport-xor" ((
-            pkgs.fetchFromGitHub {
-              owner = "Lupino";
-              repo = "metro";
-              rev = "f0f3eed1e792ffe624e32c477778a42e444ff472";
-              sha256 = "00fvkk4hyvqkd8dipmc69mc94raapbv0b3lxnhi618myr6lb64si";
-            }) + /metro-transport-xor) {};
+          metro = super.callCabal2nix "metro" (metroRepo) {};
+          metro-socket = super.callCabal2nix "metro-socket" ((metroRepo) + /metro-socket) {};
+          metro-transport-tls = super.callCabal2nix "metro-transport-tls" ((metroRepo) + /metro-transport-tls) {};
+          metro-transport-websockets = super.callCabal2nix "metro-transport-websockets" ((metroRepo) + /metro-transport-websockets) {};
+          metro-transport-xor = super.callCabal2nix "metro-transport-xor" ((metroRepo) + /metro-transport-xor) {};
         };
       };
     };
