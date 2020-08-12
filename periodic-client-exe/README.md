@@ -1,3 +1,3 @@
-# haskell-periodic-client-exe
+# periodic-client-exe
 
-Periodic task system haskell client  executables.
+Periodic task system haskell client executables.

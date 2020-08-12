@@ -1,3 +1,3 @@
-# haskell-periodic-server
+# periodic-server
 
 Periodic task system haskell server.

@@ -1,3 +1,3 @@
-# haskell-periodic-client
+# periodic-client
 
 Periodic task system haskell client.

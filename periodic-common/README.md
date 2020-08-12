@@ -1,1 +1,3 @@
-# haskell-periodic-common
+# periodic-common
+
+Periodic task system common.

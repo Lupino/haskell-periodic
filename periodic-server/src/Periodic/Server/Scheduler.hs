@@ -139,10 +139,6 @@ newtype SchedT db tp m a = SchedT {unSchedT :: ReaderT (SchedEnv db tp) m a}
     )
 
 instance MonadUnliftIO m => MonadUnliftIO (SchedT db tp m) where
-  askUnliftIO = SchedT $
-    ReaderT $ \r ->
-      withUnliftIO $ \u ->
-        return (UnliftIO (unliftIO u . runSchedT r))
   withRunInIO inner = SchedT $
     ReaderT $ \r ->
       withRunInIO $ \run ->

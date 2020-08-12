@@ -77,10 +77,6 @@ newtype WorkerT tp m a = WorkerT {unWorkerT :: ReaderT (WorkerEnv tp m) (JobT tp
     )
 
 instance MonadUnliftIO m => MonadUnliftIO (WorkerT tp m) where
-  askUnliftIO = WorkerT $
-    ReaderT $ \r ->
-      withUnliftIO $ \u ->
-        return (UnliftIO (unliftIO u . runWorkerT r))
   withRunInIO inner = WorkerT $
     ReaderT $ \r ->
       withRunInIO $ \run ->

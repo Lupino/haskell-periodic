@@ -1,14 +1,14 @@
-name:                periodicd
-version:             1.1.7.0
--- synopsis:
-description:         Periodic task system haskell client.
-homepage:            https://github.com/Lupino/haskell-periodic#readme
+name:                periodic-server
+version:             1.1.7.1
+synopsis:            Periodic task system haskell server
+description:         Periodic task system haskell server and command peridoicd. 
+homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-server#readme
 license:             BSD3
 license-file:        LICENSE
 author:              Li Meng Jun
 maintainer:          lmjubuntu@gmail.com
 copyright:           MIT
-category:            value
+category:            System,Web
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
@@ -54,7 +54,7 @@ executable periodicd
   main-is:             periodicd.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
-                     , periodicd
+                     , periodic-server
                      , periodic-common
                      , bytestring
                      , unliftio
