@@ -23,9 +23,9 @@ let
     hackageSnapshot = "2020-03-20T00:00:00Z"; # pins e.g. extra-deps without hashes or revisions
   };
 
-  periodicd-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {
+  periodic-server-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {
     normalPkgs = pkgs;
-    cabalPackageName = "periodicd";
+    cabalPackageName = "periodic-server";
     inherit compiler stack2nix-output-path;
     # disableOptimization = true; # for compile speed
   };
@@ -43,22 +43,22 @@ let
     set -eu -o pipefail
     STACK2NIX_OUTPUT_PATH=$(${stack2nix-script})
     export NIX_PATH=nixpkgs=${pkgs.path}
-    ${pkgs.nix}/bin/nix-build -A periodicd -A periodic-client-exe --argstr stack2nix-output-path "$STACK2NIX_OUTPUT_PATH" "$@"
+    ${pkgs.nix}/bin/nix-build -A periodic-server -A periodic-client-exe --argstr stack2nix-output-path "$STACK2NIX_OUTPUT_PATH" "$@"
   '';
 
-  periodicd =
-    periodicd-builder.haskell-static-nix_output.pkgs.staticHaskellHelpers.addStaticLinkerFlagsWithPkgconfig
-      periodicd-builder.static_package
-      (with periodicd-builder.haskell-static-nix_output.pkgs; [ openssl postgresql ])
+  periodic-server =
+    periodic-server-builder.haskell-static-nix_output.pkgs.staticHaskellHelpers.addStaticLinkerFlagsWithPkgconfig
+      periodic-server-builder.static_package
+      (with periodic-server-builder.haskell-static-nix_output.pkgs; [ openssl postgresql ])
       "--libs libpq";
 
 in
   {
     periodic-client-exe = periodic-client-exe-builder.static_package;
-    inherit periodicd;
+    inherit periodic-server;
     inherit fullBuildScript;
     # For debugging:
     inherit stack2nix-script;
     inherit periodic-client-exe-builder;
-    inherit periodicd-builder;
+    inherit periodic-server-builder;
   }
