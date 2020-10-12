@@ -7,8 +7,8 @@ let
   metroRepo = pkgs.fetchFromGitHub {
     owner = "Lupino";
     repo = "metro";
-    rev = "364b113ec98111c8507843aedceade3e6897f2e2";
-    sha256 = "0j84164nbf20w8mdx6r9rkhmmx4as4bjm0mnj9jkgaxxl3i9vm89";
+    rev = "ce81fc9b0da294e597b55dfaad199d9fa47b8c1d";
+    sha256 = "1l2isigv5qkg8ps7izzkcrh5hkwmpvsxvqsfbvycsacwhnmin9jq";
   };
 
   config = {

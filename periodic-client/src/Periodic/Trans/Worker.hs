@@ -35,7 +35,7 @@ import qualified Metro.IOHashMap              as HM (delete, insert, lookup)
 import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                initEnv1, newSessionEnv,
                                                nextSessionId, runSessionT_,
-                                               setDefaultSessionTimeout,
+                                               setDefaultSessionTimeout1,
                                                setNodeMode, setSessionMode,
                                                startNodeT_, withEnv,
                                                withSessionT)
@@ -106,6 +106,7 @@ startWorkerT config m = do
   taskSize <- newTVarIO 0
 
   jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) sessionGen
+  setDefaultSessionTimeout1 jobEnv1 100
 
   let wEnv = WorkerEnv {..}
 
@@ -122,7 +123,6 @@ startWorkerT config m = do
   where mapEnv =
           setNodeMode Multi
           . setSessionMode SingleAction
-          . setDefaultSessionTimeout 100
 
 filterPacketM :: MonadIO m => JobList -> Packet ServerCommand -> m Bool
 filterPacketM jl rpkt = do

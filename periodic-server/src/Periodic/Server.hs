@@ -48,6 +48,9 @@ startServer dbconfig mk config = do
     wJobQueue <- newIOList
     return $ Just (Nid nid, ClientConfig {..})
 
+  setDefaultSessionTimeout sEnv 100
+  setKeepalive sEnv 500
+
   schedEnv <- initSchedEnv dbconfig $ runServerT sEnv stopServerT
 
   setOnNodeLeave sEnv $ \_ ClientConfig {..} ->
@@ -63,6 +66,4 @@ startServer dbconfig mk config = do
         mapEnv =
           setNodeMode Multi
           . setSessionMode SingleAction
-          . setKeepalive 500
-          . setDefaultSessionTimeout 100
           . setServerName "Periodic"

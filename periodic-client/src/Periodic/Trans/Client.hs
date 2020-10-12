@@ -31,7 +31,7 @@ import           Metro.Conn                   (initConnEnv, runConnT)
 import qualified Metro.Conn                   as Conn
 import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                initEnv1, request,
-                                               setDefaultSessionTimeout,
+                                               setDefaultSessionTimeout1,
                                                setNodeMode, setSessionMode,
                                                startNodeT, withSessionT)
 import           Metro.Session                (send)
@@ -67,6 +67,7 @@ open config = do
               _      -> ""
 
   clientEnv <- initEnv1 mapEnv connEnv () (Nid nid) sessionGen
+  setDefaultSessionTimeout1 clientEnv 100
 
   runClientT clientEnv $ do
     void . async $ forever $ do
@@ -79,7 +80,6 @@ open config = do
   where mapEnv =
           setNodeMode Multi
           . setSessionMode SingleAction
-          . setDefaultSessionTimeout 100
 
 dropFunc
   :: (MonadUnliftIO m, Transport tp)

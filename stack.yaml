@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-14.27
+resolver: lts-16.17
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -53,7 +53,7 @@ extra-package-dbs: []
 extra-deps:
 - direct-sqlite-2.3.26@sha256:04e835402f1508abca383182023e4e2b9b86297b8533afbd4e57d1a5652e0c23,3718
 - git: https://github.com/Lupino/metro.git
-  commit: 364b113ec98111c8507843aedceade3e6897f2e2
+  commit: ce81fc9b0da294e597b55dfaad199d9fa47b8c1d
   subdirs:
   - .
   - metro-socket
