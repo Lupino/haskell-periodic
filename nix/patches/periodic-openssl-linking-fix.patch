@@ -1,0 +1,21 @@
+diff --git a/survey/default.nix b/survey/default.nix
+index 828beaa..e740c05 100644
+--- a/survey/default.nix
++++ b/survey/default.nix
+@@ -1034,6 +1034,16 @@ let
+                   super.pg-harness-server
+                   [ final.openssl final.postgresql ]
+                   "--libs libpq";
++              periodic-server =
++                addStaticLinkerFlagsWithPkgconfig
++                  super.periodic-server
++                  [ final.openssl final.postgresql ]
++                  "--libs libpq";
++              periodic-client-exe =
++                addStaticLinkerFlagsWithPkgconfig
++                  super.periodic-client-exe
++                  [ final.openssl final.postgresql ]
++                  "--libs libpq";
+               postgresql-orm =
+                 addStaticLinkerFlagsWithPkgconfig
+                   super.postgresql-orm

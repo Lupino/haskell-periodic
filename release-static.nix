@@ -1,64 +1,55 @@
-# Run using:
-#
-#     $(nix-build --no-link -A fullBuildScript)
-{
-  stack2nix-output-path ? "custom-stack2nix-output.nix",
-}:
 let
-  compiler = "ghc865"; # matching stack.yaml
+  # We are using lts-15.13 stack resolver which uses ghc883 (cf https://www.stackage.org/lts-15.13)
+  compiler = "ghc883";
 
-  # Pin static-haskell-nix version.
-  static-haskell-nix =
-      # Update this hash to use a different `static-haskell-nix` version:
-      fetchTarball https://github.com/nh2/static-haskell-nix/archive/d1b20f35ec7d3761e59bd323bbe0cca23b3dfc82.tar.gz;
+  # pin nixpkgs for reproducible build
+  nixpkgsVersion = import nix/nixpkgs-version.nix;
+  nixpkgs =
+    builtins.fetchTarball {
+      url = "https://github.com/nixos/nixpkgs/archive/${nixpkgsVersion.rev}.tar.gz";
+      sha256 = nixpkgsVersion.tarballHash;
+    };
 
-  # Pin nixpkgs version
-  # By default to the one `static-haskell-nix` provides, but you may also give
-  # your own as long as it has the necessary patches, using e.g.
-  pkgs = import "${static-haskell-nix}/nixpkgs.nix";
 
-  stack2nix-script = import "${static-haskell-nix}/static-stack2nix-builder/stack2nix-script.nix" {
-    inherit pkgs;
-    stack-project-dir = toString ./.; # where stack.yaml is
-    hackageSnapshot = "2020-03-20T00:00:00Z"; # pins e.g. extra-deps without hashes or revisions
+  # overlays define packages we need to build our project
+  allOverlays = import nix/overlays;
+  overlays = [
+    allOverlays.gitignore # helper to use gitignoreSource
+    (allOverlays.haskell-packages { inherit compiler; })
+  ];
+
+  pkgs = import nixpkgs { inherit overlays; };
+
+  # We define our packages by giving them names and a list of source files
+  periodic-common = {
+    name = "periodic-common";
+    src = pkgs.lib.sourceFilesBySuffices (pkgs.gitignoreSource ./periodic-common)[ ".cabal" ".hs" "LICENSE" ];
+  };
+  periodic-client = {
+    name = "periodic-client";
+    src = pkgs.lib.sourceFilesBySuffices (pkgs.gitignoreSource ./periodic-client)[ ".cabal" ".hs" "LICENSE" ];
+  };
+  periodic-client-exe = {
+    name = "periodic-client-exe";
+    src = pkgs.lib.sourceFilesBySuffices (pkgs.gitignoreSource ./periodic-client-exe)[ ".cabal" ".hs" "LICENSE" ];
+  };
+  periodic-server = {
+    name = "periodic-server";
+    src = pkgs.lib.sourceFilesBySuffices (pkgs.gitignoreSource ./periodic-server)[ ".cabal" ".hs" "LICENSE" ];
   };
 
-  periodic-server-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {
-    normalPkgs = pkgs;
-    cabalPackageName = "periodic-server";
-    inherit compiler stack2nix-output-path;
-    # disableOptimization = true; # for compile speed
-  };
+  # Some patches are unfortunately necessary to work with libpq
+  patches = pkgs.callPackage nix/patches {};
 
-  periodic-client-exe-builder = import "${static-haskell-nix}/static-stack2nix-builder/default.nix" {
-    normalPkgs = pkgs;
-    cabalPackageName = "periodic-client-exe";
-    inherit compiler stack2nix-output-path;
-    # disableOptimization = true; # for compile speed
-  };
+  lib = pkgs.haskell.lib;
 
-  # Full invocation, including pinning `nix` version itself.
-  fullBuildScript = pkgs.writeScript "stack2nix-and-build-script.sh" ''
-    #!/usr/bin/env bash
-    set -eu -o pipefail
-    STACK2NIX_OUTPUT_PATH=$(${stack2nix-script})
-    export NIX_PATH=nixpkgs=${pkgs.path}
-    ${pkgs.nix}/bin/nix-build -A periodic-server -A periodic-client-exe --argstr stack2nix-output-path "$STACK2NIX_OUTPUT_PATH" "$@"
-  '';
-
-  periodic-server =
-    periodic-server-builder.haskell-static-nix_output.pkgs.staticHaskellHelpers.addStaticLinkerFlagsWithPkgconfig
-      periodic-server-builder.static_package
-      (with periodic-server-builder.haskell-static-nix_output.pkgs; [ openssl postgresql ])
-      "--libs libpq";
-
+  # call our script which add our packages to nh2/static-haskell-nix project
+  staticHaskellPackage = import nix/static-haskell-package.nix { inherit nixpkgs compiler patches allOverlays; } periodic-common periodic-client periodic-server periodic-client-exe;
 in
-  {
-    periodic-client-exe = periodic-client-exe-builder.static_package;
-    inherit periodic-server;
-    inherit fullBuildScript;
-    # For debugging:
-    inherit stack2nix-script;
-    inherit periodic-client-exe-builder;
-    inherit periodic-server-builder;
-  }
+rec {
+  inherit nixpkgs pkgs;
+
+  # if instead we want to generated a fully static executable we need:
+  periodic-server-static = lib.justStaticExecutables (lib.dontCheck staticHaskellPackage.periodic-server);
+  periodic-client-exe-static = lib.justStaticExecutables (lib.dontCheck staticHaskellPackage.periodic-client-exe);
+}
