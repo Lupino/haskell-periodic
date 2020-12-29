@@ -1,5 +1,5 @@
 name:                periodic-common
-version:             1.1.7.0
+version:             1.1.7.2
 synopsis:            Periodic task system common.
 description:         Periodic task system common library.
 homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-common#readme
