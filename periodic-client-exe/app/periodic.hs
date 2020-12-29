@@ -41,6 +41,7 @@ data Command = Status
     | Shutdown
     | Dump
     | Load
+    | Ping
     | Help
     deriving (Eq)
 
@@ -54,6 +55,7 @@ parseCommand "config"   = Config
 parseCommand "shutdown" = Shutdown
 parseCommand "dump"     = Dump
 parseCommand "load"     = Load
+parseCommand "ping"     = Ping
 parseCommand _          = Help
 
 data Options = Options
@@ -107,6 +109,7 @@ printHelp = do
   putStrLn "     shutdown Shutdown periodicd"
   putStrLn "     dump     Dump jobs"
   putStrLn "     load     Load jobs"
+  putStrLn "     ping     Ping server"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
   putStrLn "Available options:"
@@ -271,6 +274,7 @@ processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
 processCommand Config xs  = doConfig xs
 processCommand Load xs    = doLoad xs
+processCommand Ping _     = void ping
 processCommand Dump xs    = doDump xs
 processCommand Shutdown _ = shutdown
 
