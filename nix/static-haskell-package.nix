@@ -3,8 +3,7 @@
 
 periodic-common: periodic-client: periodic-server: periodic-client-exe:
 let
-  # pin nh2/static-haskell-nix project with a commit revision
-  # this make sure we will always use the same version of the nh2/static-haskell-nix
+  # The nh2/static-haskell-nix project does all the hard work for us.
   static-haskell-nix =
     let
       rev = "749707fc90b781c3e653e67917a7d571fe82ae7b";
@@ -14,24 +13,22 @@ let
       sha256 = "155spda2lww378bhx68w6dxwqd5y6s9kin3qbgl2m23r3vmk3m3w";
     };
 
-  # package that deals with posgresql needs a little patch from
-  # within nh2/patched-static-haskell-nix script
-  patched-static-haskell-nix = patches.applyPatches
-    "patched-static-haskell-nix"
-    static-haskell-nix
-    [
-      patches.periodic-openssl-linking-fix
-    ];
+    patched-static-haskell-nix =
+      patches.applyPatches "patched-static-haskell-nix"
+        static-haskell-nix
+        [
+          patches.periodic-openssl-linking-fix
+        ];
 
   # Fix taken from https://github.com/PostgREST/postgrest/blob/43d71e95ac091aa77ac104de7fc881226d1a17f6/nix/static-haskell-package.nix
   # I'm not too sure if there are really needed for this simple project
-  patchedNixpkgs = patches.applyPatches
-    "patched-nixpkgs"
-    nixpkgs
-    [
-      patches.nixpkgs-revert-ghc-bootstrap
-      patches.nixpkgs-openssl-split-runtime-dependencies-of-static-builds
-    ];
+  patchedNixpkgs =
+    patches.applyPatches "patched-nixpkgs"
+      nixpkgs
+      [
+        patches.nixpkgs-openssl-split-runtime-dependencies-of-static-builds
+        patches.nixpkgs-gdb-fix-libintl
+      ];
 
   pkgs = import nixpkgs { };
   lib = pkgs.haskell.lib;
@@ -53,7 +50,10 @@ let
   normalPkgs = import patchedNixpkgs { inherit overlays; };
 
   # each version of GHC needs a specific version of Cabal.
-  defaultCabalPackageVersionComingWithGhc = { ghc883 = "Cabal_3_2_0_0"; }."${compiler}";
+  defaultCabalPackageVersionComingWithGhc =
+    {
+      ghc884 = "Cabal_3_2_0_0";
+    }."${compiler}";
 
   # The static-haskell-nix 'survey' derives a full static set of Haskell
   # packages, applying fixes where necessary.
