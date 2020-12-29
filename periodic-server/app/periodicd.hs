@@ -17,6 +17,7 @@ import           Metro.TP.XOR                   (xorConfig)
 import           Metro.Utils                    (setupLog)
 import           Periodic.Server                (startServer)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
+import           Periodic.Server.Persist.Memory (useMemory)
 import           Periodic.Server.Persist.PSQL   (PSQL)
 import           Periodic.Server.Persist.SQLite (SQLite)
 import           System.Environment             (getArgs, lookupEnv)
@@ -40,7 +41,7 @@ options :: Maybe String -> Maybe String -> Options
 options h f = Options
   { host    = fromMaybe "unix:///tmp/periodic.sock" h
   , xorFile = fromMaybe "" f
-  , storePath = "data.sqlite"
+  , storePath = ":memory:"
   , useTls = False
   , useWs = False
   , certKey = "server-key.pem"
@@ -76,7 +77,7 @@ printHelp = do
   putStrLn "Available options:"
   putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"
   putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "  -p --path     State store path (optional: data.sqlite)"
+  putStrLn "  -p --path     State store path (optional: :memory:)"
   putStrLn "                eg: file://data.sqlite"
   putStrLn "                eg: postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
   putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
@@ -107,6 +108,8 @@ main = do
     run opts (fromString $ drop 11 storePath :: PersistConfig PSQL)
   else if take 7 storePath == "file://" then
     run opts (fromString $ drop 7 storePath :: PersistConfig SQLite)
+  else if storePath == ":memory:" then
+    run opts useMemory
   else
     run opts (fromString storePath :: PersistConfig SQLite)
 

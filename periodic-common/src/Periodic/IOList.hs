@@ -2,6 +2,7 @@ module Periodic.IOList
   ( IOList
   , newIOList
   , insert
+  , insertSTM
   , append
   , elem
   , elemSTM
@@ -27,8 +28,11 @@ newIOList = IOList <$> newTVarIO []
 fromList :: MonadIO m => [a] -> m (IOList a)
 fromList l = IOList <$> newTVarIO l
 
+insertSTM :: IOList a -> a -> STM ()
+insertSTM (IOList h) a = modifyTVar' h $ \v -> a:v
+
 insert :: MonadIO m => IOList a -> a -> m ()
-insert (IOList h) a = atomically . modifyTVar' h $ \v -> a:v
+insert h = atomically . insertSTM h
 
 append :: MonadIO m => IOList a -> a -> m ()
 append (IOList h) a = atomically . modifyTVar' h $ \v -> v ++ [a]

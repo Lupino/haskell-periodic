@@ -21,6 +21,7 @@ library
                      , Periodic.Server.Persist
                      , Periodic.Server.Persist.SQLite
                      , Periodic.Server.Persist.PSQL
+                     , Periodic.Server.Persist.Memory
                      , Periodic.Server.Client
                      , Periodic.Server.Types
                      , Periodic.Server
