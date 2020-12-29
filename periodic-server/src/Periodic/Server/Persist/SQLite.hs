@@ -5,14 +5,15 @@
 
 module Periodic.Server.Persist.SQLite
   ( SQLite
+  , useSQLite
   ) where
 
 import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
-import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString, append)
 import qualified Data.ByteString.Char8   as B (pack)
 import           Data.ByteString.Lazy    (fromStrict)
+import           Data.Byteable           (toBytes)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.Maybe              (isJust, listToMaybe)
@@ -74,7 +75,10 @@ instance Persist SQLite where
 instance Exception (PersistException SQLite)
 
 instance IsString (PersistConfig SQLite) where
-  fromString = SQLitePath . fromString
+  fromString = useSQLite
+
+useSQLite :: String -> PersistConfig SQLite
+useSQLite = SQLitePath . fromString
 
 beginTx :: Database -> IO ()
 beginTx db = void $ exec db "BEGIN TRANSACTION"

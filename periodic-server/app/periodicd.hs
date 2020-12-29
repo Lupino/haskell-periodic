@@ -9,7 +9,6 @@ module Main
 
 import           Control.Monad                  (when)
 import           Data.Maybe                     (fromMaybe)
-import           Data.String                    (fromString)
 import           Metro.SocketServer             (socketServer)
 import           Metro.TP.TLS                   (makeServerParams', tlsConfig)
 import           Metro.TP.WebSockets            (serverConfig)
@@ -17,9 +16,10 @@ import           Metro.TP.XOR                   (xorConfig)
 import           Metro.Utils                    (setupLog)
 import           Periodic.Server                (startServer)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
+import           Periodic.Server.Persist.Cache  (useCache)
 import           Periodic.Server.Persist.Memory (useMemory)
-import           Periodic.Server.Persist.PSQL   (PSQL)
-import           Periodic.Server.Persist.SQLite (SQLite)
+import           Periodic.Server.Persist.PSQL   (usePSQL)
+import           Periodic.Server.Persist.SQLite (useSQLite)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
 import           System.Log                     (Priority (..))
@@ -80,6 +80,8 @@ printHelp = do
   putStrLn "  -p --path     State store path (optional: :memory:)"
   putStrLn "                eg: file://data.sqlite"
   putStrLn "                eg: postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
+  putStrLn "                eg: cache+file://data.sqlite"
+  putStrLn "                eg: cache+postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
   putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
   putStrLn "     --tls      Use tls transport"
   putStrLn "     --ws       Use websockets transport"
@@ -105,13 +107,17 @@ main = do
   setupLog logLevel
 
   if take 11 storePath == "postgres://" then
-    run opts (fromString $ drop 11 storePath :: PersistConfig PSQL)
+    run opts (usePSQL $ drop 11 storePath)
   else if take 7 storePath == "file://" then
-    run opts (fromString $ drop 7 storePath :: PersistConfig SQLite)
+    run opts (useSQLite $ drop 7 storePath)
   else if storePath == ":memory:" then
     run opts useMemory
+  else if take 13 storePath == "cache+file://" then
+    run opts (useCache $ useSQLite $ drop 13 storePath)
+  else if take 17 storePath == "cache+postgres://" then
+    run opts (useCache $ usePSQL $ drop 17 storePath)
   else
-    run opts (fromString storePath :: PersistConfig SQLite)
+    run opts (useSQLite storePath)
 
 run :: Persist db => Options -> PersistConfig db -> IO ()
 run Options {useTls = True, ..} config = do

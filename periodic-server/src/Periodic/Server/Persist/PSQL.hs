@@ -5,14 +5,15 @@
 
 module Periodic.Server.Persist.PSQL
   ( PSQL
+  , usePSQL
   ) where
 
 import           Control.Monad              (void)
 import           Data.Binary                (decodeOrFail)
-import           Data.Byteable              (toBytes)
 import           Data.ByteString            (ByteString)
 import           Data.ByteString.Base64     (decode, encode)
 import           Data.ByteString.Lazy       (fromStrict)
+import           Data.Byteable              (toBytes)
 import qualified Data.Foldable              as F (foldrM)
 import           Data.Int                   (Int64)
 import           Data.List                  (intercalate)
@@ -74,7 +75,10 @@ instance Persist PSQL where
 instance Exception (PersistException PSQL)
 
 instance IsString (PersistConfig PSQL) where
-  fromString = PSQLPath . fromString
+  fromString = usePSQL
+
+usePSQL :: String -> PersistConfig PSQL
+usePSQL = PSQLPath . fromString
 
 newtype TableName = TableName String
   deriving (Show)
