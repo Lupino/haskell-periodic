@@ -39,11 +39,11 @@ data Options = Options
     , maxCacheSize :: Int64
     }
 
-options :: Maybe String -> Maybe String -> Options
-options h f = Options
+options :: Maybe String -> Maybe String -> Maybe String -> Options
+options h f p = Options
   { host         = fromMaybe "unix:///tmp/periodic.sock" h
   , xorFile      = fromMaybe "" f
-  , storePath    = ":memory:"
+  , storePath    = fromMaybe ":memory:" p
   , useTls       = False
   , useWs        = False
   , certKey      = "server-key.pem"
@@ -81,7 +81,7 @@ printHelp = do
   putStrLn "Available options:"
   putStrLn "  -H --host           Socket path [$PERIODIC_PORT]"
   putStrLn "                      eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "  -p --path           State store path (optional: :memory:)"
+  putStrLn "  -p --path           State store path [$PERIODIC_PATH] (optional: :memory:)"
   putStrLn "                      eg: file://data.sqlite"
   putStrLn "                      eg: postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
   putStrLn "                      eg: cache+file://data.sqlite"
@@ -103,9 +103,10 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
+  p <- lookupEnv "PERIODIC_PATH"
   f <- lookupEnv "XOR_FILE"
 
-  opts@Options {..} <- flip parseOptions (options h f) <$> getArgs
+  opts@Options {..} <- flip parseOptions (options h f p) <$> getArgs
 
   when showHelp printHelp
 
