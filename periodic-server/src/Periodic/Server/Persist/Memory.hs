@@ -8,6 +8,7 @@
 module Periodic.Server.Persist.Memory
   ( Memory
   , useMemory
+  , memorySize
   ) where
 
 import           Control.Monad           (unless)
@@ -172,3 +173,16 @@ safeMinimum xs = minimum xs
 doMinSchedAt :: Memory -> FuncName -> IO Int64
 doMinSchedAt m fn =
   maybe 0 (safeMinimum . map getSchedAt . HM.elems) <$> getJobMap1 m Pending fn
+
+
+jobMapSize :: JobMap -> IO Int64
+jobMapSize hm = fromIntegral . sum . map HM.size <$> IHM.elems hm
+
+
+memorySize :: Memory -> IO Int64
+memorySize Memory {..} = do
+  s0 <- jobMapSize pending
+  s1 <- jobMapSize running
+  s2 <- jobMapSize locking
+
+  return $ s0 + s1 + s2

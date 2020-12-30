@@ -11,7 +11,7 @@ module Periodic.Server.Persist.Cache
 import           Data.Int                       (Int64)
 import           Metro.Utils                    (getEpochTime)
 import           Periodic.Server.Persist        (Persist (..), State (..))
-import           Periodic.Server.Persist.Memory (Memory, useMemory)
+import           Periodic.Server.Persist.Memory (Memory, memorySize, useMemory)
 import           Periodic.Types.Job             (FuncName, Job, JobName,
                                                  getSchedAt)
 import           Prelude                        hiding (foldr, lookup)
@@ -22,13 +22,14 @@ import           UnliftIO                       (Exception, SomeException,
 data Cache db = Cache
   { memory  :: Memory
   , backend :: db
+  , maxSize :: Int64
   }
 
 instance (Typeable db, Persist db) => Persist (Cache db) where
-   data PersistConfig (Cache db) = UseCache (PersistConfig db)
+   data PersistConfig (Cache db) = UseCache Int64 (PersistConfig db)
    data PersistException (Cache db) = CacheException SomeException deriving (Show, Typeable)
 
-   newPersist (UseCache config) = do
+   newPersist (UseCache maxSize config) = do
      infoM "Periodic.Server.Persist.Cache" "Cache connected"
      backend <- newPersist config
      memory  <- newPersist useMemory
@@ -52,7 +53,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
 
 instance Typeable db => Exception (PersistException (Cache db))
 
-useCache :: PersistConfig db -> PersistConfig (Cache db)
+useCache :: Int64 -> PersistConfig db -> PersistConfig (Cache db)
 useCache = UseCache
 
 doMember :: Persist db => Cache db -> State -> FuncName -> JobName -> IO Bool
@@ -69,14 +70,17 @@ doLookup m s f j = do
     Nothing -> lookup (backend m) s f j
 
 doInsert :: Persist db => Cache db -> State -> FuncName -> JobName -> Job -> IO ()
-doInsert m s f j v = do
+doInsert Cache{..} s f j v = do
   now <- getEpochTime
-  if getSchedAt v > now + 60 then do
-    insert (backend m) s f j v
-    delete (memory m) f j
-  else do
-    insert (memory m) s f j v
-    delete (backend m) f j
+  memSize <- memorySize memory
+  if getSchedAt v > now + 60 || memSize > maxSize
+     then doInsert0 backend memory
+     else doInsert0 memory backend
+
+  where doInsert0 :: (Persist db0, Persist db1) => db0 -> db1 -> IO ()
+        doInsert0 db0 db1 = do
+          insert db0 s f j v
+          delete db1 f j
 
 doDelete :: Persist db => Cache db -> FuncName -> JobName -> IO ()
 doDelete m f j = do
