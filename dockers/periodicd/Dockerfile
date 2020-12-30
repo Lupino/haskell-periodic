@@ -10,7 +10,7 @@ RUN apk add --no-cache wget=1.20.3-r1 && \
 
 ENV PERIODIC_PORT tcp://:5000
 
-HEALTHCHECK CMD periodic status || exit 1
+HEALTHCHECK CMD periodic ping || exit 1
 
 EXPOSE 5000
 
