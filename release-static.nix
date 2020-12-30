@@ -1,6 +1,6 @@
 let
   # We are using lts-15.13 stack resolver which uses ghc883 (cf https://www.stackage.org/lts-15.13)
-  compiler = "ghc883";
+  compiler = "ghc884";
 
   # pin nixpkgs for reproducible build
   nixpkgsVersion = import nix/nixpkgs-version.nix;

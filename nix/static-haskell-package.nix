@@ -52,7 +52,7 @@ let
   # each version of GHC needs a specific version of Cabal.
   defaultCabalPackageVersionComingWithGhc =
     {
-      ghc884 = "Cabal_3_2_0_0";
+      ghc884 = "Cabal_3_2_1_0";
     }."${compiler}";
 
   # The static-haskell-nix 'survey' derives a full static set of Haskell
