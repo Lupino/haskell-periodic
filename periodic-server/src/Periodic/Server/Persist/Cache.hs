@@ -124,4 +124,7 @@ doMinSchedAt :: Persist db => Cache db -> FuncName -> IO Int64
 doMinSchedAt m fn = do
   r1 <- minSchedAt (memory m) fn
   r2 <- minSchedAt (backend m) fn
-  return $ min r1 r2
+  return $
+    if r1 > 0 && r2 > 0 then min r1 r2
+                        else if r1 > 0 then r1
+                        else r2
