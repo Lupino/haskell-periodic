@@ -1,4 +1,4 @@
-{ compiler ? "ghc884" }:
+{ compiler ? "ghc8104" }:
 
 let
   # overlays define packages we need to build our project

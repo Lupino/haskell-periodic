@@ -14,8 +14,8 @@ let
       metro-socket = prev.callHackageDirect
         {
           pkg = "metro-socket";
-          ver = "0.1.0.0";
-          sha256 = "1mc4rb8mqavc07xvhkhkygvyal1prqc98mdwyrf9mfmnzsdy8ag1";
+          ver = "0.1.0.1";
+          sha256 = "0qzfrldhmwli288cy4ls8w5hyr17zsv63pcfjgwpqkqld5cybflw";
         } { };
       metro-transport-tls = prev.callHackageDirect
         {
