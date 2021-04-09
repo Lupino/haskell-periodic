@@ -7,10 +7,10 @@ module Periodic.Server.FuncStat
   , FuncStatList
   ) where
 
-import           Data.Byteable
 import qualified Data.ByteString.Char8 as B (intercalate, pack)
+import           Data.Byteable
+import           Data.IOHashMap        (IOHashMap)
 import           Data.Int              (Int64)
-import           Metro.IOHashMap       (IOHashMap)
 import           Periodic.Types        (FuncName (..))
 
 data FuncStat = FuncStat

@@ -5,31 +5,33 @@ module Main
   ( main
   ) where
 
-import           Control.Monad          (void, when)
-import           Control.Monad.IO.Class (liftIO)
-import           Data.Binary            (decodeFile, encodeFile)
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString.Char8  as B (lines, pack, putStr, readFile,
-                                              split, unpack)
-import           Data.Int               (Int64)
-import           Data.List              (isPrefixOf, transpose)
-import           Data.Maybe             (fromMaybe)
-import           Metro.Class            (Transport)
-import           Metro.Socket           (getHost, getService)
-import           Metro.TP.Socket        (socket)
-import           Metro.TP.TLS           (makeClientParams', tlsConfig)
-import           Metro.TP.WebSockets    (clientConfig)
-import           Metro.TP.XOR           (xorConfig)
+import           Control.Monad             (void, when)
+import           Control.Monad.IO.Class    (liftIO)
+import           Data.Binary               (decodeFile, encodeFile)
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString.Char8     as B (lines, pack, putStr, readFile,
+                                                 split, unpack)
+import           Data.Int                  (Int64)
+import           Data.List                 (isPrefixOf, transpose)
+import           Data.Maybe                (fromMaybe)
+import           Data.Version              (showVersion)
+import           Metro.Class               (Transport)
+import           Metro.Socket              (getHost, getService)
+import           Metro.TP.Socket           (socket)
+import           Metro.TP.TLS              (makeClientParams', tlsConfig)
+import           Metro.TP.WebSockets       (clientConfig)
+import           Metro.TP.XOR              (xorConfig)
+import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Client
-import           Periodic.Types         (Workload (..))
-import           System.Environment     (getArgs, lookupEnv)
-import           System.Exit            (exitSuccess)
-import           Text.Read              (readMaybe)
+import           Periodic.Types            (Workload (..))
+import           System.Environment        (getArgs, lookupEnv)
+import           System.Exit               (exitSuccess)
+import           Text.Read                 (readMaybe)
 
-import           Data.String            (fromString)
+import           Data.String               (fromString)
 import           Data.UnixTime
-import           System.IO.Unsafe       (unsafePerformIO)
-import qualified Text.PrettyPrint.Boxes as T
+import           System.IO.Unsafe          (unsafePerformIO)
+import qualified Text.PrettyPrint.Boxes    as T
 
 
 data Command = Status
@@ -123,7 +125,7 @@ printHelp = do
   putStrLn "     --cert     Public certificate (X.509 format)"
   putStrLn "     --ca       trusted certificates"
   putStrLn ""
-  putStrLn "Version: v1.1.7.2"
+  putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
   exitSuccess
 

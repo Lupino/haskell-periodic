@@ -39,22 +39,22 @@ module Periodic.Server.Scheduler
   , canRun
   ) where
 
-import           Control.Monad                (forever, mzero, unless, void,
-                                               when)
+import           Control.Monad                (forever, unless, void, when)
+import           Control.Monad.Cont           (callCC, runContT)
 import           Control.Monad.Reader.Class   (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
-import           Control.Monad.Trans.Maybe    (runMaybeT)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
 import           Data.ByteString              (ByteString)
 import           Data.Foldable                (forM_)
 import           Data.HashPSQ                 (HashPSQ)
 import qualified Data.HashPSQ                 as PSQ
+import           Data.IOHashMap               (IOHashMap)
+import qualified Data.IOHashMap               as FL
+import qualified Data.IOHashMap.STM           as FLS
 import           Data.Int                     (Int64)
 import qualified Data.List                    as L (delete)
 import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Metro.Class                  (Transport)
-import           Metro.IOHashMap              (IOHashMap, newIOHashMap)
-import qualified Metro.IOHashMap              as FL
 import qualified Metro.Lock                   as L (Lock, new, with)
 import           Metro.Session                (runSessionT1, send, sessionState)
 import           Metro.Utils                  (getEpochTime)
@@ -152,9 +152,9 @@ runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 
 initSchedEnv :: (MonadUnliftIO m, Persist db) => P.PersistConfig db -> m () -> m (SchedEnv db tp)
 initSchedEnv config sC = do
-  sFuncStatList   <- newIOHashMap
-  sWaitList       <- newIOHashMap
-  sLockList       <- newIOHashMap
+  sFuncStatList   <- FL.empty
+  sWaitList       <- FL.empty
+  sLockList       <- FL.empty
   sLocker         <- L.new
   sGrabQueue      <- newGrabQueue
   sAlive          <- newTVarIO True
@@ -176,7 +176,7 @@ startSchedT = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask_ sRevertInterval revertRunningQueue
-  taskList <- newIOHashMap
+  taskList <- FL.empty
   runTask_ sPollInterval $ pushChanList PollJob
   runTask 0 $ runChanJob taskList
   runTask 100 purgeExpired
@@ -235,12 +235,12 @@ runTask d m = flip runTask_ m =<< newTVarIO d
 runTask_ :: (MonadUnliftIO m) => TVar Int -> SchedT db tp m () -> SchedT db tp m ()
 runTask_ d m = void . async $ do
   SchedEnv{..} <- ask
-  void . runMaybeT . forever $ do
+  (`runContT` pure) $ callCC $ \exit -> forever $ do
     interval <- readTVarIO d
     when (interval > 0) $ threadDelay $ interval * 1000 * 1000
     alive <- readTVarIO sAlive
     if alive then lift m
-             else mzero
+             else exit ()
 
 runChanJob
   :: (MonadUnliftIO m, Persist db, Transport tp)
@@ -275,7 +275,7 @@ pollInterval = fmap fromIntegral . readTVarIO =<< asks sPollInterval
 
 removeTaskAndTryPoll :: MonadIO m => TaskList -> JobHandle -> SchedT db tp m ()
 removeTaskAndTryPoll taskList jh = do
-  FL.delete taskList jh
+  FL.delete jh taskList
   polled <- asks sPolled
   isPolled <- readTVarIO polled
   autoPoll <- readTVarIO =<< asks sAutoPoll
@@ -308,9 +308,9 @@ pollJob taskList = do
         checkPoll (jh, (_, w)) = do
           r <- poll w
           case r of
-            Just (Right ())  -> FL.delete taskList jh
+            Just (Right ())  -> FL.delete jh taskList
             Just (Left e)  -> do
-              FL.delete taskList jh
+              FL.delete jh taskList
               liftIO $ errorM "Periodic.Server.Scheduler" ("Poll error: " ++ show e)
             Nothing -> do
               r0 <- canRun fn
@@ -401,7 +401,7 @@ reSchedJob taskList job = do
     c <- check taskList
     when (r && c) $ do
       w' <- schedJob taskList job
-      FL.insert taskList (getHandle job) (getSchedAt job, w')
+      FL.insert (getHandle job) (getSchedAt job, w') taskList
   where check :: (MonadIO m) => TaskList -> SchedT db tp m Bool
         check tl = do
           maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
@@ -415,14 +415,14 @@ reSchedJob taskList job = do
                 if sc < getSchedAt job then return False
                 else do
                   cancel w
-                  FL.delete taskList jh
+                  FL.delete jh taskList
                   return True
 
 findTask :: MonadIO m => TaskList -> Job -> SchedT db tp m (Maybe (Async ()))
-findTask taskList job = fmap snd <$> FL.lookup taskList (getHandle job)
+findTask taskList job = fmap snd <$> FL.lookup (getHandle job) taskList
 
 findLastTask :: MonadIO m => TaskList -> SchedT db tp m (Maybe (Int64, JobHandle, Async ()))
-findLastTask tl = atomically $ FL.foldrWithKeySTM tl f Nothing
+findLastTask tl = FL.foldrWithKey f Nothing tl
   where f :: JobHandle
           -> (Int64, a)
           -> Maybe (Int64, JobHandle, a)
@@ -437,7 +437,7 @@ canRun fn = asks sFuncStatList >>= flip canRun_ fn
 
 canRun_ :: MonadIO m => FuncStatList -> FuncName -> m Bool
 canRun_ stList fn = do
-  st0 <- FL.lookup stList fn
+  st0 <- FL.lookup fn stList
   case st0 of
     Nothing                  -> pure False
     Just FuncStat{sWorker=0} -> pure False
@@ -456,7 +456,7 @@ schedJob_ taskList job = do
     now <- getEpochTime
     when (schedAt > now + 1) . threadDelay . fromIntegral $ (schedAt - now) * 1000000
     FuncStat{..} <- atomically $ do
-      st <- FL.lookupSTM sFuncStatList fn
+      st <- FLS.lookup fn sFuncStatList
       case st of
         Nothing                  -> retrySTM
         Just FuncStat{sWorker=0} -> retrySTM
@@ -513,7 +513,7 @@ adjustFuncStat fn = do
 
   schedAt <- if sc > 0 then pure sc else getEpochTime
 
-  FL.alter sFuncStatList (update (size + sizePQ + sizeL) sizePQ sizeL schedAt) fn
+  FL.alter (update (size + sizePQ + sizeL) sizePQ sizeL schedAt) fn sFuncStatList
 
   where update :: Int64 -> Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
         update size sizePQ sizeL schedAt st =
@@ -541,7 +541,7 @@ dumpJob = liftIO . P.dumpJob =<< asks sPersist
 alterFunc :: (MonadIO m, Persist db) => FuncName -> (Maybe FuncStat -> Maybe FuncStat) -> SchedT db tp m ()
 alterFunc n f = do
   SchedEnv{..} <- ask
-  FL.alter sFuncStatList f n
+  FL.alter f n sFuncStatList
   liftIO $ P.insertFuncName sPersist n
   pushChanList PollJob
 
@@ -573,10 +573,10 @@ dropFunc n = do
   liftIO $ infoM "Periodic.Server.Scheduler" ("dropFunc: " ++ show n)
   SchedEnv{..} <- ask
   L.with sLocker $ do
-    st <- FL.lookup sFuncStatList n
+    st <- FL.lookup n sFuncStatList
     case st of
       Just FuncStat{sWorker=0} -> do
-        FL.delete sFuncStatList n
+        FL.delete n sFuncStatList
         liftIO $ P.removeFuncName sPersist n
       _                        -> pure ()
 
@@ -665,14 +665,14 @@ acquireLock name count jh = do
       Nothing -> pure True
       Just job -> do
         r <- atomically $ do
-          l <- FL.lookupSTM lockList name
+          l <- FLS.lookup name lockList
           case l of
             Nothing -> do
-              FL.insertSTM lockList name LockInfo
+              FLS.insert name LockInfo
                 { acquired = [jh]
                 , locked = []
                 , maxCount = count
-                }
+                } lockList
               pure True
             Just info@LockInfo {..} -> do
               let newCount = max maxCount count
@@ -680,16 +680,16 @@ acquireLock name count jh = do
               else if jh `elem` locked then pure False
               else
                 if length acquired < maxCount then do
-                  FL.insertSTM lockList name info
+                  FLS.insert name info
                     { acquired = acquired ++ [jh]
                     , maxCount = newCount
-                    }
+                    } lockList
                   pure True
                 else do
-                  FL.insertSTM lockList name info
+                  FLS.insert name info
                     { locked = locked ++ [jh]
                     , maxCount = newCount
-                    }
+                    } lockList
                   pure False
 
         unless r $ liftIO $ P.insert p Locking fn jn job
@@ -712,22 +712,22 @@ releaseLock_ name jh = do
   p <- asks sPersist
   lockList <- asks sLockList
   h <- atomically $ do
-    l <- FL.lookupSTM lockList name
+    l <- FLS.lookup name lockList
     case l of
       Nothing -> pure Nothing
       Just info@LockInfo {..} ->
         if jh `elem` acquired then
           case locked of
             [] -> do
-              FL.insertSTM lockList name info
+              FLS.insert name info
                 { acquired = L.delete jh acquired
-                }
+                } lockList
               pure Nothing
             x:xs -> do
-              FL.insertSTM lockList name info
+              FLS.insert name info
                 { acquired = L.delete jh acquired
                 , locked   = xs
-                }
+                } lockList
               pure $ Just x
         else pure Nothing
 
@@ -747,7 +747,7 @@ releaseLock'
   => JobHandle -> SchedT db tp m ()
 releaseLock' jh = do
   lockList <- asks sLockList
-  names <- atomically $ FL.foldrWithKeySTM lockList foldFunc []
+  names <- FL.foldrWithKey foldFunc [] lockList
   mapM_ (`releaseLock` jh) names
 
   where foldFunc :: LockName -> LockInfo -> [LockName] -> [LockName]
@@ -820,8 +820,8 @@ purgeExpired = do
   wl <- asks sWaitList
   ex <- fmap fromIntegral . readTVarIO =<< asks sExpiration
   atomically $ do
-    ks <- FL.foldrWithKeySTM wl (foldFunc (check (now - ex))) []
-    mapM_ (FL.deleteSTM wl) ks
+    ks <- FLS.foldrWithKey (foldFunc (check (now - ex))) [] wl
+    mapM_ (`FLS.delete` wl) ks
 
   where foldFunc :: (WaitItem -> Bool) -> JobHandle -> WaitItem -> [JobHandle] -> [JobHandle]
         foldFunc f jh v acc | f v = jh : acc
@@ -855,7 +855,7 @@ waitResult state job = do
   atomically $ do
     st <- readTVar state
     if st then do
-      w0 <- FL.lookupSTM wl jh
+      w0 <- FLS.lookup jh wl
       case w0 of
         Nothing   -> pure ""
         Just item ->
@@ -864,9 +864,9 @@ waitResult state job = do
             Just w1 -> do
 
               if itemWait item > 1 then
-                FL.insertSTM wl jh item { itemWait = itemWait item - 1 }
+                FLS.insert jh item { itemWait = itemWait item - 1 } wl
               else
-                FL.deleteSTM wl jh
+                FLS.delete jh wl
 
               pure w1
 
@@ -889,17 +889,17 @@ pushResult_
 pushResult_ f jh = do
   wl <- asks sWaitList
   now <- getEpochTime
-  FL.alter wl (f now) jh
+  FL.alter (f now) jh wl
 
 existsWaitList :: MonadIO m => JobHandle -> SchedT db tp m Bool
 existsWaitList jh = do
   wl <- asks sWaitList
-  isJust <$> FL.lookup wl jh
+  isJust <$> FL.lookup jh wl
 
 lookupPrevResult :: MonadIO m => Job -> SchedT db tp m (Maybe ByteString)
 lookupPrevResult job = do
   wl <- asks sWaitList
-  r <- FL.lookup wl jh
+  r <- FL.lookup jh wl
   case r of
     Nothing                               -> pure Nothing
     (Just WaitItem {itemValue = Nothing}) -> pure Nothing
@@ -910,4 +910,4 @@ lookupPrevResult job = do
 removeFromWaitList :: MonadIO m => JobHandle -> SchedT db tp m ()
 removeFromWaitList jh = do
   wl <- asks sWaitList
-  FL.delete wl jh
+  FL.delete jh wl

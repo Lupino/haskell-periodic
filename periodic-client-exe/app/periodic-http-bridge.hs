@@ -5,6 +5,7 @@ module Main
   ( main
   ) where
 
+
 import           Control.Monad                   (when)
 import           Control.Monad.IO.Class          (liftIO)
 import qualified Data.ByteString.Char8           as B (pack)
@@ -15,6 +16,7 @@ import           Data.List                       (isPrefixOf)
 import           Data.Maybe                      (fromMaybe)
 import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
+import           Data.Version                    (showVersion)
 import           Metro.Class                     (Transport)
 import           Metro.Socket                    (getHost, getService)
 import           Metro.TP.Socket                 (socket)
@@ -23,6 +25,7 @@ import           Metro.TP.WebSockets             (clientConfig)
 import           Metro.TP.XOR                    (xorConfig)
 import           Network.HTTP.Types              (status204, status500)
 import           Network.Wai.Handler.Warp        (setHost, setPort)
+import           Paths_periodic_client_exe       (version)
 import           Periodic.Trans.ClientPool
 import           Periodic.Types.Job
 import           System.Environment              (getArgs, lookupEnv)
@@ -103,7 +106,7 @@ printHelp = do
   putStrLn "     --pool-size Connection pool size"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
-  putStrLn "Version: v1.1.7.2"
+  putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
   exitSuccess
 

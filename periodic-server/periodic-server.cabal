@@ -1,5 +1,5 @@
 name:                periodic-server
-version:             1.1.7.2
+version:             1.1.7.3
 synopsis:            Periodic task system haskell server
 description:         Periodic task system haskell server and command peridoicd.
 homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-server#readme
@@ -44,6 +44,7 @@ library
                      , direct-sqlite
                      , unliftio
                      , metro
+                     , hashmap-io
                      , entropy
 
                      , postgresql-simple
@@ -66,6 +67,7 @@ executable periodicd
                      , metro-transport-xor
                      , metro-transport-tls
                      , metro-transport-websockets
+  other-modules:       Paths_periodic_server
   default-language:    Haskell2010
 
 source-repository head

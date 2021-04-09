@@ -1,5 +1,5 @@
 name:                periodic-client-exe
-version:             1.1.7.2
+version:             1.1.7.3
 synopsis:            Periodic task system haskell client executables
 description:         Periodic task system haskell client executables.
 homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-client-exe#readme
@@ -29,6 +29,7 @@ executable periodic
                      , metro-transport-xor
                      , metro-transport-tls
                      , metro-transport-websockets
+  other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
 
 executable periodic-run
@@ -48,6 +49,7 @@ executable periodic-run
                      , metro-transport-xor
                      , metro-transport-tls
                      , metro-transport-websockets
+  other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
 
 executable periodic-http-bridge
@@ -69,6 +71,7 @@ executable periodic-http-bridge
                      , metro-transport-tls
                      , metro-transport-websockets
                      , websockets
+  other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
 
 source-repository head

@@ -26,12 +26,13 @@ import           Control.Monad                (forever, replicateM, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
+import           Data.IOHashMap               (IOHashMap)
+import qualified Data.IOHashMap               as HM (delete, empty, insert,
+                                                     lookup)
 import           Metro.Class                  (Transport, TransportConfig,
                                                getPacketId)
 import           Metro.Conn                   (initConnEnv, runConnT)
 import qualified Metro.Conn                   as Conn
-import           Metro.IOHashMap              (IOHashMap, newIOHashMap)
-import qualified Metro.IOHashMap              as HM (delete, insert, lookup)
 import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                initEnv1, newSessionEnv,
                                                nextSessionId, runSessionT_,
@@ -101,7 +102,7 @@ startWorkerT config m = do
               Data v -> v
               _      -> ""
 
-  taskList <- newIOHashMap
+  taskList <- HM.empty
   jobList <- newIOList
   taskSize <- newTVarIO 0
 
@@ -153,7 +154,7 @@ addFunc
 addFunc f j = do
   runJobT $ withSessionT Nothing $ send (packetREQ $ CanDo f)
   ref <- asks taskList
-  HM.insert ref f j
+  HM.insert f j ref
 
 broadcast
   :: (MonadUnliftIO m, Transport tp)
@@ -161,7 +162,7 @@ broadcast
 broadcast f j = do
   runJobT $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
   ref <- asks taskList
-  HM.insert ref f j
+  HM.insert f j ref
 
 removeFunc
   :: (MonadUnliftIO m, Transport tp)
@@ -175,7 +176,7 @@ removeFunc_
   => TaskList tp m -> FuncName -> JobT tp m ()
 removeFunc_ ref f = do
   withSessionT Nothing $ send (packetREQ $ CantDo f)
-  HM.delete ref f
+  HM.delete f ref
 
 getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
@@ -204,7 +205,7 @@ processJob WorkerEnv{..} (sid, job) = do
     writeTVar taskSize (s + 1)
   withEnv (Just job) $ do
     f <- func_
-    task <- HM.lookup taskList f
+    task <- HM.lookup f taskList
     case task of
       Nothing -> do
         removeFunc_ taskList f

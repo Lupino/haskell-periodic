@@ -10,11 +10,13 @@ module Main
 import           Control.Monad                  (when)
 import           Data.Int                       (Int64)
 import           Data.Maybe                     (fromMaybe)
+import           Data.Version                   (showVersion)
 import           Metro.SocketServer             (socketServer)
 import           Metro.TP.TLS                   (makeServerParams', tlsConfig)
 import           Metro.TP.WebSockets            (serverConfig)
 import           Metro.TP.XOR                   (xorConfig)
 import           Metro.Utils                    (setupLog)
+import           Paths_periodic_server          (version)
 import           Periodic.Server                (startServer)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
 import           Periodic.Server.Persist.Cache  (useCache)
@@ -96,7 +98,7 @@ printHelp = do
   putStrLn "     --log            Set log level DEBUG INFO NOTICE WARNING ERROR CRITICAL ALERT EMERGENCY (optional: ERROR)"
   putStrLn "  -h --help           Display help message"
   putStrLn ""
-  putStrLn "Version: v1.1.7.2"
+  putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
   exitSuccess
 

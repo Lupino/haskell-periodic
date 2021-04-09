@@ -14,10 +14,11 @@ module Periodic.Server.Persist.Memory
 import           Control.Monad           (unless)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HM
+import           Data.IOHashMap          (IOHashMap)
+import qualified Data.IOHashMap          as IHM
+import qualified Data.IOHashMap.STM      as IHMS
 import           Data.Int                (Int64)
 import           Data.Maybe              (fromMaybe)
-import           Metro.IOHashMap         (IOHashMap, newIOHashMap)
-import qualified Metro.IOHashMap         as IHM
 import           Periodic.IOList         (IOList, newIOList)
 import qualified Periodic.IOList         as IL
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
@@ -45,9 +46,9 @@ instance Persist Memory where
 
   newPersist _ = do
     infoM "Periodic.Server.Persist.Memory" "Memory connected"
-    pending <- newIOHashMap
-    running <- newIOHashMap
-    locking <- newIOHashMap
+    pending <- IHM.empty
+    running <- IHM.empty
+    locking <- IHM.empty
     funcs   <- newIOList
     return Memory {..}
 
@@ -79,7 +80,7 @@ getJobMap m Running = running m
 getJobMap m Locking = locking m
 
 getJobMap1 :: Memory -> State -> FuncName -> IO (Maybe (HashMap JobName Job))
-getJobMap1 m s = IHM.lookup (getJobMap m s)
+getJobMap1 m s = flip IHM.lookup (getJobMap m s)
 
 doMember :: Memory -> State -> FuncName -> JobName -> IO Bool
 doMember m s f j = maybe False (HM.member j) <$> getJobMap1 m s f
@@ -89,10 +90,10 @@ doLookup m s f j = maybe Nothing (HM.lookup j) <$> getJobMap1 m s f
 
 deleteJobSTM0 :: JobMap -> FuncName -> JobName -> STM ()
 deleteJobSTM0 m f j = do
-  mhm <- IHM.lookupSTM m f
+  mhm <- IHMS.lookup f m
   case mhm of
     Nothing -> return ()
-    Just hm -> IHM.insertSTM m f (HM.delete j hm)
+    Just hm -> IHMS.insert f (HM.delete j hm) m
 
 
 deleteJobSTM :: Memory -> FuncName -> JobName -> STM ()
@@ -104,8 +105,8 @@ deleteJobSTM m f j = do
 
 insertJobSTM :: Memory -> State -> FuncName -> JobName -> Job -> STM ()
 insertJobSTM m s f j v = do
-  hm <- fromMaybe HM.empty <$> IHM.lookupSTM (getJobMap m s) f
-  IHM.insertSTM (getJobMap m s) f (HM.insert j v hm)
+  hm <- fromMaybe HM.empty <$> IHMS.lookup f (getJobMap m s)
+  IHMS.insert f (HM.insert j v hm) (getJobMap m s)
 
 
 doInsert :: Memory -> State -> FuncName -> JobName -> Job -> IO ()
@@ -121,13 +122,13 @@ doSize m s f = fromIntegral . maybe 0 HM.size <$> getJobMap1 m s f
 
 doFoldr :: forall a . Memory -> State -> (Job -> a -> a) -> a -> IO a
 doFoldr m s f acc =
-  atomically $ IHM.foldrWithKeySTM (getJobMap m s) (foldFunc f) acc
+  IHM.foldrWithKey (foldFunc f) acc (getJobMap m s)
   where foldFunc :: (Job -> b -> b) -> FuncName -> HashMap JobName Job -> b -> b
         foldFunc ff _ h acc0 = HM.foldr ff acc0 h
 
 doFoldrPending :: forall a . Memory -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
 doFoldrPending m st fns f acc =
-  atomically $ IHM.foldrWithKeySTM (pending m) (foldFunc f) acc
+  IHM.foldrWithKey (foldFunc f) acc (pending m)
 
   where foldFunc :: (Job -> b -> b) -> FuncName -> HashMap JobName Job -> b -> b
         foldFunc ff fn h acc0 | fn `elem` fns = HM.foldr (foldFunc1 ff) acc0 h
@@ -159,9 +160,9 @@ doInsertFuncName m fn = atomically $ do
 doRemoveFuncName :: Memory -> FuncName -> IO ()
 doRemoveFuncName m fn = atomically $ do
   IL.deleteSTM (funcs m) fn
-  IHM.deleteSTM (pending m) fn
-  IHM.deleteSTM (running m) fn
-  IHM.deleteSTM (locking m) fn
+  IHMS.delete fn $ pending m
+  IHMS.delete fn $ running m
+  IHMS.delete fn $ locking m
 
 doFuncList :: Memory -> IO [FuncName]
 doFuncList = IL.toList . funcs

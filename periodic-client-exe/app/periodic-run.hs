@@ -17,12 +17,14 @@ import           Data.Maybe                 (fromMaybe)
 import qualified Data.Text                  as T (unpack)
 import           Data.Text.Encoding         (decodeUtf8With)
 import           Data.Text.Encoding.Error   (ignore)
+import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
 import           Metro.Socket               (getHost, getService)
 import           Metro.TP.Socket            (socket)
 import           Metro.TP.TLS               (makeClientParams', tlsConfig)
 import           Metro.TP.WebSockets        (clientConfig)
 import           Metro.TP.XOR               (xorConfig)
+import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, withLock_, workDone,
                                              workDone_, workFail, workload)
 import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
@@ -124,7 +126,7 @@ printHelp = do
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
-  putStrLn "Version: v1.1.7.2"
+  putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
   exitSuccess
 

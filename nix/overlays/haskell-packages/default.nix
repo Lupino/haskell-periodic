@@ -8,8 +8,8 @@ let
       metro = prev.callHackageDirect
         {
           pkg = "metro";
-          ver = "0.1.0.4";
-          sha256 = "13pbzly15gwgsr7sybbilivmmmc4yhl2rq590npld9p9mngy9hg2";
+          ver = "0.1.0.5";
+          sha256 = "0sc8wrckl0i08s8b7j3b7fpfv98bxh65wzlg3bkz0klwmws0kv4w";
         } { };
       metro-socket = prev.callHackageDirect
         {
@@ -34,6 +34,12 @@ let
           pkg = "metro-transport-xor";
           ver = "0.1.0.0";
           sha256 = "1hl07x98sl6vx7xyf8wbsa2km37zngdpbrj1g0lg8bp9rk91fcmr";
+        } { };
+      hashmap-io = prev.callHackageDirect
+        {
+          pkg = "hashmap-io";
+          ver = "0.1.0.0";
+          sha256 = "0kzwqjwwdwcfghyq3rakg3yqrh0aa2mgh98cknnsqf7ccd08667l";
         } { };
     } // extraOverrides final prev;
 in

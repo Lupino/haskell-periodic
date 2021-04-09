@@ -11,7 +11,7 @@ module Periodic.Node
   , defaultSessionHandler
   ) where
 
-import           Metro.IOHashMap   (IOHashMap)
+import           Data.IOHashMap    (IOHashMap)
 import qualified Metro.Node        as M (NodeEnv1, NodeT, runNodeT1)
 import qualified Metro.Session     as M (SessionEnv, SessionEnv1, SessionT,
                                          getSessionId)
