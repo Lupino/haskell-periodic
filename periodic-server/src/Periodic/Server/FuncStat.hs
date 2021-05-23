@@ -9,7 +9,7 @@ module Periodic.Server.FuncStat
 
 import qualified Data.ByteString.Char8 as B (intercalate, pack)
 import           Data.Byteable
-import           Data.IOHashMap        (IOHashMap)
+import           Data.IOMap            (IOMap)
 import           Data.Int              (Int64)
 import           Periodic.Types        (FuncName (..))
 
@@ -33,7 +33,7 @@ instance Byteable FuncStat where
     , B.pack $ show sSchedAt
     ]
 
-type FuncStatList = IOHashMap FuncName FuncStat
+type FuncStatList = IOMap FuncName FuncStat
 
 funcStat :: FuncName -> FuncStat
 funcStat sFuncName = FuncStat

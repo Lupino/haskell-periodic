@@ -26,9 +26,11 @@ import           Control.Monad                (forever, replicateM, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
-import           Data.IOHashMap               (IOHashMap)
-import qualified Data.IOHashMap               as HM (delete, empty, insert,
-                                                     lookup)
+import           Data.IOMap                   (IOMap)
+import qualified Data.IOMap                   as Map (delete, empty, insert,
+                                                      lookup)
+import qualified Data.IOMap.STM               as MapS (modifyIOMap, toList)
+import qualified Data.Map.Strict              as RMap (empty)
 import           Metro.Class                  (Transport, TransportConfig,
                                                getPacketId)
 import           Metro.Conn                   (initConnEnv, runConnT)
@@ -41,9 +43,6 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                startNodeT_, withEnv,
                                                withSessionT)
 import           Metro.Session                (send)
-import           Periodic.IOList              (IOList, newIOList)
-import qualified Periodic.IOList              as IL (append, clearSTM,
-                                                     toListSTM)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
                                                      close, getClientEnv, ping)
@@ -58,9 +57,9 @@ import           System.Log.Logger            (errorM)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
-type TaskList tp m = IOHashMap FuncName (JobT tp m ())
+type TaskList tp m = IOMap FuncName (JobT tp m ())
 
-type JobList = IOList (Msgid, Job)
+type JobList = IOMap (Msgid, JobHandle) Job
 
 data WorkerEnv tp m = WorkerEnv
     { taskList :: TaskList tp m
@@ -102,8 +101,8 @@ startWorkerT config m = do
               Data v -> v
               _      -> ""
 
-  taskList <- HM.empty
-  jobList <- newIOList
+  taskList <- Map.empty
+  jobList <- Map.empty
   taskSize <- newTVarIO 0
 
   jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) sessionGen
@@ -130,7 +129,7 @@ filterPacketM jl rpkt = do
   case getResult Nothing getAssignJob (Just rpkt) of
     Nothing  -> return True
     Just job -> do
-      IL.append jl (getPacketId rpkt, job)
+      Map.insert (getPacketId rpkt, getHandle job) job jl
       return False
 
 
@@ -154,7 +153,7 @@ addFunc
 addFunc f j = do
   runJobT $ withSessionT Nothing $ send (packetREQ $ CanDo f)
   ref <- asks taskList
-  HM.insert f j ref
+  Map.insert f j ref
 
 broadcast
   :: (MonadUnliftIO m, Transport tp)
@@ -162,7 +161,7 @@ broadcast
 broadcast f j = do
   runJobT $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
   ref <- asks taskList
-  HM.insert f j ref
+  Map.insert f j ref
 
 removeFunc
   :: (MonadUnliftIO m, Transport tp)
@@ -176,7 +175,7 @@ removeFunc_
   => TaskList tp m -> FuncName -> JobT tp m ()
 removeFunc_ ref f = do
   withSessionT Nothing $ send (packetREQ $ CantDo f)
-  HM.delete f ref
+  Map.delete f ref
 
 getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
@@ -198,14 +197,14 @@ work size = do
       threadDelay 10000000 -- 10s
 
 
-processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> (Msgid, Job) -> JobT tp m ()
-processJob WorkerEnv{..} (sid, job) = do
+processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()
+processJob WorkerEnv{..} ((sid, _), job) = do
   atomically $ do
     s <- readTVar taskSize
     writeTVar taskSize (s + 1)
   withEnv (Just job) $ do
     f <- func_
-    task <- HM.lookup f taskList
+    task <- Map.lookup f taskList
     case task of
       Nothing -> do
         removeFunc_ taskList f
@@ -239,10 +238,10 @@ checkHealth = runJobT BT.checkHealth
 processJobQueue :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> JobT tp m ()
 processJobQueue wEnv@WorkerEnv {..} = forever $ do
   jobs <- atomically $ do
-    v <- IL.toListSTM jobList
+    v <- MapS.toList jobList
     if null v then retrySTM
               else do
-                IL.clearSTM jobList
+                MapS.modifyIOMap (const RMap.empty) jobList
                 return v
 
   mapM_ (async . processJob wEnv) jobs

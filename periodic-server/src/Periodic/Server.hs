@@ -6,6 +6,7 @@ module Periodic.Server
   ) where
 
 
+import qualified Data.IOMap                as IOMap
 import           Metro                     (NodeMode (..), SessionMode (..))
 import           Metro.Class               (Servable (STP),
                                             Transport (TransportConfig))
@@ -17,7 +18,6 @@ import           Metro.Server              (initServerEnv, runServerT,
                                             setOnNodeLeave, setServerName,
                                             setSessionMode, stopServerT)
 import qualified Metro.Server              as M (ServerEnv, startServer)
-import           Periodic.IOList           (newIOList, toList)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Server.Client    (handleSessionT)
 import           Periodic.Server.Persist   (Persist, PersistConfig)
@@ -40,12 +40,12 @@ startServer
   -> S.ServerConfig serv
   -> m ()
 startServer dbconfig mk config = do
-  sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ connEnv -> do
+  sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv -> do
     (_ :: ClientType) <- getClientType <$> runConnT connEnv receive
     nid <- getEntropy 4
     runConnT connEnv $ send (regPacketRES $ Data nid)
-    wFuncList <- newIOList
-    wJobQueue <- newIOList
+    wFuncList <- IOMap.empty
+    wJobQueue <- IOMap.empty
     return $ Just (Nid nid, ClientConfig {..})
 
   setDefaultSessionTimeout sEnv 100
@@ -55,8 +55,8 @@ startServer dbconfig mk config = do
 
   setOnNodeLeave sEnv $ \_ ClientConfig {..} ->
     runSchedT schedEnv $ do
-      mapM_ failJob =<< toList wJobQueue
-      mapM_ removeFunc =<< toList wFuncList
+      mapM_ failJob =<< IOMap.keys wJobQueue
+      mapM_ removeFunc =<< IOMap.keys wFuncList
 
   runSchedT schedEnv $ do
     startSchedT

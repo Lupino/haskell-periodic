@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-17.9
+resolver: lts-17.11
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -52,11 +52,11 @@ extra-package-dbs: []
 
 extra-deps:
 - git: https://github.com/Lupino/metro.git
-  commit: 14b371fdd2ec8eef12f98afa176836a918a4b5a3
+  commit: 7e49dd96886c6a5ebe3cba37238922833c096fa3
   subdirs:
   - .
   - metro-socket
-  - hashmap-io
+  - map-io
   - metro-transport-xor
   - metro-transport-tls
   - metro-transport-websockets

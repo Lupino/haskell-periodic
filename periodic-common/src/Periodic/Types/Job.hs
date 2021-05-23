@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Periodic.Types.Job
@@ -23,25 +22,19 @@ module Periodic.Types.Job
   , jobHandle
   ) where
 
-import           Data.Byteable           (Byteable (..))
-import           Data.ByteString         (ByteString)
-import qualified Data.ByteString.Char8   as B (empty, length)
-import           Data.ByteString.Lazy    (toStrict)
-import           Data.Hashable
-import           Data.Int                (Int64)
-import           GHC.Generics            (Generic)
-
-import           Data.String             (IsString (..))
-import           Periodic.Types.Internal
-
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
+import           Data.ByteString         (ByteString)
+import qualified Data.ByteString.Char8   as B (empty, length)
+import           Data.ByteString.Lazy    (toStrict)
+import           Data.Byteable           (Byteable (..))
+import           Data.Int                (Int64)
+import           Data.String             (IsString (..))
+import           Periodic.Types.Internal
 
 newtype FuncName  = FuncName {unFN :: ByteString}
-  deriving (Generic, Eq, Ord, Show)
-
-instance Hashable FuncName
+  deriving ( Eq, Ord, Show)
 
 instance IsString FuncName where
   fromString = FuncName . fromString
@@ -62,9 +55,7 @@ instance Validatable FuncName where
   validate (FuncName n) = validateLength "FuncName" 1 255 $ B.length n
 
 newtype JobName   = JobName {unJN :: ByteString}
-  deriving (Generic, Eq, Ord, Show)
-
-instance Hashable JobName
+  deriving (Eq, Ord, Show)
 
 instance IsString JobName where
   fromString = JobName . fromString
@@ -85,9 +76,7 @@ instance Validatable JobName where
   validate (JobName n) = validateLength "JobName" 1 255 $ B.length n
 
 data JobHandle = JobHandle FuncName JobName
-    deriving (Generic, Eq, Ord, Show)
-
-instance Hashable JobHandle
+    deriving (Eq, Ord, Show)
 
 instance Binary JobHandle where
   get = do
@@ -103,9 +92,7 @@ instance Validatable JobHandle where
     validate jn
 
 newtype Workload  = Workload {unWL :: ByteString}
-  deriving (Generic, Eq, Ord, Show)
-
-instance Hashable Workload
+  deriving (Eq, Ord, Show)
 
 instance IsString Workload where
   fromString = Workload . fromString

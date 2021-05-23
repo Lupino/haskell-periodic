@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -20,7 +19,6 @@ import           Data.Binary.Put          (putByteString, putWord8)
 import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Char8    as B (length, pack, unpack)
 import qualified Data.ByteString.Lazy     as LB (ByteString, fromStrict)
-import           Data.Hashable
 import           Data.Int                 (Int32)
 import           Data.String              (IsString (..))
 import           Data.Text                (Text)
@@ -28,7 +26,6 @@ import qualified Data.Text                as T (unpack)
 import           Data.Text.Encoding       (decodeUtf8With)
 import           Data.Text.Encoding.Error (ignore)
 import qualified Data.Text.Lazy           as LT (Text, fromStrict)
-import           GHC.Generics             (Generic)
 
 class FromBS a where
   fromBS :: ByteString -> a
@@ -61,9 +58,7 @@ instance Binary ConfigKey where
     putByteString $ B.pack dat
 
 newtype LockName = LockName ByteString
-  deriving (Generic, Eq, Ord, Show)
-
-instance Hashable LockName
+  deriving (Eq, Ord, Show)
 
 instance Binary LockName where
   get = do
@@ -109,15 +104,10 @@ instance Validatable ConfigKey where
   validate (ConfigKey k) = validateLength "ConfigKey" 1 255 $ length k
 
 newtype Nid = Nid ByteString
-  deriving (Generic, Eq, Ord, Show)
-
-instance Hashable Nid
+  deriving (Eq, Ord, Show)
 
 newtype Msgid = Msgid ByteString
-  deriving (Generic, Eq, Ord, Show)
-
-instance Hashable Msgid
-
+  deriving (Eq, Ord, Show)
 
 msgidLength :: Int
 msgidLength = 4

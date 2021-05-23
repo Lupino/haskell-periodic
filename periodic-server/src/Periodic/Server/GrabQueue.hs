@@ -10,11 +10,11 @@ module Periodic.Server.GrabQueue
   ) where
 
 import           Control.Arrow         ((&&&))
-import           Control.Monad         (unless)
 import           Control.Monad.STM     (STM, retry)
+import           Data.IOMap            (IOMap)
+import qualified Data.IOMap            as IOMap
+import qualified Data.IOMap.STM        as IOMapS
 import           Metro.Session         (ident)
-import           Periodic.IOList       (IOList, append, delete, deleteSTM, elem,
-                                        elemSTM, newIOList, toList, toListSTM)
 import           Periodic.Node         (Nid)
 import           Periodic.Server.Types (CSEnv)
 import           Periodic.Types        (FuncName, JobHandle, Msgid)
@@ -22,13 +22,16 @@ import           Prelude               hiding (elem)
 import           UnliftIO              (MonadIO (..))
 
 data GrabItem tp = GrabItem
-    { gFuncList :: IOList FuncName
-    , gAgent    :: CSEnv tp
-    , gJobQueue :: IOList JobHandle
-    }
+  { gFuncList :: IOMap FuncName ()
+  , gAgent    :: CSEnv tp
+  , gJobQueue :: IOMap JobHandle ()
+  }
 
 instance Eq (GrabItem tp) where
     (==) = eqGrabItem
+
+instance Ord (GrabItem tp) where
+  compare x y = compare (key x) (key y)
 
 key :: GrabItem tp -> (Nid, Msgid)
 key GrabItem{gAgent = a} = ident a
@@ -36,40 +39,38 @@ key GrabItem{gAgent = a} = ident a
 eqGrabItem :: GrabItem tp -> GrabItem tp -> Bool
 eqGrabItem a b = key a == key b
 
-type GrabQueue tp = IOList (GrabItem tp)
+type GrabQueue tp = IOMap (GrabItem tp) ()
 
 newGrabQueue :: MonadIO m => m (GrabQueue tp)
-newGrabQueue = newIOList
+newGrabQueue = IOMap.empty
 
-pushAgent :: MonadIO m => GrabQueue tp -> IOList FuncName -> IOList JobHandle -> CSEnv tp -> m ()
-pushAgent q gFuncList gJobQueue gAgent = do
-  has <- elem q i
-  unless has $ append q i
+pushAgent :: MonadIO m => GrabQueue tp -> IOMap FuncName () -> IOMap JobHandle () -> CSEnv tp -> m ()
+pushAgent q gFuncList gJobQueue gAgent = IOMap.insert i () q
   where i = GrabItem {..}
 
-popAgentSTM :: GrabQueue tp -> FuncName -> STM (IOList JobHandle, CSEnv tp)
+popAgentSTM :: GrabQueue tp -> FuncName -> STM (IOMap JobHandle (), CSEnv tp)
 popAgentSTM q n = do
-  item <- go =<< toListSTM q
-  deleteSTM q item
+  item <- go =<< IOMapS.keys q
+  IOMapS.delete item q
   return (gJobQueue item, gAgent item)
 
  where go :: [GrabItem tp] -> STM (GrabItem tp)
        go [] = retry
        go (x:xs) = do
-         has <- elemSTM (gFuncList x) n
+         has <- IOMapS.member n (gFuncList x)
          if has then return x
                 else go xs
 
-popAgentList :: MonadIO m => GrabQueue tp -> FuncName -> m [(IOList JobHandle, CSEnv tp)]
+popAgentList :: MonadIO m => GrabQueue tp -> FuncName -> m [(IOMap JobHandle (), CSEnv tp)]
 popAgentList q n = do
-  items <- go =<< toList q
-  mapM_ (delete q) items
+  items <- go =<< IOMap.keys q
+  mapM_ (`IOMap.delete` q) items
   pure $ map (gJobQueue &&& gAgent) items
 
  where go :: MonadIO m => [GrabItem tp] -> m [GrabItem tp]
        go [] = return []
        go (x:xs) = do
-         has <- elem (gFuncList x) n
+         has <- IOMap.member n (gFuncList x)
          xs' <- go xs
          if has then pure (x:xs')
                 else pure xs'

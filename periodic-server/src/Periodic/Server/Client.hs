@@ -12,15 +12,15 @@ module Periodic.Server.Client
 import           Control.Monad                (unless, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (encode)
-import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
+import           Data.Byteable                (toBytes)
+import qualified Data.IOMap                   as IOMap
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
 import qualified Metro.Conn                   as Conn
 import           Metro.Session                (env, getSessionEnv1, receive,
                                                send)
-import           Periodic.IOList              (delete, elem, insert)
 import           Periodic.Node
 import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
@@ -94,30 +94,30 @@ handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
   lift $ pushGrab wFuncList wJobQueue env0
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w
-  delete wJobQueue jh
+  IOMap.delete jh wJobQueue
 handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
   lift $ failJob jh
-  delete wJobQueue jh
+  IOMap.delete jh wJobQueue
 handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
   lift $ schedLaterJob jh l s
-  delete wJobQueue jh
+  IOMap.delete jh wJobQueue
 handleWorkerSessionT ClientConfig {..} WC.Sleep = send $ packetRES Noop
 handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
-  has <- elem wFuncList fn
+  has <- IOMap.member fn wFuncList
   unless has $ do
     lift $ addFunc fn
-    insert wFuncList fn
+    IOMap.insert fn () wFuncList
 handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
-  has <- elem wFuncList fn
+  has <- IOMap.member fn wFuncList
   when has $ do
     lift $ removeFunc fn
-    delete wFuncList fn
+    IOMap.delete fn wFuncList
 handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
-  has <- elem wFuncList fn
+  has <- IOMap.member fn wFuncList
   unless has $ do
     lift $ broadcastFunc fn True
-    insert wFuncList fn
+    IOMap.insert fn () wFuncList
 handleWorkerSessionT _ (WC.Acquire n c jh) = do
   r <- lift $ acquireLock n c jh
   send $ packetRES $ Acquired r

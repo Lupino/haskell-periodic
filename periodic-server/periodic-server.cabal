@@ -30,8 +30,7 @@ library
                      , periodic-common
                      , bytestring
                      , network
-                     , unordered-containers
-                     , psqueues
+                     , containers
                      , filepath
                      , hslogger
                      , byteable
@@ -44,7 +43,7 @@ library
                      , direct-sqlite
                      , unliftio
                      , metro
-                     , hashmap-io
+                     , map-io
                      , entropy
 
                      , postgresql-simple

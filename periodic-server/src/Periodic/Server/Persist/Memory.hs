@@ -12,15 +12,13 @@ module Periodic.Server.Persist.Memory
   ) where
 
 import           Control.Monad           (unless)
-import           Data.HashMap.Strict     (HashMap)
-import qualified Data.HashMap.Strict     as HM
-import           Data.IOHashMap          (IOHashMap)
-import qualified Data.IOHashMap          as IHM
-import qualified Data.IOHashMap.STM      as IHMS
+import           Data.IOMap              (IOMap)
+import qualified Data.IOMap              as IOMap
+import qualified Data.IOMap.STM          as IOMapS
 import           Data.Int                (Int64)
+import           Data.Map.Strict         (Map)
+import qualified Data.Map.Strict         as HM
 import           Data.Maybe              (fromMaybe)
-import           Periodic.IOList         (IOList, newIOList)
-import qualified Periodic.IOList         as IL
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
                                           State (..))
 import qualified Periodic.Server.Persist as Persist
@@ -30,8 +28,8 @@ import           System.Log.Logger       (infoM)
 import           UnliftIO                (Exception, STM, SomeException,
                                           Typeable, atomically)
 
-type JobMap = IOHashMap FuncName (HashMap JobName Job)
-type FuncNameList = IOList FuncName
+type JobMap = IOMap FuncName (Map JobName Job)
+type FuncNameList = IOMap FuncName ()
 
 data Memory = Memory
   { pending :: JobMap
@@ -46,10 +44,10 @@ instance Persist Memory where
 
   newPersist _ = do
     infoM "Periodic.Server.Persist.Memory" "Memory connected"
-    pending <- IHM.empty
-    running <- IHM.empty
-    locking <- IHM.empty
-    funcs   <- newIOList
+    pending <- IOMap.empty
+    running <- IOMap.empty
+    locking <- IOMap.empty
+    funcs   <- IOMap.empty
     return Memory {..}
 
   member         = doMember
@@ -79,8 +77,8 @@ getJobMap m Pending = pending m
 getJobMap m Running = running m
 getJobMap m Locking = locking m
 
-getJobMap1 :: Memory -> State -> FuncName -> IO (Maybe (HashMap JobName Job))
-getJobMap1 m s = flip IHM.lookup (getJobMap m s)
+getJobMap1 :: Memory -> State -> FuncName -> IO (Maybe (Map JobName Job))
+getJobMap1 m s = flip IOMap.lookup (getJobMap m s)
 
 doMember :: Memory -> State -> FuncName -> JobName -> IO Bool
 doMember m s f j = maybe False (HM.member j) <$> getJobMap1 m s f
@@ -90,10 +88,10 @@ doLookup m s f j = maybe Nothing (HM.lookup j) <$> getJobMap1 m s f
 
 deleteJobSTM0 :: JobMap -> FuncName -> JobName -> STM ()
 deleteJobSTM0 m f j = do
-  mhm <- IHMS.lookup f m
+  mhm <- IOMapS.lookup f m
   case mhm of
     Nothing -> return ()
-    Just hm -> IHMS.insert f (HM.delete j hm) m
+    Just hm -> IOMapS.insert f (HM.delete j hm) m
 
 
 deleteJobSTM :: Memory -> FuncName -> JobName -> STM ()
@@ -105,8 +103,8 @@ deleteJobSTM m f j = do
 
 insertJobSTM :: Memory -> State -> FuncName -> JobName -> Job -> STM ()
 insertJobSTM m s f j v = do
-  hm <- fromMaybe HM.empty <$> IHMS.lookup f (getJobMap m s)
-  IHMS.insert f (HM.insert j v hm) (getJobMap m s)
+  hm <- fromMaybe HM.empty <$> IOMapS.lookup f (getJobMap m s)
+  IOMapS.insert f (HM.insert j v hm) (getJobMap m s)
 
 
 doInsert :: Memory -> State -> FuncName -> JobName -> Job -> IO ()
@@ -122,15 +120,15 @@ doSize m s f = fromIntegral . maybe 0 HM.size <$> getJobMap1 m s f
 
 doFoldr :: forall a . Memory -> State -> (Job -> a -> a) -> a -> IO a
 doFoldr m s f acc =
-  IHM.foldrWithKey (foldFunc f) acc (getJobMap m s)
-  where foldFunc :: (Job -> b -> b) -> FuncName -> HashMap JobName Job -> b -> b
+  IOMap.foldrWithKey (foldFunc f) acc (getJobMap m s)
+  where foldFunc :: (Job -> b -> b) -> FuncName -> Map JobName Job -> b -> b
         foldFunc ff _ h acc0 = HM.foldr ff acc0 h
 
 doFoldrPending :: forall a . Memory -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
 doFoldrPending m st fns f acc =
-  IHM.foldrWithKey (foldFunc f) acc (pending m)
+  IOMap.foldrWithKey (foldFunc f) acc (pending m)
 
-  where foldFunc :: (Job -> b -> b) -> FuncName -> HashMap JobName Job -> b -> b
+  where foldFunc :: (Job -> b -> b) -> FuncName -> Map JobName Job -> b -> b
         foldFunc ff fn h acc0 | fn `elem` fns = HM.foldr (foldFunc1 ff) acc0 h
                               | otherwise = acc0
 
@@ -145,27 +143,25 @@ doFoldrLocking m _ fn f acc =
 
 doDumpJob :: Memory -> IO [Job]
 doDumpJob m = do
-  hm1 <- IHM.elems (pending m)
-  hm2 <- IHM.elems (running m)
-  hm3 <- IHM.elems (locking m)
+  hm1 <- IOMap.elems (pending m)
+  hm2 <- IOMap.elems (running m)
+  hm3 <- IOMap.elems (locking m)
   return $ HM.elems . HM.unions $ concat [hm1, hm2, hm3]
 
 
 doInsertFuncName :: Memory -> FuncName -> IO ()
-doInsertFuncName m fn = atomically $ do
-  has <- IL.elemSTM (funcs m) fn
-  unless has $ IL.insertSTM (funcs m) fn
+doInsertFuncName m fn = IOMap.insert fn () $ funcs m
 
 
 doRemoveFuncName :: Memory -> FuncName -> IO ()
 doRemoveFuncName m fn = atomically $ do
-  IL.deleteSTM (funcs m) fn
-  IHMS.delete fn $ pending m
-  IHMS.delete fn $ running m
-  IHMS.delete fn $ locking m
+  IOMapS.delete fn $ funcs m
+  IOMapS.delete fn $ pending m
+  IOMapS.delete fn $ running m
+  IOMapS.delete fn $ locking m
 
 doFuncList :: Memory -> IO [FuncName]
-doFuncList = IL.toList . funcs
+doFuncList = IOMap.keys . funcs
 
 safeMinimum :: [Int64] -> Int64
 safeMinimum [] = 0
@@ -177,7 +173,7 @@ doMinSchedAt m fn =
 
 
 jobMapSize :: JobMap -> IO Int64
-jobMapSize hm = fromIntegral . sum . map HM.size <$> IHM.elems hm
+jobMapSize hm = fromIntegral . sum . map HM.size <$> IOMap.elems hm
 
 
 memorySize :: Memory -> IO Int64

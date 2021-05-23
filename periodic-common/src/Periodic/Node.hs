@@ -11,7 +11,7 @@ module Periodic.Node
   , defaultSessionHandler
   ) where
 
-import           Data.IOHashMap    (IOHashMap)
+import           Data.IOMap        (IOMap)
 import qualified Metro.Node        as M (NodeEnv1, NodeT, runNodeT1)
 import qualified Metro.Session     as M (SessionEnv, SessionEnv1, SessionT,
                                          getSessionId)
@@ -32,7 +32,7 @@ type SessionEnv1 u rpkt = M.SessionEnv1 u Nid Msgid (Packet rpkt)
 sessionGen :: IO Msgid
 sessionGen = Msgid <$> getEntropy msgidLength
 
-type NodeEnvList u rpkt tp = IOHashMap Nid (NodeEnv u rpkt tp)
+type NodeEnvList u rpkt tp = IOMap Nid (NodeEnv u rpkt tp)
 
 runNodeT :: Monad m => NodeEnv u rpkt tp -> NodeT u rpkt tp m a -> m a
 runNodeT  = M.runNodeT1
