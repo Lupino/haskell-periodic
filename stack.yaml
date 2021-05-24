@@ -52,11 +52,11 @@ extra-package-dbs: []
 
 extra-deps:
 - git: https://github.com/Lupino/metro.git
-  commit: 7e49dd96886c6a5ebe3cba37238922833c096fa3
+  commit: 84fc5a4b4513cdb8bad6df2182097bcc7bc12f93
   subdirs:
   - .
-  - metro-socket
   - map-io
+  - metro-socket
   - metro-transport-xor
   - metro-transport-tls
   - metro-transport-websockets
