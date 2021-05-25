@@ -66,7 +66,7 @@ open config = do
               Data v -> v
               _      -> ""
 
-  clientEnv <- initEnv1 mapEnv connEnv () (Nid nid) sessionGen
+  clientEnv <- initEnv1 mapEnv connEnv () (Nid nid) True sessionGen
   setDefaultSessionTimeout1 clientEnv 100
 
   runClientT clientEnv $ do

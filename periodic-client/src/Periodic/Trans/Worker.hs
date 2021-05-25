@@ -105,7 +105,7 @@ startWorkerT config m = do
   jobList <- Map.empty
   taskSize <- newTVarIO 0
 
-  jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) sessionGen
+  jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) True sessionGen
   setDefaultSessionTimeout1 jobEnv1 100
 
   let wEnv = WorkerEnv {..}

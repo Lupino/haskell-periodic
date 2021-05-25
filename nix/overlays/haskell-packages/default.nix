@@ -5,8 +5,8 @@ let
   metroRepo = super.fetchFromGitHub {
     owner = "Lupino";
     repo = "metro";
-    rev = "84fc5a4b4513cdb8bad6df2182097bcc7bc12f93";
-    sha256 = "0iw0vlzl98fc9iq4p893v1k3a1d86cpyvdzmqmkva5dgry6s8n3n";
+    rev = "3cfb06e859df5e0e77e39a103967d14d382dec88";
+    sha256 = "07h95bm84fchsnszfsnr0l6npwkvk9vi43hppi1iblsbcm6pnxs3";
   };
   overrides =
     final: prev:

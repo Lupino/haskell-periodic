@@ -15,8 +15,9 @@ import           Metro.Conn                (receive, runConnT, send)
 import           Metro.Server              (initServerEnv, runServerT,
                                             setDefaultSessionTimeout,
                                             setKeepalive, setNodeMode,
-                                            setOnNodeLeave, setServerName,
-                                            setSessionMode, stopServerT)
+                                            setOnExcClose, setOnNodeLeave,
+                                            setServerName, setSessionMode,
+                                            stopServerT)
 import qualified Metro.Server              as M (ServerEnv, startServer)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Server.Client    (handleSessionT)
@@ -67,3 +68,4 @@ startServer dbconfig mk config = do
           setNodeMode Multi
           . setSessionMode SingleAction
           . setServerName "Periodic"
+          . setOnExcClose True
