@@ -18,8 +18,7 @@ import           Metro.Session         (ident)
 import           Periodic.Node         (Nid)
 import           Periodic.Server.Types (CSEnv)
 import           Periodic.Types        (FuncName, JobHandle, Msgid)
-import           Prelude               hiding (elem)
-import           UnliftIO              (MonadIO (..))
+import           UnliftIO              (MonadIO)
 
 data GrabItem tp = GrabItem
   { gFuncList :: IOMap FuncName ()
@@ -27,17 +26,8 @@ data GrabItem tp = GrabItem
   , gJobQueue :: IOMap JobHandle ()
   }
 
-instance Eq (GrabItem tp) where
-    (==) = eqGrabItem
-
-instance Ord (GrabItem tp) where
-  compare x y = compare (key x) (key y)
-
 key :: GrabItem tp -> (Nid, Msgid)
 key GrabItem{gAgent = a} = ident a
-
-eqGrabItem :: GrabItem tp -> GrabItem tp -> Bool
-eqGrabItem a b = key a == key b
 
 type GrabQueue tp = IOMap (Nid, Msgid) (GrabItem tp)
 
