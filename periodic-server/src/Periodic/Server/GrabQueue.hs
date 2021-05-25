@@ -39,19 +39,19 @@ key GrabItem{gAgent = a} = ident a
 eqGrabItem :: GrabItem tp -> GrabItem tp -> Bool
 eqGrabItem a b = key a == key b
 
-type GrabQueue tp = IOMap (GrabItem tp) ()
+type GrabQueue tp = IOMap (Nid, Msgid) (GrabItem tp)
 
 newGrabQueue :: MonadIO m => m (GrabQueue tp)
 newGrabQueue = IOMap.empty
 
 pushAgent :: MonadIO m => GrabQueue tp -> IOMap FuncName () -> IOMap JobHandle () -> CSEnv tp -> m ()
-pushAgent q gFuncList gJobQueue gAgent = IOMap.insert i () q
+pushAgent q gFuncList gJobQueue gAgent = IOMap.insert (key i) i q
   where i = GrabItem {..}
 
 popAgentSTM :: GrabQueue tp -> FuncName -> STM (IOMap JobHandle (), CSEnv tp)
 popAgentSTM q n = do
-  item <- go =<< IOMapS.keys q
-  IOMapS.delete item q
+  item <- go =<< IOMapS.elems q
+  IOMapS.delete (key item) q
   return (gJobQueue item, gAgent item)
 
  where go :: [GrabItem tp] -> STM (GrabItem tp)
@@ -63,8 +63,8 @@ popAgentSTM q n = do
 
 popAgentList :: MonadIO m => GrabQueue tp -> FuncName -> m [(IOMap JobHandle (), CSEnv tp)]
 popAgentList q n = do
-  items <- go =<< IOMap.keys q
-  mapM_ (`IOMap.delete` q) items
+  items <- go =<< IOMap.elems q
+  mapM_ ((`IOMap.delete` q) . key) items
   pure $ map (gJobQueue &&& gAgent) items
 
  where go :: MonadIO m => [GrabItem tp] -> m [GrabItem tp]
