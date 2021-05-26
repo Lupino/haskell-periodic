@@ -309,7 +309,9 @@ pollJob taskList = do
             Just (Right ())  -> IOMap.delete jh taskList
             Just (Left e)  -> do
               IOMap.delete jh taskList
-              liftIO $ errorM "Periodic.Server.Scheduler" ("Poll error: " ++ show e)
+              case show e of
+                "AsyncCancelled" -> pure ()
+                ee -> liftIO $ errorM "Periodic.Server.Scheduler" ("Poll error: " ++ ee)
             Nothing -> do
               r0 <- canRun fn
               unless r0 $ cancel w
