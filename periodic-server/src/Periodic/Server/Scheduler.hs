@@ -105,10 +105,6 @@ data SchedEnv db = SchedEnv
     , sKeepalive      :: TVar Int -- client or worker keepalive
     -- run job cache expiration
     , sExpiration     :: TVar Int -- run job cache expiration
-    -- auto poll job when job done or failed
-    , sAutoPoll       :: TVar Bool -- auto poll job when job done or failed
-    -- auto poll lock
-    , sPolled         :: TVar Bool -- auto poll lock
     , sCleanup        :: IO ()
     , sFuncStatList   :: FuncStatList
     , sLocker         :: L.Lock
@@ -163,8 +159,6 @@ initSchedEnv config sC sAssignJob = do
   sMaxBatchSize   <- newTVarIO 250
   sKeepalive      <- newTVarIO 300
   sExpiration     <- newTVarIO 300
-  sAutoPoll       <- newTVarIO False
-  sPolled         <- newTVarIO False
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
   pure SchedEnv{..}
@@ -264,37 +258,31 @@ runChanJob taskList = do
         doChanJob tl (Add job)    = reSchedJob tl job
         doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
         doChanJob tl Cancel       = mapM_ (cancel . snd) =<< IOMap.elems tl
-        doChanJob tl PollJob      = pollJob tl
-        doChanJob tl (TryPoll jh) = removeTaskAndTryPoll tl jh
+        doChanJob tl PollJob      = tryPoll tl
+        doChanJob tl (TryPoll jh) = do
+          IOMap.delete jh taskList
+          tryPoll tl
 
 
 pollInterval :: (MonadIO m, Num a) => SchedT db m a
 pollInterval = fmap fromIntegral . readTVarIO =<< asks sPollInterval
 
-removeTaskAndTryPoll :: MonadIO m => TaskList -> JobHandle -> SchedT db m ()
-removeTaskAndTryPoll taskList jh = do
-  IOMap.delete jh taskList
-  polled <- asks sPolled
-  isPolled <- readTVarIO polled
-  autoPoll <- readTVarIO =<< asks sAutoPoll
-  when (isPolled && autoPoll) $ do
-    maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-    size <- IOMap.size taskList
-    when (size < maxBatchSize) $ do
-      atomically $ writeTVar polled False
-      pushChanList PollJob
+tryPoll
+  :: (MonadUnliftIO m, Persist db)
+  => TaskList -> SchedT db m ()
+tryPoll taskList = do
+  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+  size <- IOMap.size taskList
+  when (size < maxBatchSize) $ pollJob taskList
 
 pollJob
   :: (MonadUnliftIO m, Persist db)
   => TaskList -> SchedT db m ()
 pollJob taskList = do
-  polled <- asks sPolled
-  atomically $ writeTVar polled False
   mapM_ checkPoll =<< IOMap.toList taskList
   stList <- asks sFuncStatList
   funcList <- foldr foldFunc [] <$> IOMap.toList stList
   pollJob_ taskList funcList
-  atomically $ writeTVar polled True
 
   where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
@@ -331,12 +319,9 @@ pollJob_ taskList funcList = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
   jobs <- liftIO $
-    P.foldrPending p next funcList (foldFunc (maxBatchSize * 2) check now) IntMap.empty
+    P.foldrPending p next funcList (foldFunc (maxBatchSize * 10) check now) IntMap.empty
 
   mapM_ (checkJob taskList) jobs
-
-  autoPoll <- asks sAutoPoll
-  atomically $ writeTVar autoPoll (length jobs > maxBatchSize)
 
   where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> IntMap Job -> IntMap Job
         foldFunc s f now job acc | f job = trimPSQ $ IntMap.insert (fromIntegral (now - getSchedAt job)) job acc
