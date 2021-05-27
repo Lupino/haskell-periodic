@@ -558,13 +558,9 @@ dropFunc n = do
 
 pushGrab :: MonadIO m => [FuncName] -> ByteString -> SchedT db m ()
 pushGrab funcList ag = do
+  pushChanList PollJob
   queue <- asks sGrabQueue
   pushAgent queue funcList ag
-
--- assignJob :: MonadUnliftIO m => CSEnv -> Job -> m ()
--- assignJob env0 job = do
---   liftIO $ infoM "Periodic.Server.Scheduler" ("assignJob: " ++ show (getHandle job))
---   runSessionT1 env0 $ send $ packetRES (JobAssign job)
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do
