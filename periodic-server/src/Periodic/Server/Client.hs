@@ -19,14 +19,14 @@ import qualified Data.IOMap                   as IOMap
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
 import qualified Metro.Conn                   as Conn
-import           Metro.Session                (env, getSessionEnv1, receive,
-                                               send)
+import           Metro.Session                (env, getSessionEnv1, ident,
+                                               receive, send)
 import           Periodic.Node
 import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Types
 import qualified Periodic.Types.ClientCommand as CC
-import           Periodic.Types.Internal      (ConfigKey (..))
+import           Periodic.Types.Internal      (ConfigKey (..), Msgid (..))
 import           Periodic.Types.Job           (getFuncName, initJob)
 import           Periodic.Types.Packet        (getPacketData, packetRES)
 import qualified Periodic.Types.WorkerCommand as WC
@@ -35,11 +35,11 @@ import           System.Log.Logger            (errorM)
 import           UnliftIO
 
 
-type ClientT db tp m = NodeT ClientConfig Command tp (SchedT db tp m)
+type ClientT db tp m = NodeT ClientConfig Command tp (SchedT db m)
 
 handleClientSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
-  => CC.ClientCommand -> SessionT ClientConfig Command tp (SchedT db tp m) ()
+  => CC.ClientCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleClientSessionT (CC.SubmitJob job) = do
   lift $ pushJob job
   send $ packetRES Success
@@ -88,10 +88,12 @@ handleClientSessionT (CC.Load jobs) = do
 
 handleWorkerSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
-  => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db tp m) ()
+  => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
   env0 <- getSessionEnv1
-  lift $ pushGrab wFuncList wJobQueue env0
+  funcList <- IOMap.keys wFuncList
+  case ident env0 of
+    (Nid bs0, Msgid bs1) -> lift $ pushGrab funcList $ bs0 <> bs1
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w
   IOMap.delete jh wJobQueue
@@ -125,7 +127,7 @@ handleWorkerSessionT _ (WC.Release n jh) = lift $ releaseLock n jh
 
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
-  => SessionT ClientConfig Command tp (SchedT db tp m) ()
+  => SessionT ClientConfig Command tp (SchedT db m) ()
 handleSessionT = do
   mcmd <- receive
   case mcmd of
