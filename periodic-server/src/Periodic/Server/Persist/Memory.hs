@@ -11,7 +11,6 @@ module Periodic.Server.Persist.Memory
   , memorySize
   ) where
 
-import           Control.Monad           (unless)
 import           Data.IOMap              (IOMap)
 import qualified Data.IOMap              as IOMap
 import qualified Data.IOMap.STM          as IOMapS
