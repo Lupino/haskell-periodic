@@ -62,7 +62,7 @@ import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
 import           Periodic.Types.Internal    (LockName)
 import           Periodic.Types.Job
-import           System.Log.Logger          (errorM, infoM)
+import           System.Log.Logger          (debugM, errorM, infoM)
 import           UnliftIO
 import           UnliftIO.Concurrent        (threadDelay)
 
@@ -355,7 +355,7 @@ pushChanList act = do
 
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 pushJob job = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
+  liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   p <- asks sPersist
   isRunning <- liftIO $ P.member p Running fn jn
   unless isRunning $ do
@@ -499,7 +499,7 @@ adjustFuncStat fn = do
 
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 removeJob job = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
+  liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
   p <- asks sPersist
   liftIO $ P.delete p fn jn
 
@@ -524,7 +524,7 @@ addFunc n = broadcastFunc n False
 
 broadcastFunc :: (MonadIO m, Persist db) => FuncName -> Bool -> SchedT db m ()
 broadcastFunc n cast = do
-  liftIO $ infoM "Periodic.Server.Scheduler" (h ++ ": " ++ show n)
+  liftIO $ debugM "Periodic.Server.Scheduler" (h ++ ": " ++ show n)
   alterFunc n updateStat
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
@@ -535,7 +535,7 @@ broadcastFunc n cast = do
 
 removeFunc :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
 removeFunc n = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("removeFunc: " ++ show n)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("removeFunc: " ++ show n)
   alterFunc n updateStat
 
   where updateStat :: Maybe FuncStat -> Maybe FuncStat
@@ -544,7 +544,7 @@ removeFunc n = do
 
 dropFunc :: (MonadUnliftIO m, Persist db) => FuncName -> SchedT db m ()
 dropFunc n = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("dropFunc: " ++ show n)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("dropFunc: " ++ show n)
   SchedEnv{..} <- ask
   L.with sLocker $ do
     st <- IOMap.lookup n sFuncStatList
@@ -564,7 +564,7 @@ pushGrab funcList ag = do
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("failJob: " ++ show jh)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("failJob: " ++ show jh)
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -593,7 +593,7 @@ doneJob
   :: (MonadUnliftIO m, Persist db)
   => JobHandle -> ByteString -> SchedT db m ()
 doneJob jh w = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
   releaseLock' jh
   p <- asks sPersist
   liftIO $ P.delete p fn jn
@@ -604,7 +604,7 @@ schedLaterJob
   :: (MonadUnliftIO m, Persist db)
   => JobHandle -> Int64 -> Int -> SchedT db m ()
 schedLaterJob jh later step = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("schedLaterJob: " ++ show jh)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("schedLaterJob: " ++ show jh)
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -625,7 +625,7 @@ acquireLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> Int -> JobHandle -> SchedT db m Bool
 acquireLock name count jh = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show count ++ " " ++ show jh)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show count ++ " " ++ show jh)
   locker <- asks sLocker
   L.with locker $ do
     lockList <- asks sLockList
@@ -678,7 +678,7 @@ releaseLock_
   :: (MonadUnliftIO m, Persist db)
   => LockName -> JobHandle -> SchedT db m ()
 releaseLock_ name jh = do
-  liftIO $ infoM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
+  liftIO $ debugM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
   p <- asks sPersist
   lockList <- asks sLockList
   h <- atomically $ do
