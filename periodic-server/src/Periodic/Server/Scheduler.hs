@@ -258,31 +258,26 @@ runChanJob taskList = do
         doChanJob tl (Add job)    = reSchedJob tl job
         doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
         doChanJob tl Cancel       = mapM_ (cancel . snd) =<< IOMap.elems tl
-        doChanJob tl PollJob      = tryPoll tl
+        doChanJob tl PollJob      = pollJob tl
         doChanJob tl (TryPoll jh) = do
           IOMap.delete jh taskList
-          tryPoll tl
+          pollJob tl
 
 
 pollInterval :: (MonadIO m, Num a) => SchedT db m a
 pollInterval = fmap fromIntegral . readTVarIO =<< asks sPollInterval
-
-tryPoll
-  :: (MonadUnliftIO m, Persist db)
-  => TaskList -> SchedT db m ()
-tryPoll taskList = do
-  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-  size <- IOMap.size taskList
-  when (size < maxBatchSize) $ pollJob taskList
 
 pollJob
   :: (MonadUnliftIO m, Persist db)
   => TaskList -> SchedT db m ()
 pollJob taskList = do
   mapM_ checkPoll =<< IOMap.toList taskList
-  stList <- asks sFuncStatList
-  funcList <- foldr foldFunc [] <$> IOMap.toList stList
-  pollJob_ taskList funcList
+  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+  size <- IOMap.size taskList
+  when (size < maxBatchSize) $ do
+    stList <- asks sFuncStatList
+    funcList <- foldr foldFunc [] <$> IOMap.toList stList
+    pollJob_ taskList funcList
 
   where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
