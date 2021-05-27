@@ -6,7 +6,6 @@ module Periodic.Server
   ) where
 
 
-import qualified Data.ByteString              as B (drop, take)
 import qualified Data.IOMap                   as IOMap
 import           Metro                        (NodeMode (..), SessionMode (..))
 import           Metro.Class                  (Servable (STP),
@@ -60,10 +59,7 @@ startServer dbconfig mk config = do
   setDefaultSessionTimeout sEnv 100
   setKeepalive sEnv 500
 
-  schedEnv <- initSchedEnv dbconfig (runServerT sEnv stopServerT) $ \bs job -> do
-    let nid   = Nid $ B.take 4 bs
-        msgid = Msgid $ B.drop 4 bs
-
+  schedEnv <- initSchedEnv dbconfig (runServerT sEnv stopServerT) $ \(nid, msgid) job -> do
     menv0 <- IOMap.lookup nid $ getNodeEnvList sEnv
     case menv0 of
       Nothing   -> return False

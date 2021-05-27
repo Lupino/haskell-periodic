@@ -60,6 +60,7 @@ import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
 import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
+import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
 import           Periodic.Types.Job
 import           System.Log.Logger          (debugM, errorM, infoM)
@@ -115,7 +116,7 @@ data SchedEnv db = SchedEnv
     , sWaitList       :: WaitList
     , sLockList       :: LockList
     , sPersist        :: db
-    , sAssignJob      :: ByteString -> Job -> IO Bool
+    , sAssignJob      :: (Nid, Msgid) -> Job -> IO Bool
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -143,7 +144,7 @@ runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 initSchedEnv
   :: (MonadUnliftIO m, Persist db)
   => P.PersistConfig db -> m ()
-  -> (ByteString -> Job -> IO Bool)
+  -> ((Nid, Msgid) -> Job -> IO Bool)
   -> m (SchedEnv db)
 initSchedEnv config sC sAssignJob = do
   sFuncStatList   <- IOMap.empty
@@ -551,7 +552,7 @@ dropFunc n = do
 
   pushChanList PollJob
 
-pushGrab :: MonadIO m => [FuncName] -> ByteString -> SchedT db m ()
+pushGrab :: MonadIO m => [FuncName] -> (Nid, Msgid) -> SchedT db m ()
 pushGrab funcList ag = do
   pushChanList PollJob
   queue <- asks sGrabQueue

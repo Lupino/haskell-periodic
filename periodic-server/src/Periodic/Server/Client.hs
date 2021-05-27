@@ -90,10 +90,10 @@ handleWorkerSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
   => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
-  env0 <- getSessionEnv1
+  agent <- ident <$> getSessionEnv1
   funcList <- IOMap.keys wFuncList
-  case ident env0 of
-    (Nid bs0, Msgid bs1) -> lift $ pushGrab funcList $ bs0 <> bs1
+  lift $ pushGrab funcList agent
+
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w
   IOMap.delete jh wJobQueue
