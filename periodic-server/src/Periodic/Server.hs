@@ -9,15 +9,13 @@ module Periodic.Server
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString.Lazy         (fromStrict)
 import qualified Data.IOMap                   as IOMap
-import qualified Data.IOMap.STM               as IOMapS
 import           Metro                        (NodeMode (..), SessionMode (..))
 import           Metro.Class                  (Servable (STP),
                                                Transport (TransportConfig),
                                                setPacketId)
 import qualified Metro.Class                  as S (Servable (ServerConfig))
 import           Metro.Conn                   (receive, runConnT, send)
-import           Metro.Node                   (NodeEnv1 (..), env, runNodeT1,
-                                               uEnv)
+import           Metro.Node                   (NodeEnv1 (..), env, runNodeT1)
 import           Metro.Server                 (getNodeEnvList, initServerEnv,
                                                runServerT,
                                                setDefaultSessionTimeout,
@@ -28,23 +26,22 @@ import           Metro.Server                 (getNodeEnvList, initServerEnv,
 import qualified Metro.Server                 as M (ServerEnv, startServer)
 import           Periodic.Node                (sessionGen)
 import           Periodic.Server.Client       (handleSessionT)
-import           Periodic.Server.GrabQueue
 import           Periodic.Server.Persist      (Persist, PersistConfig)
 import           Periodic.Server.Scheduler    (failJob, initSchedEnv,
                                                removeFunc, runSchedT, shutdown,
                                                startSchedT)
 import           Periodic.Server.Types        (ClientConfig (..), Command,
                                                ServerCommand (Data))
-import           Periodic.Types               (ClientType, FuncName, Job,
-                                               Msgid (..), Nid (..), Packet,
-                                               getClientType, getHandle,
-                                               packetRES, regPacketRES)
+import           Periodic.Types               (ClientType, Job, Msgid (..),
+                                               Nid (..), Packet, getClientType,
+                                               getHandle, packetRES,
+                                               regPacketRES)
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           System.Entropy               (getEntropy)
 
-import           UnliftIO                     (MonadUnliftIO, STM, atomically,
-                                               modifyTVar', newTVarIO, readTVar,
-                                               readTVarIO, retrySTM, tryAny)
+import           UnliftIO                     (MonadUnliftIO, atomically,
+                                               modifyTVar', newTVarIO,
+                                               readTVarIO, tryAny)
 
 type ServerEnv serv =
   M.ServerEnv serv ClientConfig Nid Msgid (Packet Command)
@@ -67,31 +64,6 @@ doAssignJob sEnv nid msgid job = do
           atomically $ modifyTVar' (wJobQueue env1) (getHandle job :)
           return True
 
-waitAndPopMsgid :: ServerEnv serv tp -> GrabQueue -> FuncName -> IO (Nid, Msgid)
-waitAndPopMsgid sEnv gq func = atomically $ do
-  nids <- IOMapS.keys nodeList
-  ret <- go nids
-  case ret of
-    Nothing           -> retrySTM
-    Just (nid, msgid) -> pure (nid, msgid)
-  where go :: [Nid] -> STM (Maybe (Nid, Msgid))
-        go [] = pure Nothing
-        go (x:xs) = do
-          menv0 <- IOMapS.lookup x nodeList
-          case menv0 of
-            Nothing   -> go xs
-            Just env0 -> do
-              funcs <- readTVar $ wFuncList . uEnv $ nodeEnv env0
-              if func `elem` funcs
-                 then do
-                   ret <- popAgentSTM gq x
-                   case ret of
-                     Nothing    -> go xs
-                     Just msgid -> pure (Just (x, msgid))
-                 else go xs
-
-        nodeList = getNodeEnvList sEnv
-
 startServer
   :: (Servable serv, Transport tp, Persist db, MonadUnliftIO m)
   => PersistConfig db
@@ -113,7 +85,6 @@ startServer dbconfig mk config = do
   schedEnv <- initSchedEnv dbconfig
               (runServerT sEnv stopServerT)
               (doAssignJob sEnv)
-              (waitAndPopMsgid sEnv)
 
   setOnNodeLeave sEnv $ \_ ClientConfig {..} ->
     runSchedT schedEnv $ do

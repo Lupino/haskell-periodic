@@ -117,7 +117,6 @@ data SchedEnv db = SchedEnv
     , sLockList       :: LockList
     , sPersist        :: db
     , sAssignJob      :: Nid -> Msgid -> Job -> IO Bool
-    , sWaitAgent      :: GrabQueue -> FuncName -> IO (Nid, Msgid)
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -146,9 +145,8 @@ initSchedEnv
   :: (MonadUnliftIO m, Persist db)
   => P.PersistConfig db -> m ()
   -> (Nid -> Msgid -> Job -> IO Bool)
-  -> (GrabQueue -> FuncName -> IO (Nid, Msgid))
   -> m (SchedEnv db)
-initSchedEnv config sC sAssignJob sWaitAgent = do
+initSchedEnv config sC sAssignJob = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
@@ -456,7 +454,7 @@ schedJob_ taskList job = do
           :: (MonadUnliftIO m, Persist db) => TaskList -> SchedT db m ()
         popAgentThen tl = do
           SchedEnv{..} <- ask
-          (nid, msgid) <- liftIO $ sWaitAgent sGrabQueue fn
+          (nid, msgid) <- liftIO $ popAgent sGrabQueue fn
           nextSchedAt <- getEpochTime
           liftIO $ P.insert sPersist Running fn jn $ setSchedAt nextSchedAt job
           r <- liftIO $ sAssignJob nid msgid job
@@ -555,11 +553,11 @@ dropFunc n = do
 
   pushChanList PollJob
 
-pushGrab :: MonadIO m => Nid -> Msgid -> SchedT db m ()
-pushGrab nid msgid = do
+pushGrab :: MonadIO m => TVar [FuncName] -> Nid -> Msgid -> SchedT db m ()
+pushGrab funcList nid msgid = do
   pushChanList PollJob
   queue <- asks sGrabQueue
-  pushAgent queue nid msgid
+  pushAgent queue funcList nid msgid
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do

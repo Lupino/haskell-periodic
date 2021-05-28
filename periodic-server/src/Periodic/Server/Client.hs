@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
@@ -92,7 +93,7 @@ handleWorkerSessionT
 handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
   !agent <- ident <$> getSessionEnv1
   case agent of
-    (!nid, !msgid) -> lift $ pushGrab nid msgid
+    (!nid, !msgid) -> lift $ pushGrab wFuncList nid msgid
 
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w
