@@ -22,10 +22,13 @@ module Periodic.Trans.Worker
   , getClientEnv
   ) where
 
+
 import           Control.Monad                (forever, replicateM, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
+import           Data.Binary.Get              (getWord32be, runGet)
+import           Data.ByteString.Lazy         (fromStrict)
 import           Data.IOMap                   (IOMap)
 import qualified Data.IOMap                   as Map (delete, empty, insert,
                                                       lookup)
@@ -98,8 +101,8 @@ startWorkerT config m = do
     Conn.receive
 
   let nid = case getClientType r of
-              Data v -> v
-              _      -> ""
+              Data v -> runGet getWord32be $ fromStrict v
+              _      -> 0
 
   taskList <- Map.empty
   jobList <- Map.empty

@@ -24,6 +24,7 @@ module Periodic.Trans.Client
 
 import           Control.Monad                (forever, void)
 import           Data.Binary                  (decode)
+import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString              (ByteString)
 import           Data.ByteString.Lazy         (fromStrict)
 import           Metro.Class                  (Transport, TransportConfig)
@@ -63,8 +64,8 @@ open config = do
     Conn.receive
 
   let nid = case getClientType r of
-              Data v -> v
-              _      -> ""
+              Data v -> runGet getWord32be $ fromStrict v
+              _      -> 0
 
   clientEnv <- initEnv1 mapEnv connEnv () (Nid nid) True sessionGen
   setDefaultSessionTimeout1 clientEnv 100

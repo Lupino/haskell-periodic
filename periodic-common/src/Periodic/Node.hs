@@ -11,14 +11,17 @@ module Periodic.Node
   , defaultSessionHandler
   ) where
 
-import           Data.IOMap        (IOMap)
-import qualified Metro.Node        as M (NodeEnv1, NodeT, runNodeT1)
-import qualified Metro.Session     as M (SessionEnv, SessionEnv1, SessionT,
-                                         getSessionId)
-import           Periodic.Types    (Msgid (..), Nid (..), Packet, msgidLength)
-import           System.Entropy    (getEntropy)
-import           System.Log.Logger (errorM)
-import           UnliftIO          (MonadIO, liftIO)
+
+import           Data.Binary.Get      (getWord32be, runGet)
+import           Data.ByteString.Lazy (fromStrict)
+import           Data.IOMap           (IOMap)
+import qualified Metro.Node           as M (NodeEnv1, NodeT, runNodeT1)
+import qualified Metro.Session        as M (SessionEnv, SessionEnv1, SessionT,
+                                            getSessionId)
+import           Periodic.Types       (Msgid (..), Nid (..), Packet)
+import           System.Entropy       (getEntropy)
+import           System.Log.Logger    (errorM)
+import           UnliftIO             (MonadIO, liftIO)
 
 type NodeEnv u rpkt = M.NodeEnv1 u Nid Msgid (Packet rpkt)
 
@@ -30,7 +33,7 @@ type SessionEnv u rpkt = M.SessionEnv u Nid Msgid (Packet rpkt)
 type SessionEnv1 u rpkt = M.SessionEnv1 u Nid Msgid (Packet rpkt)
 
 sessionGen :: IO Msgid
-sessionGen = Msgid <$> getEntropy msgidLength
+sessionGen = Msgid . runGet getWord32be . fromStrict <$> getEntropy 4
 
 type NodeEnvList u rpkt tp = IOMap Nid (NodeEnv u rpkt tp)
 

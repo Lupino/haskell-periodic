@@ -116,7 +116,8 @@ data SchedEnv db = SchedEnv
     , sWaitList       :: WaitList
     , sLockList       :: LockList
     , sPersist        :: db
-    , sAssignJob      :: (Nid, Msgid) -> Job -> IO Bool
+    , sAssignJob      :: Nid -> Msgid -> Job -> IO Bool
+    , sWaitAgent      :: GrabQueue -> FuncName -> IO (Nid, Msgid)
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -144,9 +145,10 @@ runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 initSchedEnv
   :: (MonadUnliftIO m, Persist db)
   => P.PersistConfig db -> m ()
-  -> ((Nid, Msgid) -> Job -> IO Bool)
+  -> (Nid -> Msgid -> Job -> IO Bool)
+  -> (GrabQueue -> FuncName -> IO (Nid, Msgid))
   -> m (SchedEnv db)
-initSchedEnv config sC sAssignJob = do
+initSchedEnv config sC sAssignJob sWaitAgent = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
@@ -454,10 +456,10 @@ schedJob_ taskList job = do
           :: (MonadUnliftIO m, Persist db) => TaskList -> SchedT db m ()
         popAgentThen tl = do
           SchedEnv{..} <- ask
-          agent <- atomically $ popAgentSTM sGrabQueue fn
+          (nid, msgid) <- liftIO $ sWaitAgent sGrabQueue fn
           nextSchedAt <- getEpochTime
           liftIO $ P.insert sPersist Running fn jn $ setSchedAt nextSchedAt job
-          r <- liftIO $ sAssignJob agent job
+          r <- liftIO $ sAssignJob nid msgid job
           if r then endSchedJob
                else do
                  liftIO $ P.insert sPersist Pending fn jn $ setSchedAt nextSchedAt job
@@ -466,9 +468,10 @@ schedJob_ taskList job = do
         popAgentListThen :: (MonadUnliftIO m) => SchedT db m ()
         popAgentListThen = do
           SchedEnv{..} <- ask
-          agents <- popAgentList sGrabQueue fn
-          liftIO $ mapM_ (`sAssignJob` job) agents
-          unless (null agents) endSchedJob -- wait to resched the broadcast job
+          error ""
+          -- agents <- popAgentList sGrabQueue fn
+          -- liftIO $ mapM_ (`sAssignJob` job) agents
+          -- unless (null agents) endSchedJob -- wait to resched the broadcast job
 
         endSchedJob :: MonadIO m => SchedT db m ()
         endSchedJob = pushChanList (TryPoll jh)
@@ -552,11 +555,11 @@ dropFunc n = do
 
   pushChanList PollJob
 
-pushGrab :: MonadIO m => [FuncName] -> (Nid, Msgid) -> SchedT db m ()
-pushGrab funcList ag = do
+pushGrab :: MonadIO m => Nid -> Msgid -> SchedT db m ()
+pushGrab nid msgid = do
   pushChanList PollJob
   queue <- asks sGrabQueue
-  pushAgent queue funcList ag
+  pushAgent queue nid msgid
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do
@@ -770,7 +773,7 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
           p <- asks sPersist
           sizeLocked <- countLock locked fn
           sizeAcquired <- countLock acquired fn
-          liftIO $ infoM "Peridic.Server.Scheduler"
+          liftIO $ infoM "Periodic.Server.Scheduler"
                  $ "LockInfo " ++ show fn
                  ++ " Locked:" ++ show sizeLocked
                  ++ " Acquired:" ++ show sizeAcquired

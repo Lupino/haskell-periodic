@@ -10,8 +10,8 @@ module Periodic.Types.Internal
   , validateNum
   , Nid (..)
   , Msgid (..)
-  , msgidLength
   ) where
+
 
 import           Data.Binary              (Binary (..))
 import           Data.Binary.Get          (getByteString, getWord8)
@@ -26,6 +26,7 @@ import qualified Data.Text                as T (unpack)
 import           Data.Text.Encoding       (decodeUtf8With)
 import           Data.Text.Encoding.Error (ignore)
 import qualified Data.Text.Lazy           as LT (Text, fromStrict)
+import           Data.Word                (Word32)
 
 class FromBS a where
   fromBS :: ByteString -> a
@@ -103,11 +104,8 @@ instance Validatable LockName where
 instance Validatable ConfigKey where
   validate (ConfigKey k) = validateLength "ConfigKey" 1 255 $ length k
 
-newtype Nid = Nid ByteString
+newtype Nid = Nid Word32
   deriving (Eq, Ord, Show)
 
-newtype Msgid = Msgid ByteString
+newtype Msgid = Msgid Word32
   deriving (Eq, Ord, Show)
-
-msgidLength :: Int
-msgidLength = 4

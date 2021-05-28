@@ -7,12 +7,12 @@ module Periodic.Server.Types
 
 import           Data.Binary                  (Binary (..), getWord8)
 import           Data.Binary.Get              (lookAhead)
-import           Data.IOMap                   (IOMap)
 import           Periodic.Node                (SessionEnv1)
 import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.ServerCommand (ServerCommand (..))
 import qualified Periodic.Types.WorkerCommand as WC
+import           UnliftIO                     (TVar)
 
 data Command = CC CC.ClientCommand
     | WC WC.WorkerCommand
@@ -49,8 +49,8 @@ instance Binary Command where
   put (WC cmd) = put cmd
 
 data ClientConfig = ClientConfig
-  { wFuncList :: IOMap FuncName ()
-  , wJobQueue :: IOMap JobHandle ()
+  { wFuncList :: TVar [FuncName]
+  , wJobQueue :: TVar [JobHandle]
   }
 
 type CSEnv = SessionEnv1 ClientConfig Command

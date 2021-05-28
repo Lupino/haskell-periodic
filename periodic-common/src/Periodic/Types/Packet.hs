@@ -22,6 +22,7 @@ import           Data.Binary.Get         (getByteString, getWord32be)
 import           Data.Binary.Put         (putByteString, putWord32be)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B (drop, empty, length)
+import           Data.ByteString.Builder (toLazyByteString, word32BE)
 import           Data.ByteString.Lazy    (fromStrict, toStrict)
 import           Metro.Class             (GetPacketId (..), RecvPacket (..),
                                           SendPacket (..), SetPacketId (..))
@@ -89,11 +90,12 @@ data Packet a = Packet
 instance Binary a => Binary (Packet a) where
   get = do
     (magic, crc) <- getHead
-    pid <- getByteString 4
+    pid <- getWord32be
     Packet magic crc (Msgid pid) <$> get
   put (Packet magic _ (Msgid pid) body) = do
     put magic
-    putBS $ pid <> toStrict (encode body)
+    putBS $ enc pid <> toStrict (encode body)
+    where enc = toStrict . toLazyByteString . word32BE
 
 commonRecvPacket f recv = do
     (_, magicbs) <- discoverMagic B.empty recv
@@ -128,10 +130,10 @@ getPacketMagic :: Packet a -> Magic
 getPacketMagic = packetMagic
 
 packetREQ :: a -> Packet a
-packetREQ = Packet REQ (CRC32 0) (Msgid "0000")
+packetREQ = Packet REQ (CRC32 0) (Msgid 0)
 
 packetRES :: a -> Packet a
-packetRES = Packet RES (CRC32 0) (Msgid "0000")
+packetRES = Packet RES (CRC32 0) (Msgid 0)
 
 getResult :: a -> (b -> a) -> Maybe (Packet b) -> a
 getResult defv _ Nothing  = defv

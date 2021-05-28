@@ -9,13 +9,14 @@ module Periodic.Server.Client
   , handleSessionT
   ) where
 
+
 import           Control.Monad                (unless, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (encode)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
 import           Data.Byteable                (toBytes)
-import qualified Data.IOMap                   as IOMap
+import           Data.List                    (delete)
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
 import qualified Metro.Conn                   as Conn
@@ -26,11 +27,10 @@ import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Types
 import qualified Periodic.Types.ClientCommand as CC
-import           Periodic.Types.Internal      (ConfigKey (..), Msgid (..))
+import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job           (getFuncName, initJob)
 import           Periodic.Types.Packet        (getPacketData, packetRES)
 import qualified Periodic.Types.WorkerCommand as WC
-import           Prelude                      hiding (elem)
 import           System.Log.Logger            (errorM)
 import           UnliftIO
 
@@ -90,36 +90,48 @@ handleWorkerSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
   => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
-  agent <- ident <$> getSessionEnv1
-  funcList <- IOMap.keys wFuncList
-  lift $ pushGrab funcList agent
+  !agent <- ident <$> getSessionEnv1
+  case agent of
+    (!nid, !msgid) -> lift $ pushGrab nid msgid
 
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w
-  IOMap.delete jh wJobQueue
+  atomically $ modifyTVar' wJobQueue (delete jh)
 handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
   lift $ failJob jh
-  IOMap.delete jh wJobQueue
+  atomically $ modifyTVar' wJobQueue (delete jh)
 handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
   lift $ schedLaterJob jh l s
-  IOMap.delete jh wJobQueue
+  atomically $ modifyTVar' wJobQueue (delete jh)
 handleWorkerSessionT ClientConfig {..} WC.Sleep = send $ packetRES Noop
 handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
-  has <- IOMap.member fn wFuncList
-  unless has $ do
-    lift $ addFunc fn
-    IOMap.insert fn () wFuncList
+  has <- atomically $ do
+    funcList <- readTVar wFuncList
+    if fn `elem` funcList
+       then pure True
+       else do
+         writeTVar wFuncList $! fn : funcList
+         pure False
+  unless has $ lift $ addFunc fn
 handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
-  has <- IOMap.member fn wFuncList
-  when has $ do
-    lift $ removeFunc fn
-    IOMap.delete fn wFuncList
+  has <- atomically $ do
+    funcList <- readTVar wFuncList
+    if fn `elem` funcList
+       then do
+         writeTVar wFuncList $! delete fn funcList
+         pure True
+       else pure False
+  when has $ lift $ removeFunc fn
 handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
-  has <- IOMap.member fn wFuncList
-  unless has $ do
-    lift $ broadcastFunc fn True
-    IOMap.insert fn () wFuncList
+  has <- atomically $ do
+    funcList <- readTVar wFuncList
+    if fn `elem` funcList
+       then pure True
+       else do
+         writeTVar wFuncList $! fn : funcList
+         pure False
+  unless has $ lift $ broadcastFunc fn True
 handleWorkerSessionT _ (WC.Acquire n c jh) = do
   r <- lift $ acquireLock n c jh
   send $ packetRES $ Acquired r
