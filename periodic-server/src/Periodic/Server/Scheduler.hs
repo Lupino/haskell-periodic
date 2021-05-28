@@ -315,7 +315,7 @@ pollJob_ taskList funcList = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
   jobs <- liftIO $
-    P.foldrPending p next funcList (foldFunc (maxBatchSize * 10) check now) IntMap.empty
+    P.foldrPending p next funcList (foldFunc (maxBatchSize * 2) check now) IntMap.empty
 
   mapM_ (checkJob taskList) jobs
 
