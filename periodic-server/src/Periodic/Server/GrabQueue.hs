@@ -3,7 +3,7 @@ module Periodic.Server.GrabQueue
   , newGrabQueue
   , pushAgent
   , popAgent
-  -- , popAgentList
+  , popAgentList
   ) where
 
 
@@ -47,3 +47,20 @@ popAgent (GrabQueue q) fn = atomically $ do
           funcList <- readTVar $ gFuncList x
           if fn `elem` funcList then pure (Just x, prev ++ xs)
                                 else lookupAndRemove (prev ++ [x]) xs
+
+popAgentList :: MonadIO m => GrabQueue -> FuncName -> m [(Nid, Msgid)]
+popAgentList (GrabQueue q) fn = atomically $ do
+  (agents, items) <- lookupAndRemove [] [] [] =<< readTVar q
+  writeTVar q $! items
+  return [(gNid item, gMsgid item) | item <- agents]
+
+  where lookupAndRemove
+          :: [Nid] -> [GrabItem]
+          -> [GrabItem] -> [GrabItem]
+          -> STM ([GrabItem], [GrabItem])
+        lookupAndRemove _ got prev [] = pure (got, prev)
+        lookupAndRemove nids got prev (x:xs) = do
+          funcList <- readTVar $ gFuncList x
+          if fn `elem` funcList && gNid x `notElem` nids
+             then lookupAndRemove (nids ++ [gNid x]) (got ++ [x]) prev xs
+             else lookupAndRemove nids got (prev ++ [x]) xs

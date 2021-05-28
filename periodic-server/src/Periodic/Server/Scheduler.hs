@@ -466,10 +466,9 @@ schedJob_ taskList job = do
         popAgentListThen :: (MonadUnliftIO m) => SchedT db m ()
         popAgentListThen = do
           SchedEnv{..} <- ask
-          error ""
-          -- agents <- popAgentList sGrabQueue fn
-          -- liftIO $ mapM_ (`sAssignJob` job) agents
-          -- unless (null agents) endSchedJob -- wait to resched the broadcast job
+          agents <- popAgentList sGrabQueue fn
+          liftIO $ mapM_ (\(nid, msgid) -> sAssignJob nid msgid job) agents
+          unless (null agents) endSchedJob -- wait to resched the broadcast job
 
         endSchedJob :: MonadIO m => SchedT db m ()
         endSchedJob = pushChanList (TryPoll jh)
