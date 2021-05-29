@@ -197,7 +197,7 @@ work size = do
         when (s >= size) retrySTM
 
       mapM_ (`runSessionT_` (send $ packetREQ GrabJob)) envs
-      threadDelay 10000000 -- 10s
+      threadDelay 300000000 -- 300s
 
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()
