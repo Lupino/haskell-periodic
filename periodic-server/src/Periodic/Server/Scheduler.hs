@@ -50,10 +50,10 @@ import           Data.IOMap                 (IOMap)
 import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
 import           Data.Int                   (Int64)
-import           Data.IntMap.Strict         (IntMap)
-import qualified Data.IntMap.Strict         as IntMap
 import qualified Data.List                  as L (delete)
 import           Data.Maybe                 (fromJust, fromMaybe, isJust)
+import           Data.SortedList            (SortedList)
+import qualified Data.SortedList            as SL
 import qualified Metro.Lock                 as L (Lock, new, with)
 import           Metro.Utils                (getEpochTime)
 import           Periodic.Server.FuncStat
@@ -316,6 +316,17 @@ pollJob taskList = do
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
         foldFunc (fn, _) acc                  = fn:acc
 
+data SortedJob = SortedJob Int Job
+
+getSortedJob :: SortedJob -> Job
+getSortedJob (SortedJob _ job) = job
+
+instance Eq SortedJob where
+  SortedJob a _ == SortedJob b _ = a == b
+
+instance Ord SortedJob where
+  compare (SortedJob a _) (SortedJob b _) = compare a b
+
 pollJob_
   :: (MonadUnliftIO m, Persist db)
   => TaskList -> [FuncName] -> SchedT db m ()
@@ -329,15 +340,15 @@ pollJob_ taskList funcList = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
   jobs <- liftIO $
-    P.foldrPending p next funcList (foldFunc (maxBatchSize * batchScale) check now) IntMap.empty
+    P.foldrPending p next funcList (foldFunc (maxBatchSize * batchScale) check now) $ SL.toSortedList []
 
-  mapM_ (checkJob taskList) jobs
+  mapM_ (checkJob taskList . getSortedJob) $ SL.fromSortedList jobs
 
-  where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> IntMap Job -> IntMap Job
-        foldFunc s f now job acc | f job = trimPSQ $ IntMap.insert (fromIntegral (now - getSchedAt job)) job acc
+  where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> SortedList SortedJob -> SortedList SortedJob
+        foldFunc s f now job acc | f job = trimPSQ $ SL.insert (SortedJob (fromIntegral (now - getSchedAt job)) job) acc
                                  | otherwise = acc
-          where trimPSQ ::  IntMap Job -> IntMap Job
-                trimPSQ q | IntMap.size q > s = trimPSQ $ IntMap.deleteMin q
+          where trimPSQ ::  SortedList SortedJob -> SortedList SortedJob
+                trimPSQ q | length (SL.fromSortedList q) > s = trimPSQ $ SL.drop 1 q
                           | otherwise = q
 
         checkJob

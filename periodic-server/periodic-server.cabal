@@ -49,6 +49,8 @@ library
                      , postgresql-simple
                      , base64-bytestring
                      , resource-pool
+
+                     , sorted-list
   default-language:    Haskell2010
 
 executable periodicd
