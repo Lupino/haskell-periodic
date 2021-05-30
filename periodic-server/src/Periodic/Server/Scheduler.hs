@@ -254,16 +254,16 @@ runChanJob taskList = do
       writeTVar cl []
       pure acts
 
-  mapM_ (doChanJob taskList) acts
+  mapM_ doChanJob acts
 
   where doChanJob
           :: (MonadUnliftIO m, Persist db)
-          => TaskList -> Action -> SchedT db m ()
-        doChanJob tl (Add job)    = reSchedJob tl job
-        doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
-        doChanJob tl Cancel       = mapM_ (cancel . snd) =<< IOMap.elems tl
-        doChanJob tl PollJob      = pollJob tl
-        doChanJob tl (Poll1 jh) = do
+          => Action -> SchedT db m ()
+        doChanJob (Add job)    = reSchedJob taskList job
+        doChanJob (Remove job) = findTask taskList job >>= mapM_ cancel
+        doChanJob Cancel       = mapM_ (cancel . snd) =<< IOMap.elems taskList
+        doChanJob PollJob      = pollJob taskList
+        doChanJob (Poll1 jh)   = do
           IOMap.delete jh taskList
           pollJob tl
 
@@ -384,7 +384,7 @@ reSchedJob taskList job = do
     r <- canRun $ getFuncName job
     c <- check taskList
     when (r && c) $ do
-      w' <- schedJob taskList job
+      w' <- schedJob job
       IOMap.insert (getHandle job) (getSchedAt job, w') taskList
   where check :: (MonadIO m) => TaskList -> SchedT db m Bool
         check tl = do
@@ -429,11 +429,11 @@ canRun_ stList fn = do
 
 schedJob
   :: (MonadUnliftIO m, Persist db)
-  => TaskList -> Job -> SchedT db m (Async ())
-schedJob taskList = async . schedJob_ taskList
+  => Job -> SchedT db m (Async ())
+schedJob = async . schedJob_
 
-schedJob_ :: (MonadUnliftIO m, Persist db) => TaskList -> Job -> SchedT db m ()
-schedJob_ taskList job = do
+schedJob_ :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+schedJob_ job = do
   SchedEnv{..} <- ask
   r <- canRun fn
   when r $ do
@@ -446,7 +446,7 @@ schedJob_ taskList job = do
         Just FuncStat{sWorker=0} -> retrySTM
         Just st'                 -> pure st'
     if sBroadcast then popAgentListThen
-                  else popAgentThen taskList
+                  else popAgentThen
 
   where fn = getFuncName job
         jn = getName job
@@ -454,8 +454,8 @@ schedJob_ taskList job = do
         jh = getHandle job
 
         popAgentThen
-          :: (MonadUnliftIO m, Persist db) => TaskList -> SchedT db m ()
-        popAgentThen tl = do
+          :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+        popAgentThen = do
           SchedEnv{..} <- ask
           (nid, msgid) <- liftIO $ popAgent sGrabQueue fn
           nextSchedAt <- getEpochTime
@@ -464,7 +464,7 @@ schedJob_ taskList job = do
           if r then endSchedJob
                else do
                  liftIO $ P.insert sPersist Pending fn jn $ setSchedAt nextSchedAt job
-                 schedJob_ tl job
+                 schedJob_ job
 
         popAgentListThen :: (MonadUnliftIO m) => SchedT db m ()
         popAgentListThen = do
