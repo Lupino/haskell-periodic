@@ -71,7 +71,7 @@ data Action = Add Job
     | Remove Job
     | Cancel
     | PollJob
-    | TryPoll JobHandle
+    | Poll1 JobHandle
 
 data WaitItem = WaitItem
     { itemTs    :: Int64
@@ -260,7 +260,7 @@ runChanJob taskList = do
         doChanJob tl (Remove job) = findTask tl job >>= mapM_ cancel
         doChanJob tl Cancel       = mapM_ (cancel . snd) =<< IOMap.elems tl
         doChanJob tl PollJob      = pollJob tl
-        doChanJob tl (TryPoll jh) = do
+        doChanJob tl (Poll1 jh) = do
           IOMap.delete jh taskList
           pollJob tl
 
@@ -471,7 +471,7 @@ schedJob_ taskList job = do
           unless (null agents) endSchedJob -- wait to resched the broadcast job
 
         endSchedJob :: MonadIO m => SchedT db m ()
-        endSchedJob = pushChanList (TryPoll jh)
+        endSchedJob = pushChanList (Poll1 jh)
 
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
 adjustFuncStat fn = do
