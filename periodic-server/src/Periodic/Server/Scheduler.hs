@@ -568,7 +568,6 @@ dropFunc n = do
 
 pushGrab :: MonadIO m => TVar [FuncName] -> Nid -> Msgid -> SchedT db m ()
 pushGrab funcList nid msgid = do
-  pushChanList PollJob
   queue <- asks sGrabQueue
   pushAgent queue funcList nid msgid
 
