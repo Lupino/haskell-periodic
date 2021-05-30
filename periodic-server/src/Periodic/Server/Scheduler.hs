@@ -262,32 +262,21 @@ runChanJob taskList = do
         doChanJob (Add job)    = reSchedJob taskList job
         doChanJob (Remove job) = findTask taskList job >>= mapM_ cancel
         doChanJob Cancel       = mapM_ (cancel . snd) =<< IOMap.elems taskList
-        doChanJob PollJob      = pollJob taskList
-        doChanJob (Poll1 jh)   = do
-          IOMap.delete jh taskList
-          pollJob tl
+        doChanJob PollJob      = pollJob0 taskList
+        doChanJob (Poll1 jh)   = pollJob1 taskList jh
 
 
 pollInterval :: (MonadIO m, Num a) => SchedT db m a
 pollInterval = fmap fromIntegral . readTVarIO =<< asks sPollInterval
 
-pollJob
+pollJob0
   :: (MonadUnliftIO m, Persist db)
   => TaskList -> SchedT db m ()
-pollJob taskList = do
+pollJob0 taskList = do
   mapM_ checkPoll =<< IOMap.toList taskList
-  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-  size <- IOMap.size taskList
-  when (size < maxBatchSize) $ do
-    stList <- asks sFuncStatList
-    funcList <- foldr foldFunc [] <$> IOMap.toList stList
-    pollJob_ taskList funcList
+  pollJob taskList
 
-  where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
-        foldFunc (_, FuncStat{sWorker=0}) acc = acc
-        foldFunc (fn, _) acc                  = fn:acc
-
-        checkPoll
+  where checkPoll
           :: (MonadIO m)
           => (JobHandle, (Int64, Async ())) -> SchedT db m ()
         checkPoll (jh, (_, w)) = do
@@ -304,6 +293,28 @@ pollJob taskList = do
               unless r0 $ cancel w
 
           where (fn, _) = unHandle jh
+
+pollJob1
+  :: (MonadUnliftIO m, Persist db)
+  => TaskList -> JobHandle -> SchedT db m ()
+pollJob1 taskList jh = do
+  IOMap.delete jh taskList
+  pollJob taskList
+
+pollJob
+  :: (MonadUnliftIO m, Persist db)
+  => TaskList -> SchedT db m ()
+pollJob taskList = do
+  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+  size <- IOMap.size taskList
+  when (size < maxBatchSize) $ do
+    stList <- asks sFuncStatList
+    funcList <- foldr foldFunc [] <$> IOMap.toList stList
+    pollJob_ taskList funcList
+
+  where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
+        foldFunc (_, FuncStat{sWorker=0}) acc = acc
+        foldFunc (fn, _) acc                  = fn:acc
 
 pollJob_
   :: (MonadUnliftIO m, Persist db)
