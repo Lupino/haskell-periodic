@@ -94,6 +94,9 @@ data LockInfo = LockInfo
 
 type LockList = IOMap LockName LockInfo
 
+batchScale :: Int
+batchScale = 10
+
 data SchedEnv db = SchedEnv
     { sPollInterval   :: TVar Int -- main poll loop every time interval
     -- revert process queue loop every time interval
@@ -315,7 +318,7 @@ pollJob_ taskList funcList = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
   jobs <- liftIO $
-    P.foldrPending p next funcList (foldFunc (maxBatchSize * 2) check now) IntMap.empty
+    P.foldrPending p next funcList (foldFunc (maxBatchSize * batchScale) check now) IntMap.empty
 
   mapM_ (checkJob taskList) jobs
 
@@ -387,7 +390,7 @@ reSchedJob taskList job = do
         check tl = do
           maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
           size <- IOMap.size tl
-          if size < maxBatchSize * 2 then return True
+          if size < maxBatchSize * batchScale then return True
           else do
             lastTask <- findLastTask tl
             case lastTask of
