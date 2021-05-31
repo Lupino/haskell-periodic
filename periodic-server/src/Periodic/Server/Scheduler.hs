@@ -270,8 +270,6 @@ cancelWaitJob taskList jh w = do
   cancel w
   IOMap.delete jh taskList
 
-pollInterval :: (MonadIO m, Num a) => SchedT db m a
-pollInterval = fmap fromIntegral . readTVarIO =<< asks sPollInterval
 
 pollJob0
   :: (MonadUnliftIO m, Persist db)
@@ -316,6 +314,12 @@ pollJob taskList = do
     funcList <- foldr foldFunc [] <$> IOMap.toList stList
     pollJob_ taskList funcList
 
+getNextPoll :: MonadIO m => SchedT db m Int64
+getNextPoll = do
+  now <- getEpochTime
+  pollInterval <- asks sPollInterval
+  (+ (100 + now)) . fromIntegral <$> readTVarIO pollInterval
+
   where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
         foldFunc (fn, _) acc                  = fn:acc
@@ -336,8 +340,7 @@ pollJob_
   => TaskList -> [FuncName] -> SchedT db m ()
 pollJob_ _ [] = pure ()
 pollJob_ taskList funcList = do
-  now <- getEpochTime
-  next <- (+ (100 + now)) <$> pollInterval
+  next <- getNextPoll
   handles <- IOMap.keys taskList
   let check job = notElem (getHandle job) handles && (getSchedAt job < next)
 
@@ -405,8 +408,7 @@ reSchedJob taskList job = do
   w <- findTask taskList job
   forM_ w (cancelWaitJob taskList (getHandle job))
 
-  interval <- (+100) <$> pollInterval
-  next <- (+ interval) <$> getEpochTime
+  next <- getNextPoll
   when (getSchedAt job < next) $ do
     r <- canRun $ getFuncName job
     c <- check taskList
