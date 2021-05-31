@@ -276,7 +276,9 @@ pollJob0
   => TaskList -> SchedT db m ()
 pollJob0 taskList = do
   mapM_ checkPoll =<< IOMap.toList taskList
-  pollJob taskList
+  funcList <- getAvaliableFuncList
+  next <- getNextPoll
+  pollJob_ taskList funcList next
 
   where checkPoll
           :: (MonadIO m)
@@ -301,24 +303,23 @@ pollJob1
   => TaskList -> JobHandle -> SchedT db m ()
 pollJob1 taskList jh = do
   IOMap.delete jh taskList
-  pollJob taskList
-
-pollJob
-  :: (MonadUnliftIO m, Persist db)
-  => TaskList -> SchedT db m ()
-pollJob taskList = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   size <- IOMap.size taskList
   when (size < maxBatchSize) $ do
-    stList <- asks sFuncStatList
-    funcList <- foldr foldFunc [] <$> IOMap.toList stList
-    pollJob_ taskList funcList
+    funcList <- getAvaliableFuncList
+    next <- getNextPoll
+    pollJob_ taskList funcList next
 
 getNextPoll :: MonadIO m => SchedT db m Int64
 getNextPoll = do
   now <- getEpochTime
   pollInterval <- asks sPollInterval
   (+ (100 + now)) . fromIntegral <$> readTVarIO pollInterval
+
+getAvaliableFuncList :: MonadIO m => SchedT db m [FuncName]
+getAvaliableFuncList = do
+  stList <- asks sFuncStatList
+  foldr foldFunc [] <$> IOMap.toList stList
 
   where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
@@ -337,23 +338,23 @@ instance Ord SortedJob where
 
 pollJob_
   :: (MonadUnliftIO m, Persist db)
-  => TaskList -> [FuncName] -> SchedT db m ()
-pollJob_ _ [] = pure ()
-pollJob_ taskList funcList = do
-  next <- getNextPoll
+  => TaskList -> [FuncName] -> Int64 -> SchedT db m ()
+pollJob_ _ [] _ = pure ()
+pollJob_ taskList funcList next = do
   handles <- IOMap.keys taskList
   let check job = notElem (getHandle job) handles && (getSchedAt job < next)
 
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
   jobs <- liftIO $
-    P.foldrPending p next funcList (foldFunc (maxBatchSize * batchScale) check now) $ SL.toSortedList []
+    P.foldrPending p next funcList (foldFunc (maxBatchSize * batchScale) check) $ SL.toSortedList []
 
   mapM_ (checkJob taskList . getSortedJob) $ SL.fromSortedList jobs
 
-  where foldFunc :: Int -> (Job -> Bool) -> Int64 -> Job -> SortedList SortedJob -> SortedList SortedJob
-        foldFunc s f now job acc | f job = trimPSQ $ SL.insert (SortedJob (fromIntegral (now - getSchedAt job)) job) acc
-                                 | otherwise = acc
+  where foldFunc :: Int -> (Job -> Bool) -> Job -> SortedList SortedJob -> SortedList SortedJob
+        foldFunc s f job acc
+          | f job = trimPSQ $ SL.insert (SortedJob (fromIntegral (next - getSchedAt job)) job) acc
+          | otherwise = acc
           where trimPSQ ::  SortedList SortedJob -> SortedList SortedJob
                 trimPSQ q | length (SL.fromSortedList q) > s = trimPSQ $ SL.drop 1 q
                           | otherwise = q
