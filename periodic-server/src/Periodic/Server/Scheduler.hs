@@ -308,7 +308,9 @@ pollJob1 taskList jh = do
   when (size < maxBatchSize) $ do
     funcList <- getAvaliableFuncList
     next <- getNextPoll
-    pollJob_ taskList funcList next
+    p <- asks sPersist
+    count <- liftIO $ P.countPending p next funcList
+    when (count > size) $ pollJob_ taskList funcList next
 
 getNextPoll :: MonadIO m => SchedT db m Int64
 getNextPoll = do

@@ -71,6 +71,7 @@ instance Persist PSQL where
   removeFuncName (PSQL pool) = doRemoveFuncName pool
   funcList       (PSQL pool) = doFuncList pool
   minSchedAt     (PSQL pool) = doMinSchedAt pool Pending
+  countPending   (PSQL pool) = doCountPending pool
 
 instance Exception (PersistException PSQL)
 
@@ -273,6 +274,19 @@ doFoldrLocking pool limit fn f acc = withResource pool $ \conn ->
   fold conn sql (unFN fn, stateName Locking, limit) acc (mkFoldFunc f)
   where sql = fromString $ "SELECT value FROM " ++ getTableName jobs
                 ++ " WHERE func=? AND state=? ORDER BY sched_at ASC LIMIT ?"
+
+doCountPending :: Pool Connection -> Int64 -> [FuncName] -> IO Int
+doCountPending pool ts fns = withResource pool $ \conn ->
+  F.foldrM (foldFunc conn) 0 fns
+
+  where sql = fromString $ "SELECT count(*) FROM "
+                ++ getTableName jobs ++ " WHERE func=? AND state=? AND sched_at < ?"
+        foldFunc :: Connection -> FuncName -> Int -> IO Int
+        foldFunc conn fn acc = do
+          ret <- query conn sql (unFN fn, stateName Pending, ts)
+          case ret of
+            [Only c] -> pure $ acc + c
+            _        -> pure acc
 
 doDumpJob :: Pool Connection -> IO [Job]
 doDumpJob pool = withResource pool $ \conn ->

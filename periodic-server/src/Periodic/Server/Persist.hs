@@ -37,3 +37,4 @@ class (Exception (PersistException db)) => Persist db where
   removeFuncName :: db -> FuncName -> IO ()
   funcList       :: db -> IO [FuncName]
   minSchedAt     :: db -> FuncName -> IO Int64
+  countPending   :: forall a . db -> Int64 -> [FuncName] -> IO Int

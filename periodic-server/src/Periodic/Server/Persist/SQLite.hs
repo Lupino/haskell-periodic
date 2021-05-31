@@ -71,6 +71,7 @@ instance Persist SQLite where
   removeFuncName (SQLite db) = doRemoveFuncName db
   funcList       (SQLite db) = doFuncList db
   minSchedAt     (SQLite db) = doMinSchedAt db Pending
+  countPending   (SQLite db) = doCountPending db
 
 instance Exception (PersistException SQLite)
 
@@ -159,6 +160,17 @@ doFoldrLocking db limit fn f = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f)
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
                    <> stateName Locking
                    <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)
+
+doCountPending :: Database -> Int64 -> [FuncName] -> IO Int
+doCountPending db ts fns = F.foldrM foldFunc 0 fns
+  where sql = Utf8 $ "SELECT count(*) FROM jobs WHERE func=? AND state="
+                   <> stateName Pending
+                   <> " AND sched_at<"
+                   <> B.pack (show ts)
+
+        foldFunc :: FuncName -> Int -> IO Int
+        foldFunc fn acc =
+          (acc +) . fromIntegral <$> queryStmt db sql (`bindFN` fn) stepInt64
 
 doDumpJob :: Database -> IO [Job]
 doDumpJob db = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []

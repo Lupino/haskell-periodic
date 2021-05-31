@@ -64,6 +64,7 @@ instance Persist Memory where
   removeFuncName = doRemoveFuncName
   funcList       = doFuncList
   minSchedAt     = doMinSchedAt
+  countPending   = doCountPending
 
 instance Exception (PersistException Memory)
 
@@ -138,6 +139,18 @@ doFoldrPending m st fns f acc =
 doFoldrLocking :: forall a . Memory -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
 doFoldrLocking m _ fn f acc =
   maybe acc (HM.foldr f acc) <$> getJobMap1 m Locking fn
+
+doCountPending :: Memory -> Int64 -> [FuncName] -> IO Int
+doCountPending m st fns =
+  IOMap.foldrWithKey foldFunc 0 (pending m)
+
+  where foldFunc :: FuncName -> Map JobName Job -> Int -> Int
+        foldFunc fn h acc | fn `elem` fns = HM.foldr foldFunc1 acc h
+                          | otherwise = acc
+
+        foldFunc1 :: Job -> Int -> Int
+        foldFunc1 job acc | getSchedAt job < st = acc + 1
+                          | otherwise = acc
 
 
 doDumpJob :: Memory -> IO [Job]

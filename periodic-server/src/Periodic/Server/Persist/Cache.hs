@@ -50,6 +50,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    removeFuncName m = removeFuncName (backend m)
    funcList       m = funcList (backend m)
    minSchedAt       = doMinSchedAt
+   countPending     = doCountPending
 
 instance Typeable db => Exception (PersistException (Cache db))
 
@@ -113,6 +114,15 @@ doFoldrLocking
   => Cache db -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
 doFoldrLocking m c fn f acc =
   foldrLocking (backend m) c fn f =<< foldrLocking (memory m) c fn f acc
+
+doCountPending
+  :: forall a db
+  . Persist db
+  => Cache db -> Int64 -> [FuncName] -> IO Int
+doCountPending m st fns = do
+  c1 <- countPending (backend m) st fns
+  c2 <- countPending (memory m) st fns
+  return $ c1 + c2
 
 doDumpJob :: Persist db => Cache db -> IO [Job]
 doDumpJob m = do
