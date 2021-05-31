@@ -260,11 +260,15 @@ runChanJob taskList = do
           :: (MonadUnliftIO m, Persist db)
           => Action -> SchedT db m ()
         doChanJob (Add job)    = reSchedJob taskList job
-        doChanJob (Remove job) = findTask taskList job >>= mapM_ cancel
+        doChanJob (Remove job) = findTask taskList job >>= mapM_ (cancelWaitJob taskList (getHandle job))
         doChanJob Cancel       = mapM_ (cancel . snd) =<< IOMap.elems taskList
         doChanJob PollJob      = pollJob0 taskList
         doChanJob (Poll1 jh)   = pollJob1 taskList jh
 
+cancelWaitJob :: MonadIO m => TaskList -> JobHandle -> Async () -> m ()
+cancelWaitJob taskList jh w = do
+  cancel w
+  IOMap.delete jh taskList
 
 pollInterval :: (MonadIO m, Num a) => SchedT db m a
 pollInterval = fmap fromIntegral . readTVarIO =<< asks sPollInterval
@@ -290,7 +294,7 @@ pollJob0 taskList = do
                 ee -> liftIO $ errorM "Periodic.Server.Scheduler" ("Poll error: " ++ ee)
             Nothing -> do
               r0 <- canRun fn
-              unless r0 $ cancel w
+              unless r0 $ cancelWaitJob taskList jh w
 
           where (fn, _) = unHandle jh
 
@@ -363,7 +367,8 @@ pollJob_ taskList funcList = do
               unless isProc $ reSchedJob tl job
             Just w0 -> do
               r <- canRun fn
-              unless r $ cancel w0
+              unless r $ cancelWaitJob taskList (getHandle job) w0
+
           where fn = getFuncName job
                 jn = getName job
 
@@ -398,7 +403,7 @@ fixedSchedAt job = do
 reSchedJob :: (MonadUnliftIO m, Persist db) => TaskList -> Job -> SchedT db m ()
 reSchedJob taskList job = do
   w <- findTask taskList job
-  forM_ w cancel
+  forM_ w (cancelWaitJob taskList (getHandle job))
 
   interval <- (+100) <$> pollInterval
   next <- (+ interval) <$> getEpochTime
@@ -420,8 +425,7 @@ reSchedJob taskList job = do
               Just (sc, jh, w) ->
                 if sc < getSchedAt job then return False
                 else do
-                  cancel w
-                  IOMap.delete jh taskList
+                  cancelWaitJob taskList jh w
                   return True
 
 findTask :: MonadIO m => TaskList -> Job -> SchedT db m (Maybe (Async ()))
