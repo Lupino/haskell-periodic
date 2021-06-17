@@ -27,6 +27,7 @@ import           Control.Monad                (forever, replicateM, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
+import           Data.Binary                  (Binary)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString.Lazy         (fromStrict)
 import           Data.IOMap                   (IOMap)
@@ -34,8 +35,8 @@ import qualified Data.IOMap                   as Map (delete, empty, insert,
                                                       lookup)
 import qualified Data.IOMap.STM               as MapS (modifyIOMap, toList)
 import qualified Data.Map.Strict              as RMap (empty)
-import           Metro.Class                  (Transport, TransportConfig,
-                                               getPacketId)
+import           Metro.Class                  (RecvPacket (..), Transport,
+                                               TransportConfig, getPacketId)
 import           Metro.Conn                   (initConnEnv, runConnT)
 import qualified Metro.Conn                   as Conn
 import           Metro.Node                   (NodeMode (..), SessionMode (..),
@@ -52,7 +53,8 @@ import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
 import           Periodic.Trans.Job           (JobT, func_, name, workFail)
 import           Periodic.Types               (ClientType (TypeWorker), Msgid,
                                                Packet, getClientType, getResult,
-                                               packetREQ, regPacketREQ)
+                                               packetREQ, recvRawPacket,
+                                               regPacketREQ)
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 import           Periodic.Types.WorkerCommand
@@ -63,6 +65,9 @@ import           UnliftIO.Concurrent          (threadDelay)
 type TaskList tp m = IOMap FuncName (JobT tp m ())
 
 type JobList = IOMap (Msgid, JobHandle) Job
+
+instance (Binary a) => RecvPacket (Maybe Job) (Packet a) where
+  recvPacket _ = recvRawPacket
 
 data WorkerEnv tp m = WorkerEnv
     { taskList :: TaskList tp m
@@ -98,7 +103,7 @@ startWorkerT config m = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
     Conn.send $ regPacketREQ TypeWorker
-    Conn.receive
+    Conn.receive_
 
   let nid = case getClientType r of
               Data v -> runGet getWord32be $ fromStrict v

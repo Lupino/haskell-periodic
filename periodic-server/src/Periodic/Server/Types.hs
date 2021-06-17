@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Periodic.Server.Types
   ( Command (..)
   , ClientConfig (..)
@@ -7,9 +9,11 @@ module Periodic.Server.Types
 
 import           Data.Binary                  (Binary (..), getWord8)
 import           Data.Binary.Get              (lookAhead)
+import           Metro.Class                  (RecvPacket (..))
 import           Periodic.Node                (SessionEnv1)
 import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Job           (FuncName, JobHandle)
+import           Periodic.Types.Packet        (Packet, recvRawPacket)
 import           Periodic.Types.ServerCommand (ServerCommand (..))
 import qualified Periodic.Types.WorkerCommand as WC
 import           UnliftIO                     (TVar)
@@ -54,3 +58,6 @@ data ClientConfig = ClientConfig
   }
 
 type CSEnv = SessionEnv1 ClientConfig Command
+
+instance (Binary a) => RecvPacket ClientConfig (Packet a) where
+  recvPacket _ = recvRawPacket

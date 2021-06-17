@@ -61,7 +61,7 @@ open config = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
     Conn.send $ regPacketREQ TypeClient
-    Conn.receive
+    Conn.receive_
 
   let nid = case getClientType r of
               Data v -> runGet getWord32be $ fromStrict v

@@ -14,7 +14,7 @@ import           Metro.Class                  (Servable (STP),
                                                Transport (TransportConfig),
                                                setPacketId)
 import qualified Metro.Class                  as S (Servable (ServerConfig))
-import           Metro.Conn                   (receive, runConnT, send)
+import           Metro.Conn                   (receive_, runConnT, send)
 import           Metro.Node                   (NodeEnv1 (..), env, runNodeT1)
 import           Metro.Server                 (getNodeEnvList, initServerEnv,
                                                runServerT,
@@ -72,7 +72,7 @@ startServer
   -> m ()
 startServer dbconfig mk config = do
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv0 -> do
-    (_ :: ClientType) <- getClientType <$> runConnT connEnv0 receive
+    (_ :: ClientType) <- getClientType <$> runConnT connEnv0 receive_
     nid <- getEntropy 4
     runConnT connEnv0 $ send (regPacketRES $ Data nid)
     wFuncList <- newTVarIO []

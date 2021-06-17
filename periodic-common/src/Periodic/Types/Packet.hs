@@ -9,11 +9,13 @@ module Periodic.Types.Packet
   , packetREQ
   , packetRES
   , getResult
+  , recvRawPacket
 
   , RegPacket
   , regPacketREQ
   , regPacketRES
   , getClientType
+  , recvRegPacket
   ) where
 
 import           Data.Binary             (Binary (..), decode, decodeOrFail,
@@ -29,7 +31,7 @@ import           Metro.Class             (GetPacketId (..), RecvPacket (..),
 import           Periodic.CRC32          (CRC32 (..), digest)
 import           Periodic.Types.Error    (Error (..))
 import           Periodic.Types.Internal (Msgid (..))
-import           UnliftIO                (throwIO)
+import           UnliftIO                (MonadIO, throwIO)
 
 data Magic = REQ
     | RES
@@ -97,6 +99,7 @@ instance Binary a => Binary (Packet a) where
     putBS $ enc pid <> toStrict (encode body)
     where enc = toStrict . toLazyByteString . word32BE
 
+commonRecvPacket :: (MonadIO m, Binary pkt) => (pkt -> CRC32) -> (Int -> m ByteString) -> m pkt
 commonRecvPacket f recv = do
     (_, magicbs) <- discoverMagic B.empty recv
     hbs <- recv 4
@@ -110,8 +113,11 @@ commonRecvPacket f recv = do
             if digest bs == f pkt then return pkt
                                   else throwIO CRCNotMatch
 
-instance Binary a => RecvPacket (Packet a) where
-  recvPacket = commonRecvPacket packetCRC
+recvRawPacket :: (MonadIO m, Binary a) => (Int -> m ByteString) -> m (Packet a)
+recvRawPacket = commonRecvPacket packetCRC
+
+instance Binary a => RecvPacket () (Packet a) where
+  recvPacket _ = recvRawPacket
 
 instance Binary a => SendPacket (Packet a) where
 
@@ -154,8 +160,11 @@ instance Binary a => Binary (RegPacket a) where
     put magic
     putBS $ toStrict (encode body)
 
-instance Binary a => RecvPacket (RegPacket a) where
-  recvPacket = commonRecvPacket regCRC
+recvRegPacket :: (MonadIO m, Binary a) => (Int -> m ByteString) -> m (RegPacket a)
+recvRegPacket = commonRecvPacket regCRC
+
+instance Binary a => RecvPacket () (RegPacket a) where
+  recvPacket _ = recvRegPacket
 
 instance Binary a => SendPacket (RegPacket a) where
 
