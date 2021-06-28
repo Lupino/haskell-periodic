@@ -27,8 +27,10 @@ in pkgs.haskell-nix.project {
     };
     # Specify the GHC version to use.
     compiler-nix-name = "ghc8105"; # Not required for `stack.yaml` based projects.
+    projectFileName = "cabal.project";
     modules = [(
        {pkgs, ...}: {
+         packages.periodic-server.configureFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isMusl [
          packages.periodic-server.configureFlags = [
            "--ghc-option=-optl=-lssl"
            "--ghc-option=-optl=-lcrypto"
