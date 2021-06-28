@@ -1,37 +1,38 @@
-{ compiler ? "ghc8104" }:
-
 let
-  # overlays define packages we need to build our project
-  pkgs = import <nixpkgs> {};
-  gitIgnore = pkgs.nix-gitignore.gitignoreSourcePure;
-  allOverlays = import nix/overlays;
-  extraOverrides = final: prev:
-    rec {
-      periodic-common = prev.callCabal2nix "periodic-common" (gitIgnore [./.gitignore] ./periodic-common) {};
-      periodic-server = prev.callCabal2nix "periodic-server" (gitIgnore [./.gitignore] ./periodic-server) {};
-      periodic-client = prev.callCabal2nix "periodic-client" (gitIgnore [./.gitignore] ./periodic-client) {};
-      periodic-client-exe = prev.callCabal2nix "periodic-client-exe" (gitIgnore [./.gitignore] ./periodic-client-exe) {};
+  # Read in the Niv sources
+  sources = import ./nix/sources.nix {};
+  # If ./nix/sources.nix file is not found run:
+  #   niv init
+  #   niv add input-output-hk/haskell.nix -n haskellNix
+
+  # Fetch the haskell.nix commit we have pinned with Niv
+  haskellNix = import sources.haskellNix { };
+  # If haskellNix is not found run:
+  #   niv add input-output-hk/haskell.nix -n haskellNix
+
+  # Import nixpkgs and pass the haskell.nix provided nixpkgsArgs
+  pkgs = import
+    # haskell.nix provides access to the nixpkgs pins which are used by our CI,
+    # hence you will be more likely to get cache hits when using these.
+    # But you can also just use your own, e.g. '<nixpkgs>'.
+    sources.nixpkgs
+    # These arguments passed to nixpkgs, include some patches and also
+    # the haskell.nix functionality itself as an overlay.
+    haskellNix.nixpkgsArgs;
+in pkgs.haskell-nix.project {
+    # 'cleanGit' cleans a source directory based on the files known by git
+    src = pkgs.haskell-nix.haskellLib.cleanGit {
+      src = ./.;
+      name = "haskell-periodic";
     };
-  overlays = [
-    allOverlays.gitignore # helper to use gitignoreSource
-    (allOverlays.haskell-packages { inherit compiler extraOverrides; })
-  ];
-
-  normalPkgs = import <nixpkgs> {inherit overlays;};
-
-  haskellPackages = if compiler == "default"
-                       then normalPkgs.haskellPackages
-                       else normalPkgs.haskell.packages.${compiler};
-
-
-in {
-  inherit normalPkgs;
-  periodic-server = haskellPackages.periodic-server;
-  periodic-client-exe = haskellPackages.periodic-client-exe;
-  shell = haskellPackages.shellFor {
-    packages = p: [p.periodic-client-exe p.periodic-server];
-    buildInputs = with normalPkgs; [
-      haskellPackages.cabal-install
-    ];
-  };
-}
+    # Specify the GHC version to use.
+    compiler-nix-name = "ghc8105"; # Not required for `stack.yaml` based projects.
+    modules = [(
+       {pkgs, ...}: {
+         packages.periodic-server.configureFlags = [
+           "--ghc-option=-optl=-lssl"
+           "--ghc-option=-optl=-lcrypto"
+           "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
+         ];
+      })];
+  }
