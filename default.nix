@@ -31,7 +31,6 @@ in pkgs.haskell-nix.project {
     modules = [(
        {pkgs, ...}: {
          packages.periodic-server.configureFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isMusl [
-         packages.periodic-server.configureFlags = [
            "--ghc-option=-optl=-lssl"
            "--ghc-option=-optl=-lcrypto"
            "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
