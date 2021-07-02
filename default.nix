@@ -1,3 +1,4 @@
+{ compiler-nix-name ? "ghc8105" }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -25,12 +26,12 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    # Specify the GHC version to use.
     index-state = "2021-06-30T00:00:00Z";
     index-sha256 = "0f6213f13984148dbf6ad865576e3a9ebb330751b30b49a7f6e02697865cbb01";
-    plan-sha256 = "0lc2ypkkzwc6nf0s8zpgxz9zn8wdmnww3q8rp1h5zak9q2yxk8sb";
-    materialized = ./.materialized;
-    compiler-nix-name = "ghc8105"; # Not required for `stack.yaml` based projects.
+    plan-sha256 = if compiler-nix-name == "ghc8105" then "0lc2ypkkzwc6nf0s8zpgxz9zn8wdmnww3q8rp1h5zak9q2yxk8sb" else null;
+    materialized = if compiler-nix-name == "ghc8105" then ./periodic.materialized else null;
+    # Specify the GHC version to use.
+    compiler-nix-name = compiler-nix-name;
     modules = [(
        {pkgs, ...}: {
          packages.periodic-server.configureFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isMusl [
