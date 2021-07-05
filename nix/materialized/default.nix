@@ -15,7 +15,7 @@
         "bifunctors".flags.tagged = true;
         "bifunctors".flags.semigroups = true;
         "ghc-prim".revision = (((hackage."ghc-prim")."0.6.1").revisions).default;
-        "warp".revision = (((hackage."warp")."3.3.17").revisions).default;
+        "warp".revision = (((hackage."warp")."3.3.16").revisions).default;
         "warp".flags.network-bytestring = false;
         "warp".flags.allow-sendfilefd = true;
         "warp".flags.warp-debug = false;
@@ -28,7 +28,7 @@
         "unliftio-core".revision = (((hackage."unliftio-core")."0.2.0.1").revisions).default;
         "exceptions".revision = (((hackage."exceptions")."0.10.4").revisions).default;
         "sorted-list".revision = (((hackage."sorted-list")."0.2.1.0").revisions).default;
-        "time-compat".revision = (((hackage."time-compat")."1.9.6").revisions).default;
+        "time-compat".revision = (((hackage."time-compat")."1.9.5").revisions).default;
         "time-compat".flags.old-locale = false;
         "cereal".revision = (((hackage."cereal")."0.5.8.1").revisions).default;
         "cereal".flags.bytestring-builder = false;
@@ -36,7 +36,7 @@
         "integer-gmp".revision = (((hackage."integer-gmp")."1.0.3.0").revisions).default;
         "psqueues".revision = (((hackage."psqueues")."0.2.7.2").revisions).default;
         "fast-logger".revision = (((hackage."fast-logger")."3.0.5").revisions).default;
-        "call-stack".revision = (((hackage."call-stack")."0.4.0").revisions).default;
+        "call-stack".revision = (((hackage."call-stack")."0.3.0").revisions).default;
         "simple-sendfile".revision = (((hackage."simple-sendfile")."0.2.30").revisions).default;
         "simple-sendfile".flags.allow-bsd = true;
         "template-haskell".revision = (((hackage."template-haskell")."2.16.0.0").revisions).default;
@@ -49,8 +49,7 @@
         "vector".flags.boundschecks = true;
         "vector".flags.wall = false;
         "word8".revision = (((hackage."word8")."0.1.3").revisions).default;
-        "network".revision = (((hackage."network")."3.1.2.2").revisions).default;
-        "network".flags.devel = false;
+        "network".revision = (((hackage."network")."3.1.1.1").revisions).default;
         "HUnit".revision = (((hackage."HUnit")."1.6.2.0").revisions).default;
         "http-types".revision = (((hackage."http-types")."0.12.3").revisions).default;
         "direct-sqlite".revision = (((hackage."direct-sqlite")."2.3.26").revisions).default;
@@ -137,10 +136,10 @@
         "transformers-compat".flags.five = false;
         "transformers-compat".flags.four = false;
         "transformers-compat".flags.generic-deriving = true;
-        "transformers-compat".flags.five-three = false;
+        "transformers-compat".flags.five-three = true;
         "transformers-compat".flags.three = false;
         "transformers-compat".flags.mtl = true;
-        "memory".revision = (((hackage."memory")."0.16.0").revisions).default;
+        "memory".revision = (((hackage."memory")."0.15.0").revisions).default;
         "memory".flags.support_basement = true;
         "memory".flags.support_bytestring = true;
         "memory".flags.support_foundation = true;
@@ -182,7 +181,7 @@
         "strict".revision = (((hackage."strict")."0.4.0.1").revisions).default;
         "strict".flags.assoc = true;
         "byteable".revision = (((hackage."byteable")."0.1.1").revisions).default;
-        "attoparsec".revision = (((hackage."attoparsec")."0.14.1").revisions).default;
+        "attoparsec".revision = (((hackage."attoparsec")."0.13.2.5").revisions).default;
         "attoparsec".flags.developer = false;
         "transformers".revision = (((hackage."transformers")."0.5.6.2").revisions).default;
         "nats".revision = (((hackage."nats")."1.1.2").revisions).default;
@@ -190,10 +189,12 @@
         "nats".flags.template-haskell = true;
         "nats".flags.hashable = true;
         "pem".revision = (((hackage."pem")."0.2.4").revisions).default;
-        "colour".revision = (((hackage."colour")."2.3.6").revisions).default;
-        "hashable".revision = (((hackage."hashable")."1.3.2.0").revisions).default;
+        "colour".revision = (((hackage."colour")."2.3.5").revisions).default;
+        "hashable".revision = (((hackage."hashable")."1.3.0.0").revisions).default;
+        "hashable".flags.sse2 = true;
+        "hashable".flags.sse41 = false;
         "hashable".flags.integer-gmp = true;
-        "hashable".flags.random-initial-seed = false;
+        "hashable".flags.examples = false;
         "clock".revision = (((hackage."clock")."0.8.2").revisions).default;
         "clock".flags.llvm = false;
         "comonad".revision = (((hackage."comonad")."5.0.8").revisions).default;
@@ -202,7 +203,7 @@
         "comonad".flags.containers = true;
         "assoc".revision = (((hackage."assoc")."1.0.2").revisions).default;
         "asn1-parse".revision = (((hackage."asn1-parse")."0.9.5").revisions).default;
-        "base64-bytestring".revision = (((hackage."base64-bytestring")."1.2.0.1").revisions).default;
+        "base64-bytestring".revision = (((hackage."base64-bytestring")."1.1.0.0").revisions).default;
         "regex-base".revision = (((hackage."regex-base")."0.94.0.1").revisions).default;
         "Cabal".revision = (((hackage."Cabal")."3.2.1.0").revisions).default;
         "cryptonite".revision = (((hackage."cryptonite")."0.29").revisions).default;
