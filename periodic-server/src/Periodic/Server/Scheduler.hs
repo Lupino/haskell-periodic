@@ -51,6 +51,7 @@ import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
 import           Data.Int                   (Int64)
 import qualified Data.List                  as L (delete)
+import qualified Data.Map.Strict            as Map (filter)
 import           Data.Maybe                 (fromJust, fromMaybe, isJust)
 import           Data.SortedList            (SortedList)
 import qualified Data.SortedList            as SL
@@ -177,6 +178,7 @@ startSchedT = do
   runTask 0 $ runChanJob taskList
   runTask 100 purgeExpired
   runTask 60 revertLockingQueue
+  runTask 100 purgeEmptyLock
 
   loadInt "poll-interval" sPollInterval
   loadInt "revert-interval" sRevertInterval
@@ -764,6 +766,16 @@ countLock f fn = do
 
         mapFunc :: LockInfo -> Int
         mapFunc = length . filter filterFunc . f
+
+purgeEmptyLock :: MonadIO m => SchedT db m ()
+purgeEmptyLock = do
+  lockList <- asks sLockList
+  IOMap.modifyIOMap (Map.filter filterFunc) lockList
+
+  where filterFunc :: LockInfo -> Bool
+        filterFunc LockInfo {..}
+          | null acquired && null locked = False
+          | otherwise = True
 
 getMaxLockCount :: MonadUnliftIO m => SchedT db m Int
 getMaxLockCount = do
