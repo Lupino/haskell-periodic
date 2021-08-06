@@ -756,17 +756,6 @@ releaseLock' jh = do
                                      | jh `elem` locked   = n : acc
                                      | otherwise          = acc
 
-countLock :: MonadUnliftIO m => (LockInfo -> [JobHandle]) -> FuncName -> SchedT db m Int
-countLock f fn = do
-  lockList <- asks sLockList
-  sum . map mapFunc <$> IOMap.elems lockList
-  where filterFunc :: JobHandle -> Bool
-        filterFunc jh = fn0 == fn
-          where (fn0, _) = unHandle jh
-
-        mapFunc :: LockInfo -> Int
-        mapFunc = length . filter filterFunc . f
-
 purgeEmptyLock :: MonadIO m => SchedT db m ()
 purgeEmptyLock = do
   lockList <- asks sLockList
@@ -813,16 +802,9 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
           => FuncName -> SchedT db m ()
         checkAndReleaseLock fn = do
           p <- asks sPersist
-          sizeLocked <- countLock locked fn
-          sizeAcquired <- countLock acquired fn
-          liftIO $ infoM "Periodic.Server.Scheduler"
-                 $ "LockInfo " ++ show fn
-                 ++ " Locked:" ++ show sizeLocked
-                 ++ " Acquired:" ++ show sizeAcquired
-          when (sizeLocked > 0 && sizeAcquired == 0) $ do
-            count <- getMaxLockCount
-            handles <- liftIO $ P.foldrLocking p count fn (:) []
-            mapM_ pushJob handles
+          count <- getMaxLockCount
+          handles <- liftIO $ P.foldrLocking p (max count 1) fn (:) []
+          mapM_ pushJob handles
 
 
 purgeExpired :: MonadIO m => SchedT db m ()
