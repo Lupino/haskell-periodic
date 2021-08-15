@@ -189,6 +189,7 @@ printConfigKeyList = do
   putStrLn "  poll-interval   - poll loop every time interval"
   putStrLn "  revert-interval - revert process queue loop every time interval"
   putStrLn "  timeout         - job process timeout"
+  putStrLn "  lock-timeout    - lock timeout"
   putStrLn "  keepalive       - client keepalive"
   putStrLn "  max-batch-size  - max poll batch size"
   putStrLn "  expiration      - run job result cache expiration"

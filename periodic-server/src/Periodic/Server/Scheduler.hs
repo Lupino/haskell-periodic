@@ -51,7 +51,7 @@ import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
 import           Data.Int                   (Int64)
 import qualified Data.List                  as L (delete)
-import qualified Data.Map.Strict            as Map (filter)
+import qualified Data.Map.Strict            as Map (filter, map)
 import           Data.Maybe                 (fromJust, fromMaybe, isJust)
 import           Data.SortedList            (SortedList)
 import qualified Data.SortedList            as SL
@@ -85,11 +85,17 @@ data WaitItem = WaitItem
 --                                   expiredAt, Just bs       return bs
 type WaitList = IOMap JobHandle WaitItem
 
+data LockItem = LockItem JobHandle Int64
+  deriving (Show)
+
+instance Eq LockItem where
+  LockItem jh0 _ == LockItem jh1 _ = jh0 == jh1
+
 -- Distributed lock
 --                                  acquired    locked
 data LockInfo = LockInfo
-    { acquired :: [JobHandle]
-    , locked   :: [JobHandle]
+    { acquired :: [LockItem]
+    , locked   :: [LockItem]
     , maxCount :: Int
     }
 
@@ -104,6 +110,8 @@ data SchedEnv db = SchedEnv
     , sRevertInterval :: TVar Int -- revert process queue loop every time interval
     -- the task do timeout
     , sTaskTimeout    :: TVar Int -- the task do timeout
+    -- lock timeout
+    , sLockTimeout    :: TVar Int -- lock timeout
     -- max poll batch size
     , sMaxBatchSize   :: TVar Int -- max poll batch size
     -- client or worker keepalive
@@ -161,6 +169,7 @@ initSchedEnv config sC sAssignJob = do
   sPollInterval   <- newTVarIO 300
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
+  sLockTimeout    <- newTVarIO 300
   sMaxBatchSize   <- newTVarIO 250
   sKeepalive      <- newTVarIO 300
   sExpiration     <- newTVarIO 300
@@ -183,6 +192,7 @@ startSchedT = do
   loadInt "poll-interval" sPollInterval
   loadInt "revert-interval" sRevertInterval
   loadInt "timeout" sTaskTimeout
+  loadInt "lock-timeout" sLockTimeout
   loadInt "keepalive" sKeepalive
   loadInt "max-batch-size" sMaxBatchSize
   loadInt "expiration" sExpiration
@@ -207,6 +217,7 @@ setConfigInt key val = do
     "poll-interval"   -> saveInt "poll-interval" val sPollInterval
     "revert-interval" -> saveInt "revert-interval" val sRevertInterval
     "timeout"         -> saveInt "timeout" val sTaskTimeout
+    "lock-timeout"    -> saveInt "lock-timeout" val sLockTimeout
     "keepalive"       -> saveInt "keepalive" val sKeepalive
     "max-batch-size"  -> saveInt "max-batch-size" val sMaxBatchSize
     "expiration"      -> saveInt "expiration" val sExpiration
@@ -219,6 +230,7 @@ getConfigInt key = do
     "poll-interval"   -> readTVarIO sPollInterval
     "revert-interval" -> readTVarIO sRevertInterval
     "timeout"         -> readTVarIO sTaskTimeout
+    "lock-timeout"    -> readTVarIO sLockTimeout
     "keepalive"       -> readTVarIO sKeepalive
     "max-batch-size"  -> readTVarIO sMaxBatchSize
     "expiration"      -> readTVarIO sExpiration
@@ -665,30 +677,32 @@ acquireLock name count jh = do
     case j of
       Nothing -> pure True
       Just job -> do
+        now <- getEpochTime
+        let item = LockItem jh now
         r <- atomically $ do
           l <- IOMapS.lookup name lockList
           case l of
             Nothing -> do
               IOMapS.insert name LockInfo
-                { acquired = [jh]
+                { acquired = [item]
                 , locked = []
                 , maxCount = count
                 } lockList
               pure True
             Just info@LockInfo {..} -> do
               let newCount = max maxCount count
-              if jh `elem` acquired then pure True
-              else if jh `elem` locked then pure False
+              if item `elem` acquired then pure True
+              else if item `elem` locked then pure False
               else
                 if length acquired < maxCount then do
                   IOMapS.insert name info
-                    { acquired = acquired ++ [jh]
+                    { acquired = acquired ++ [item]
                     , maxCount = newCount
                     } lockList
                   pure True
                 else do
                   IOMapS.insert name info
-                    { locked = locked ++ [jh]
+                    { locked = locked ++ [item]
                     , maxCount = newCount
                     } lockList
                   pure False
@@ -717,16 +731,16 @@ releaseLock_ name jh = do
     case l of
       Nothing -> pure Nothing
       Just info@LockInfo {..} ->
-        if jh `elem` acquired then
+        if item `elem` acquired then
           case locked of
             [] -> do
               IOMapS.insert name info
-                { acquired = L.delete jh acquired
+                { acquired = L.delete item acquired
                 } lockList
               pure Nothing
             x:xs -> do
               IOMapS.insert name info
-                { acquired = L.delete jh acquired
+                { acquired = L.delete item acquired
                 , locked   = xs
                 } lockList
               pure $ Just x
@@ -734,7 +748,7 @@ releaseLock_ name jh = do
 
   case h of
     Nothing -> pure ()
-    Just hh -> do
+    Just (LockItem hh _) -> do
       let (fn, jn) = unHandle hh
       j <- liftIO $ P.lookup p Locking fn jn
       case j of
@@ -742,6 +756,8 @@ releaseLock_ name jh = do
         Just job -> do
           liftIO $ P.insert p Pending fn jn job
           pushChanList (Add job)
+
+  where item = LockItem jh 0
 
 releaseLock'
   :: (MonadUnliftIO m, Persist db)
@@ -752,19 +768,29 @@ releaseLock' jh = do
   mapM_ (`releaseLock` jh) names
 
   where foldFunc :: LockName -> LockInfo -> [LockName] -> [LockName]
-        foldFunc n LockInfo {..} acc | jh `elem` acquired = n : acc
-                                     | jh `elem` locked   = n : acc
-                                     | otherwise          = acc
+        foldFunc n LockInfo {..} acc
+          | item `elem` acquired = n : acc
+          | item `elem` locked   = n : acc
+          | otherwise          = acc
+
+        item = LockItem jh 0
 
 purgeEmptyLock :: MonadIO m => SchedT db m ()
 purgeEmptyLock = do
   lockList <- asks sLockList
-  IOMap.modifyIOMap (Map.filter filterFunc) lockList
+  tout <- fmap fromIntegral . readTVarIO =<< asks sLockTimeout
+  expiredAt <- (tout +) <$> getEpochTime
+  IOMap.modifyIOMap (Map.filter filterFunc . Map.map (mapFunc expiredAt)) lockList
 
   where filterFunc :: LockInfo -> Bool
         filterFunc LockInfo {..}
           | null acquired && null locked = False
           | otherwise = True
+
+        mapFunc :: Int64 -> LockInfo -> LockInfo
+        mapFunc e i = i { locked = filter ff (locked i), acquired = filter ff (acquired i) }
+          where ff :: LockItem -> Bool
+                ff (LockItem _ t) = t > e
 
 getMaxLockCount :: MonadUnliftIO m => SchedT db m Int
 getMaxLockCount = do
