@@ -48,12 +48,10 @@ findMsgid (GrabQueue q) fn nid = do
         else pure Nothing
 
 popAgent :: MonadIO m => GrabQueue -> FuncName -> m (Nid, Msgid)
-popAgent gq@(GrabQueue q) fn = atomically $ do
-  nids <- IOMapS.keys q
-  r <- go nids
-  case r of
-    Nothing -> retrySTM
-    Just rr -> pure rr
+popAgent gq@(GrabQueue q) fn = atomically $
+  IOMapS.keys q
+    >>= go
+    >>= maybe retrySTM pure
   where go :: [Nid] -> STM (Maybe (Nid, Msgid))
         go [] = pure Nothing
         go (x:xs) = do

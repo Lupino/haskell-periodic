@@ -162,7 +162,7 @@ doFoldrLocking db limit fn f = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f)
                    <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)
 
 doCountPending :: Database -> Int64 -> [FuncName] -> IO Int
-doCountPending db ts fns = F.foldrM foldFunc 0 fns
+doCountPending db ts = F.foldrM foldFunc 0
   where sql = Utf8 $ "SELECT count(*) FROM jobs WHERE func=? AND state="
                    <> stateName Pending
                    <> " AND sched_at<"
