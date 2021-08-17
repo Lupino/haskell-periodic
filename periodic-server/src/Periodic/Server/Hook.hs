@@ -14,6 +14,7 @@ module Periodic.Server.Hook
   , eventAcquireLock
   , eventReleaseLock
   , eventRemoveJob
+  , eventAssignJob
   , runHook
   , GetHookName
   ) where
@@ -48,6 +49,7 @@ eventSchedLaterJob = HookEvent "schedLaterJob"
 eventAcquireLock   = HookEvent "acquireLock"
 eventReleaseLock   = HookEvent "releaseLock"
 eventRemoveJob     = HookEvent "removeJob"
+eventAssignJob     = HookEvent "assignJob"
 
 runHook :: (MonadIO m, GetHookName a) => Hook -> HookEvent -> a -> m ()
 runHook hook evt n = liftIO $ runHook_ hook evt (hookName n)

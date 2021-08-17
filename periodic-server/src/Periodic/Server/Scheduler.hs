@@ -511,6 +511,7 @@ schedJob_ job = do
           nextSchedAt <- getEpochTime
           liftIO $ P.insert sPersist Running fn jn $ setSchedAt nextSchedAt job
           r <- liftIO $ sAssignJob nid msgid job
+          runHook eventAssignJob job
           if r then endSchedJob
                else do
                  liftIO $ P.insert sPersist Pending fn jn $ setSchedAt nextSchedAt job
@@ -521,6 +522,7 @@ schedJob_ job = do
           SchedEnv{..} <- ask
           agents <- popAgentList sGrabQueue fn
           liftIO $ mapM_ (\(nid, msgid) -> sAssignJob nid msgid job) agents
+          runHook eventAssignJob job
           unless (null agents) endSchedJob -- wait to resched the broadcast job
 
         endSchedJob :: MonadIO m => SchedT db m ()
