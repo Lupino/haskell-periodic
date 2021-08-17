@@ -26,6 +26,7 @@ import           Metro.Server                 (getNodeEnvList, initServerEnv,
 import qualified Metro.Server                 as M (ServerEnv, startServer)
 import           Periodic.Node                (sessionGen)
 import           Periodic.Server.Client       (handleSessionT)
+import           Periodic.Server.Hook         (Hook)
 import           Periodic.Server.Persist      (Persist, PersistConfig)
 import           Periodic.Server.Scheduler    (failJob, initSchedEnv,
                                                removeFunc, runSchedT, shutdown,
@@ -69,8 +70,9 @@ startServer
   => PersistConfig db
   -> (TransportConfig (STP serv) -> TransportConfig tp)
   -> S.ServerConfig serv
+  -> Hook
   -> m ()
-startServer dbconfig mk config = do
+startServer dbconfig mk config hook = do
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv0 -> do
     (_ :: ClientType) <- getClientType <$> runConnT connEnv0 receive_
     nid <- getEntropy 4
@@ -84,7 +86,7 @@ startServer dbconfig mk config = do
 
   schedEnv <- initSchedEnv dbconfig
               (runServerT sEnv stopServerT)
-              (doAssignJob sEnv)
+              (doAssignJob sEnv) hook
 
   setOnNodeLeave sEnv $ \_ ClientConfig {..} ->
     runSchedT schedEnv $ do

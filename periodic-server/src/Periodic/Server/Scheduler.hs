@@ -59,6 +59,8 @@ import qualified Metro.Lock                 as L (Lock, new, with)
 import           Metro.Utils                (getEpochTime)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
+import           Periodic.Server.Hook       hiding (runHook)
+import qualified Periodic.Server.Hook       as Hook
 import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
 import           Periodic.Types             (Msgid, Nid)
@@ -129,6 +131,7 @@ data SchedEnv db = SchedEnv
     , sLockList       :: LockList
     , sPersist        :: db
     , sAssignJob      :: Nid -> Msgid -> Job -> IO Bool
+    , sHook           :: Hook
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -157,8 +160,9 @@ initSchedEnv
   :: (MonadUnliftIO m, Persist db)
   => P.PersistConfig db -> m ()
   -> (Nid -> Msgid -> Job -> IO Bool)
+  -> Hook
   -> m (SchedEnv db)
-initSchedEnv config sC sAssignJob = do
+initSchedEnv config sC sAssignJob sHook = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
@@ -402,6 +406,7 @@ pushChanList act = do
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 pushJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
+  runHook eventPushJob job
   p <- asks sPersist
   isRunning <- liftIO $ P.member p Running fn jn
   unless isRunning $ do
@@ -544,6 +549,7 @@ adjustFuncStat fn = do
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 removeJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
+  runHook eventRemoveJob job
   p <- asks sPersist
   liftIO $ P.delete p fn jn
 
@@ -602,12 +608,14 @@ dropFunc n = do
 
 pushGrab :: MonadIO m => TVar [FuncName] -> Nid -> Msgid -> SchedT db m ()
 pushGrab funcList nid msgid = do
+  runHook eventPushGrab (FuncName "pushgrab")
   queue <- asks sGrabQueue
   pushAgent queue funcList nid msgid
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("failJob: " ++ show jh)
+  runHook eventFailJob jh
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -637,6 +645,7 @@ doneJob
   => JobHandle -> ByteString -> SchedT db m ()
 doneJob jh w = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
+  runHook eventDoneJob jh
   releaseLock' jh
   p <- asks sPersist
   liftIO $ P.delete p fn jn
@@ -648,6 +657,7 @@ schedLaterJob
   => JobHandle -> Int64 -> Int -> SchedT db m ()
 schedLaterJob jh later step = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("schedLaterJob: " ++ show jh)
+  runHook eventSchedLaterJob jh
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -669,6 +679,7 @@ acquireLock
   => LockName -> Int -> JobHandle -> SchedT db m Bool
 acquireLock name count jh = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show count ++ " " ++ show jh)
+  runHook eventAcquireLock name
   locker <- asks sLocker
   L.with locker $ do
     lockList <- asks sLockList
@@ -716,6 +727,7 @@ releaseLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> JobHandle -> SchedT db m ()
 releaseLock name jh = do
+  runHook eventReleaseLock name
   locker <- asks sLocker
   L.with locker $ releaseLock_ name jh
 
@@ -930,3 +942,8 @@ removeFromWaitList :: MonadIO m => JobHandle -> SchedT db m ()
 removeFromWaitList jh = do
   wl <- asks sWaitList
   IOMap.delete jh wl
+
+runHook :: (MonadIO m, GetHookName a) => HookEvent -> a -> SchedT db m ()
+runHook evt n = do
+  hook <- asks sHook
+  Hook.runHook hook evt n

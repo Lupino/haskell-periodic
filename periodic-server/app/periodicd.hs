@@ -18,6 +18,7 @@ import           Metro.TP.XOR                   (xorConfig)
 import           Metro.Utils                    (setupLog)
 import           Paths_periodic_server          (version)
 import           Periodic.Server                (startServer)
+import           Periodic.Server.Hook           (Hook, genHook)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
 import           Periodic.Server.Persist.Cache  (useCache)
 import           Periodic.Server.Persist.Memory (useMemory)
@@ -39,6 +40,7 @@ data Options = Options
     , showHelp     :: Bool
     , logLevel     :: Priority
     , maxCacheSize :: Int64
+    , hookHostPort :: String
     }
 
 options :: Maybe String -> Maybe String -> Maybe String -> Options
@@ -54,23 +56,25 @@ options h f p = Options
   , showHelp     = False
   , logLevel     = ERROR
   , maxCacheSize = 1000
+  , hookHostPort = ""
   }
 
 parseOptions :: [String] -> Options -> Options
 parseOptions []                  opt       = opt
-parseOptions ("-H":x:xs)         opt       = parseOptions xs opt { host      = x }
-parseOptions ("--host":x:xs)     opt       = parseOptions xs opt { host      = x }
-parseOptions ("--xor":x:xs)      opt       = parseOptions xs opt { xorFile   = x }
-parseOptions ("-p":x:xs)         opt       = parseOptions xs opt { storePath = x }
-parseOptions ("--path":x:xs)     opt       = parseOptions xs opt { storePath = x }
-parseOptions ("-h":xs)           opt       = parseOptions xs opt { showHelp  = True }
-parseOptions ("--help":xs)       opt       = parseOptions xs opt { showHelp  = True }
-parseOptions ("--tls":xs)        opt       = parseOptions xs opt { useTls = True }
-parseOptions ("--ws":xs)         opt       = parseOptions xs opt { useWs = True }
-parseOptions ("--cert-key":x:xs) opt       = parseOptions xs opt { certKey = x }
-parseOptions ("--cert":x:xs)     opt       = parseOptions xs opt { cert = x }
-parseOptions ("--ca":x:xs)       opt       = parseOptions xs opt { caStore = x }
-parseOptions ("--log":x:xs)      opt       = parseOptions xs opt { logLevel = read x }
+parseOptions ("-H":x:xs)         opt       = parseOptions xs opt { host         = x }
+parseOptions ("--host":x:xs)     opt       = parseOptions xs opt { host         = x }
+parseOptions ("--xor":x:xs)      opt       = parseOptions xs opt { xorFile      = x }
+parseOptions ("-p":x:xs)         opt       = parseOptions xs opt { storePath    = x }
+parseOptions ("--path":x:xs)     opt       = parseOptions xs opt { storePath    = x }
+parseOptions ("-h":xs)           opt       = parseOptions xs opt { showHelp     = True }
+parseOptions ("--help":xs)       opt       = parseOptions xs opt { showHelp     = True }
+parseOptions ("--hook":x:xs)     opt       = parseOptions xs opt { hookHostPort = x }
+parseOptions ("--tls":xs)        opt       = parseOptions xs opt { useTls       = True }
+parseOptions ("--ws":xs)         opt       = parseOptions xs opt { useWs        = True }
+parseOptions ("--cert-key":x:xs) opt       = parseOptions xs opt { certKey      = x }
+parseOptions ("--cert":x:xs)     opt       = parseOptions xs opt { cert         = x }
+parseOptions ("--ca":x:xs)       opt       = parseOptions xs opt { caStore      = x }
+parseOptions ("--log":x:xs)      opt       = parseOptions xs opt { logLevel     = read x }
 parseOptions ("--max-cache-size":x:xs) opt = parseOptions xs opt { maxCacheSize = read x }
 parseOptions (_:xs)              opt       = parseOptions xs opt
 
@@ -88,6 +92,9 @@ printHelp = do
   putStrLn "                      eg: postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
   putStrLn "                      eg: cache+file://data.sqlite"
   putStrLn "                      eg: cache+postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
+  putStrLn "     --hook           Event hook socket uri (optional: null)"
+  putStrLn "                      eg: udp://127.0.0.1:1000"
+  putStrLn "                      eg: tcp://127.0.0.1:1000"
   putStrLn "     --max-cache-size Max cache size only effect use cache (optional: 1000)"
   putStrLn "     --xor            XOR Transport encode file [$XOR_FILE]"
   putStrLn "     --tls            Use tls transport"
@@ -114,29 +121,31 @@ main = do
 
   setupLog logLevel
 
+  hook <- genHook hookHostPort
+
   if take 11 storePath == "postgres://" then
-    run opts (usePSQL $ drop 11 storePath)
+    run opts (usePSQL $ drop 11 storePath) hook
   else if take 7 storePath == "file://" then
-    run opts (useSQLite $ drop 7 storePath)
+    run opts (useSQLite $ drop 7 storePath) hook
   else if storePath == ":memory:" then
-    run opts useMemory
+    run opts useMemory hook
   else if take 13 storePath == "cache+file://" then
-    run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath)
+    run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath) hook
   else if take 17 storePath == "cache+postgres://" then
-    run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath)
+    run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath) hook
   else
-    run opts (useSQLite storePath)
+    run opts (useSQLite storePath) hook
 
-run :: Persist db => Options -> PersistConfig db -> IO ()
-run Options {useTls = True, ..} config = do
+run :: Persist db => Options -> PersistConfig db -> Hook -> IO ()
+run Options {useTls = True, ..} config hook = do
     prms <- makeServerParams' cert [] certKey caStore
-    startServer config (tlsConfig prms) (socketServer host)
+    startServer config (tlsConfig prms) (socketServer host) hook
 
-run Options {useWs = True, host} config =
-    startServer config serverConfig (socketServer host)
+run Options {useWs = True, host} config hook =
+    startServer config serverConfig (socketServer host) hook
 
-run Options {xorFile = "", host} config =
-    startServer config id (socketServer host)
+run Options {xorFile = "", host} config hook =
+    startServer config id (socketServer host) hook
 
-run Options {xorFile = f, host} config =
-    startServer config (xorConfig f) (socketServer host)
+run Options {xorFile = f, host} config hook =
+    startServer config (xorConfig f) (socketServer host) hook
