@@ -810,8 +810,8 @@ purgeEmptyLock :: MonadIO m => SchedT db m ()
 purgeEmptyLock = do
   lockList <- asks sLockList
   tout <- fmap fromIntegral . readTVarIO =<< asks sLockTimeout
-  expiredAt <- (tout +) <$> getEpochTime
-  IOMap.modifyIOMap (Map.filter filterFunc . Map.map (mapFunc expiredAt)) lockList
+  now <- getEpochTime
+  IOMap.modifyIOMap (Map.filter filterFunc . Map.map (mapFunc (now - tout))) lockList
 
   where filterFunc :: LockInfo -> Bool
         filterFunc LockInfo {..}
@@ -860,7 +860,7 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
         checkAndReleaseLock fn = do
           p <- asks sPersist
           count <- getMaxLockCount
-          handles <- liftIO $ P.foldrLocking p (max count 1) fn (:) []
+          handles <- liftIO $ P.foldrLocking p (max count 10) fn (:) []
           mapM_ pushJob handles
 
 
