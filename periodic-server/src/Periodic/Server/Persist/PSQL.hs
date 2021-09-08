@@ -8,38 +8,50 @@ module Periodic.Server.Persist.PSQL
   , usePSQL
   ) where
 
-import           Control.Monad              (void)
-import           Data.Binary                (decodeOrFail)
-import           Data.ByteString            (ByteString)
-import           Data.ByteString.Base64     (decode, encode)
-import           Data.ByteString.Lazy       (fromStrict)
-import           Data.Byteable              (toBytes)
-import qualified Data.Foldable              as F (foldrM)
-import           Data.Int                   (Int64)
-import           Data.List                  (intercalate)
-import           Data.Maybe                 (fromMaybe, isJust, listToMaybe)
-import           Data.Pool                  (Pool, createPool, withResource)
-import           Data.String                (IsString (..))
-import           Database.PostgreSQL.Simple
-import           Periodic.Server.Persist    (Persist (PersistConfig, PersistException),
-                                             State (..))
-import qualified Periodic.Server.Persist    as Persist
-import           Periodic.Types.Job         (FuncName (..), Job, JobName (..),
-                                             getSchedAt)
-import           Prelude                    hiding (foldr, lookup)
-import           System.Log.Logger          (errorM, infoM)
-import           UnliftIO                   (Exception, SomeException, Typeable)
+
+import           Control.Monad           (void)
+import           Data.Binary             (decodeOrFail)
+import           Data.ByteString         (ByteString)
+import           Data.ByteString.Base64  (decode, encode)
+import           Data.ByteString.Lazy    (fromStrict)
+import           Data.Byteable           (toBytes)
+import qualified Data.Foldable           as F (foldrM)
+import           Data.Int                (Int64)
+import           Data.Maybe              (fromMaybe, isJust)
+import           Data.String             (IsString (..))
+import           Database.PSQL.Types     (Only (..), PSQLPool, Size (..),
+                                          TableName, asc, count, createPSQLPool,
+                                          createTable, delete, insertOrUpdate,
+                                          none, runPSQLPool, selectOneOnly,
+                                          selectOnly, selectOnly_, update,
+                                          withTransaction)
+import qualified Database.PSQL.Types     as DB (PSQL)
+import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
+                                          State (..))
+import qualified Periodic.Server.Persist as Persist
+import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
+                                          getSchedAt)
+import           Prelude                 hiding (foldr, lookup)
+import           System.Log.Logger       (errorM, infoM)
+import           UnliftIO                (Exception, SomeException, Typeable,
+                                          liftIO)
 
 stateName :: State -> ByteString
 stateName Pending = "0"
 stateName Running = "1"
 stateName Locking = "2"
 
-newtype PSQL = PSQL (Pool Connection)
+newtype PSQL = PSQL PSQLPool
 
 numStripes = 1
 idleTime = 10
 maxResources = 10
+
+runDB :: PSQL -> DB.PSQL a -> IO a
+runDB (PSQL pool) = runPSQLPool "" pool
+
+runDB_ :: PSQL -> DB.PSQL Int64 -> IO ()
+runDB_ db = void . runDB db
 
 instance Persist PSQL where
   data PersistConfig PSQL = PSQLPath ByteString
@@ -47,31 +59,30 @@ instance Persist PSQL where
 
   newPersist (PSQLPath path) = do
     infoM "Periodic.Server.Persist.PSQL" ("PSQL connected " ++ show path)
-    pool <- createPool (connectPostgreSQL path) close numStripes idleTime maxResources
-    withResource pool $ \conn ->
-      withTransaction conn $ do
-        createConfigTable conn
-        createJobTable conn
-        createFuncTable conn
-    allPending pool
+    pool <- createPSQLPool path numStripes idleTime maxResources
+    runPSQLPool "" pool $ withTransaction $ do
+      void createConfigTable
+      void createJobTable
+      void createFuncTable
+      void allPending
     return $ PSQL pool
 
-  member         (PSQL pool) = doMember pool
-  lookup         (PSQL pool) = doLookup pool
-  insert         (PSQL pool) = doInsert pool
-  delete         (PSQL pool) = doDelete pool
-  size           (PSQL pool) = doSize pool
-  foldr          (PSQL pool) = doFoldr pool
-  foldrPending   (PSQL pool) = doFoldrPending pool
-  foldrLocking   (PSQL pool) = doFoldrLocking pool
-  dumpJob        (PSQL pool) = doDumpJob pool
-  configSet      (PSQL pool) = doConfigSet pool
-  configGet      (PSQL pool) = doConfigGet pool
-  insertFuncName (PSQL pool) = doInsertFuncName pool
-  removeFuncName (PSQL pool) = doRemoveFuncName pool
-  funcList       (PSQL pool) = doFuncList pool
-  minSchedAt     (PSQL pool) = doMinSchedAt pool Pending
-  countPending   (PSQL pool) = doCountPending pool
+  member         db st fn      = runDB  db . doMember st fn
+  lookup         db st fn      = runDB  db . doLookup st fn
+  insert         db st fn jn   = runDB_ db . doInsert st fn jn
+  delete         db fn         = runDB_ db . doDelete fn
+  size           db st         = runDB  db . doSize st
+  foldr          db st f       = runDB  db . doFoldr st f
+  foldrPending   db ts fns f   = runDB  db . doFoldrPending ts fns f
+  foldrLocking   db limit fn f = runDB  db . doFoldrLocking limit fn f
+  dumpJob        db            = runDB  db   doDumpJob
+  configSet      db name       = runDB_ db . doConfigSet name
+  configGet      db            = runDB  db . doConfigGet
+  insertFuncName db            = runDB_ db . doInsertFuncName
+  removeFuncName db            = runDB  db . doRemoveFuncName
+  funcList       db            = runDB  db   doFuncList
+  minSchedAt     db            = runDB  db . doMinSchedAt Pending
+  countPending   db ts         = runDB  db . doCountPending ts
 
 instance Exception (PersistException PSQL)
 
@@ -80,112 +91,6 @@ instance IsString (PersistConfig PSQL) where
 
 usePSQL :: String -> PersistConfig PSQL
 usePSQL = PSQLPath . fromString
-
-newtype TableName = TableName String
-  deriving (Show)
-
-instance IsString TableName where
-  fromString = TableName
-
-getTableName :: TableName -> String
-getTableName (TableName name) = name
-
-newtype Column = Column { unColumn :: String }
-  deriving (Show)
-
-instance IsString Column where
-  fromString = Column
-
-type Columns = [Column]
-
-columnsToString :: Columns -> String
-columnsToString = intercalate ", " . map unColumn
-
-createTable :: TableName -> Columns -> Connection -> IO Int64
-createTable tn cols conn = execute_ conn sql
-  where sql = fromString $ concat
-          [ "CREATE TABLE IF NOT EXISTS ", getTableName tn, " ("
-          , columnsToString cols
-          , ")"
-          ]
-
-newtype IndexName = IndexName String
-  deriving (Show)
-
-instance IsString IndexName where
-  fromString = IndexName
-
-getOnlyDefault :: FromRow (Only a) => a -> [Only a] -> a
-getOnlyDefault a = maybe a fromOnly . listToMaybe
-
-insertOrUpdate :: ToRow a => TableName -> Columns -> Columns -> a -> Pool Connection -> IO Int64
-insertOrUpdate tn ucols vcols a pool = withResource pool $ \conn -> execute conn sql a
-  where cols = ucols ++ vcols
-        v = replicate (length cols) "?"
-
-        setSql = intercalate ", " $ map appendSet vcols
-
-        appendSet :: Column -> String
-        appendSet (Column col) | '=' `elem` col = col
-                               | otherwise = col ++ " = excluded." ++ col
-
-        doSql = if null vcols then " DO NOTHING" else " DO UPDATE SET " ++ setSql
-
-        sql = fromString $ concat
-          [ "INSERT INTO ", getTableName tn
-          , " (", columnsToString cols, ")"
-          , " VALUES"
-          , " (", columnsToString v, ")"
-          , " ON CONFLICT (", columnsToString ucols, ")"
-          , doSql
-          ]
-
-update :: ToRow a => TableName -> Columns -> String -> a -> Pool Connection -> IO Int64
-update tn cols partSql a pool = withResource pool $ \conn -> execute conn sql a
-  where setSql = intercalate ", " $ map appendSet cols
-        whereSql = if null partSql then "" else " WHERE " ++ partSql
-        sql = fromString $ concat
-          [ "UPDATE ", getTableName tn
-          , " SET ", setSql
-          , whereSql
-          ]
-
-        appendSet :: Column -> String
-        appendSet (Column col) | '=' `elem` col = col
-                               | otherwise = col ++ " = ?"
-
-
-selectOne
-  :: (ToRow a, FromRow b, Show b)
-  => TableName -> Columns -> String -> a -> Connection -> IO (Maybe b)
-selectOne tn cols partSql a conn = listToMaybe <$> query conn sql a
-  where whereSql = " WHERE " ++ partSql
-        sql = fromString $ concat
-          [ "SELECT ", columnsToString cols, " FROM ", getTableName tn
-          , whereSql
-          ]
-
-selectOneOnly
-  :: (ToRow a, FromRow (Only b), Show b)
-  => TableName -> Column -> String -> a -> Pool Connection -> IO (Maybe b)
-selectOneOnly tn col partSql a pool =
-  withResource pool $ fmap (fmap fromOnly) . selectOne tn [col] partSql a
-
-count :: ToRow a => TableName -> String -> a -> Pool Connection -> IO Int64
-count tn partSql a pool = withResource pool $ \conn ->
-  getOnlyDefault 0 <$> query conn sql a
-  where whereSql = " WHERE " ++ partSql
-        sql = fromString $ concat
-          [ "SELECT count(*) FROM ", getTableName tn, whereSql
-          ]
-
-delete :: ToRow a => TableName -> String -> a -> Pool Connection -> IO Int64
-delete tn partSql a pool = withResource pool $ \conn -> execute conn sql a
-  where whereSql = " WHERE " ++ partSql
-        sql = fromString $ concat
-          [ "DELETE FROM ", getTableName tn, whereSql
-          ]
-
 
 configs :: TableName
 configs = "configs"
@@ -196,17 +101,17 @@ jobs = "jobs"
 funcs :: TableName
 funcs = "funcs"
 
-createConfigTable :: Connection -> IO ()
+createConfigTable :: DB.PSQL Int64
 createConfigTable =
-  void . createTable configs
+  createTable configs
     [ "name VARCHAR(256) NOT NULL"
     , "value INT DEFAULT 0"
     , "CONSTRAINT config_pk PRIMARY KEY (name)"
     ]
 
-createJobTable :: Connection -> IO ()
+createJobTable :: DB.PSQL Int64
 createJobTable =
-  void . createTable jobs
+  createTable jobs
     [ "func VARCHAR(256) NOT NULL"
     , "name VARCHAR(256) NOT NULL"
     , "value text"
@@ -215,120 +120,116 @@ createJobTable =
     , "CONSTRAINT job_pk PRIMARY KEY (func, name)"
     ]
 
-createFuncTable :: Connection -> IO ()
+createFuncTable :: DB.PSQL Int64
 createFuncTable =
-  void . createTable funcs
+  createTable funcs
     [ "func VARCHAR(256) NOT NULL"
     , "CONSTRAINT func_pk PRIMARY KEY (func)"
     ]
 
-allPending :: Pool Connection -> IO ()
-allPending = void . update jobs ["state"] "" (Only (stateName Pending))
+allPending :: DB.PSQL Int64
+allPending = update jobs ["state"] "" (Only (stateName Pending))
 
-doLookup :: Pool Connection -> State -> FuncName -> JobName -> IO (Maybe Job)
-doLookup pool state fn jn = do
+doLookup :: State -> FuncName -> JobName -> DB.PSQL (Maybe Job)
+doLookup state fn jn = do
   r <- selectOneOnly jobs "value" "func=? AND name=? AND state=?"
-        (unFN fn, unJN jn, stateName state) pool
+        (unFN fn, unJN jn, stateName state)
   case r of
     Nothing -> return Nothing
     Just bs ->
       case decodeJob bs of
         Left e -> do
-          errorM "Periodic.Server.Persist.PSQL"
+          liftIO $ errorM "Periodic.Server.Persist.PSQL"
                  $ "doLookup error: decode " ++ show bs ++ " " ++ show e
           return Nothing
         Right job -> return $ Just job
 
-doMember :: Pool Connection -> State -> FuncName -> JobName -> IO Bool
-doMember pool st fn jn = isJust <$> doLookup pool st fn jn
+doMember :: State -> FuncName -> JobName -> DB.PSQL Bool
+doMember st fn jn = isJust <$> doLookup st fn jn
 
-doInsert :: Pool Connection -> State -> FuncName -> JobName -> Job -> IO ()
-doInsert pool state fn jn job = do
-  doInsertFuncName pool fn
-  void $ insertOrUpdate jobs
+doInsert :: State -> FuncName -> JobName -> Job -> DB.PSQL Int64
+doInsert state fn jn job = do
+  void $ doInsertFuncName fn
+  insertOrUpdate jobs
     ["func", "name"]
     ["value", "state", "sched_at"]
+    []
     (unFN fn, unJN jn, encode $ toBytes job, stateName state, getSchedAt job)
-    pool
 
-doInsertFuncName :: Pool Connection -> FuncName -> IO ()
-doInsertFuncName pool fn = void $ insertOrUpdate funcs ["func"] [] (Only $ unFN fn) pool
+doInsertFuncName :: FuncName -> DB.PSQL Int64
+doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only $ unFN fn)
 
-doFoldr :: Pool Connection -> State -> (Job -> a -> a) -> a -> IO a
-doFoldr pool state f acc = withResource pool $ \conn ->
-  fold conn sql (Only $ stateName state) acc (mkFoldFunc f)
-  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs ++ " WHERE state=?"
+doFoldr :: State -> (Job -> a -> a) -> a -> DB.PSQL a
+doFoldr state f acc = do
+  selectOnly jobs "value" "state=?" (Only $ stateName state) 0 100 (asc "sched_at")
+    >>= F.foldrM (mkFoldFunc f) acc
 
-doFoldrPending :: Pool Connection -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldrPending pool ts fns f acc = withResource pool $ \conn ->
-  F.foldrM (foldFunc conn f) acc fns
+doFoldrPending :: Int64 -> [FuncName] -> (Job -> a -> a) -> a -> DB.PSQL a
+doFoldrPending ts fns f acc = F.foldrM (foldFunc f) acc fns
 
-  where sql = fromString $ "SELECT value FROM "
-                ++ getTableName jobs ++ " WHERE func=? AND state=? AND sched_at < ?"
-        foldFunc :: Connection -> (Job -> a -> a) -> FuncName -> a -> IO a
-        foldFunc conn f0 fn acc0 =
-          fold conn sql (unFN fn, stateName Pending, ts) acc0 (mkFoldFunc f0)
+  where foldFunc :: (Job -> a -> a) -> FuncName -> a -> DB.PSQL a
+        foldFunc f0 fn acc0 =
+          selectOnly jobs "value" "func=? AND state=? AND sched_at < ?"
+            (unFN fn, stateName Pending, ts) 0 1000 (asc "sched_at")
+            >>= F.foldrM (mkFoldFunc f0) acc0
 
-doFoldrLocking :: Pool Connection -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
-doFoldrLocking pool limit fn f acc = withResource pool $ \conn ->
-  fold conn sql (unFN fn, stateName Locking, limit) acc (mkFoldFunc f)
-  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs
-                ++ " WHERE func=? AND state=? ORDER BY sched_at ASC LIMIT ?"
+doFoldrLocking :: Int -> FuncName -> (Job -> a -> a) -> a -> DB.PSQL a
+doFoldrLocking limit fn f acc = do
+  liftIO $ putStr "doFoldrLocking "
+  liftIO $ print fn
+  liftIO $ putStr "count "
+  liftIO $ print limit
+  bs <- selectOnly jobs "value" "func=? AND state=?"
+    (unFN fn, stateName Locking) 0 (Size $ fromIntegral limit) (asc "sched_at")
+  liftIO $ print bs
+  F.foldrM (mkFoldFunc f) acc bs
 
-doCountPending :: Pool Connection -> Int64 -> [FuncName] -> IO Int
-doCountPending pool ts fns = withResource pool $ \conn ->
-  F.foldrM (foldFunc conn) 0 fns
+doCountPending :: Int64 -> [FuncName] -> DB.PSQL Int
+doCountPending ts = F.foldrM foldFunc 0
 
-  where sql = fromString $ "SELECT count(*) FROM "
-                ++ getTableName jobs ++ " WHERE func=? AND state=? AND sched_at < ?"
-        foldFunc :: Connection -> FuncName -> Int -> IO Int
-        foldFunc conn fn acc = do
-          ret <- query conn sql (unFN fn, stateName Pending, ts)
-          case ret of
-            [Only c] -> pure $ acc + c
-            _        -> pure acc
+  where foldFunc :: FuncName -> Int -> DB.PSQL Int
+        foldFunc fn acc = do
+          (acc +) . fromIntegral <$> count jobs "func=? AND state=? AND sched_at < ?"
+            (unFN fn, stateName Pending, ts)
 
-doDumpJob :: Pool Connection -> IO [Job]
-doDumpJob pool = withResource pool $ \conn ->
-  fold_ conn sql [] (mkFoldFunc (:))
-  where sql = fromString $ "SELECT value FROM " ++ getTableName jobs
+doDumpJob :: DB.PSQL [Job]
+doDumpJob =
+  selectOnly_ jobs "value" 0 10000 none
+    >>= F.foldrM (mkFoldFunc (:)) []
 
-doFuncList :: Pool Connection -> IO [FuncName]
-doFuncList pool = withResource pool $ \conn ->
-  map (FuncName . fromOnly) <$> query_ conn sql
-  where sql = fromString $ "SELECT func FROM " ++ getTableName funcs
+doFuncList :: DB.PSQL [FuncName]
+doFuncList = map FuncName <$> selectOnly_ funcs "func" 0 10000 none
 
-doDelete :: Pool Connection -> FuncName -> JobName -> IO ()
-doDelete pool fn jn = void $ delete jobs "func=? AND name=?" (unFN fn, unJN jn) pool
+doDelete :: FuncName -> JobName -> DB.PSQL Int64
+doDelete fn jn = delete jobs "func=? AND name=?" (unFN fn, unJN jn)
 
-doRemoveFuncName :: Pool Connection -> FuncName -> IO ()
-doRemoveFuncName pool fn = do
-  void $ delete jobs "func=?" (Only $ unFN fn) pool
-  void $ delete funcs "func=?" (Only $ unFN fn) pool
+doRemoveFuncName :: FuncName -> DB.PSQL ()
+doRemoveFuncName fn = do
+  void $ delete jobs "func=?" (Only $ unFN fn)
+  void $ delete funcs "func=?" (Only $ unFN fn)
 
-doMinSchedAt :: Pool Connection -> State -> FuncName -> IO Int64
-doMinSchedAt pool state fn =
+doMinSchedAt :: State -> FuncName -> DB.PSQL Int64
+doMinSchedAt state fn =
   fromMaybe 0
     . fromMaybe Nothing
     <$> selectOneOnly jobs "min(sched_at)" "func=? AND state=?"
     (unFN fn, stateName state)
-    pool
 
-doSize :: Pool Connection -> State -> FuncName -> IO Int64
-doSize pool state fn = count jobs "func=? AND state=?" (unFN fn, stateName state) pool
+doSize :: State -> FuncName -> DB.PSQL Int64
+doSize state fn = count jobs "func=? AND state=?" (unFN fn, stateName state)
 
-doConfigSet :: Pool Connection -> String -> Int -> IO ()
-doConfigSet pool name v =
-  void $ insertOrUpdate configs ["name"] ["value"] (name, v) pool
+doConfigSet :: String -> Int -> DB.PSQL Int64
+doConfigSet name v =
+  insertOrUpdate configs ["name"] ["value"] [] (name, v)
 
-doConfigGet :: Pool Connection -> String -> IO (Maybe Int)
-doConfigGet pool name = selectOneOnly configs  "value" "name=?" (Only name) pool
+doConfigGet :: String -> DB.PSQL (Maybe Int)
+doConfigGet name = selectOneOnly configs  "value" "name=?" (Only name)
 
-mkFoldFunc :: (Job -> a -> a) -> a -> Only ByteString -> IO a
-mkFoldFunc f acc (Only bs) =
+mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> DB.PSQL a
+mkFoldFunc f bs acc =
   case decodeJob bs of
     Left e -> do
-      errorM "Periodic.Server.Persist.PSQL" $ "mkFoldFunc error: decode " ++ show bs ++ " " ++ show e
+      liftIO $ errorM "Periodic.Server.Persist.PSQL" $ "mkFoldFunc error: decode " ++ show bs ++ " " ++ show e
       return acc
     Right job -> return $ f job acc
 

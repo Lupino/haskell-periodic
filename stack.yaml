@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-18.0
+resolver: lts-18.8
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -60,6 +60,10 @@ extra-deps:
   - metro-transport-xor
   - metro-transport-tls
   - metro-transport-websockets
+- git: https://github.com/Lupino/yuntan-common.git
+  commit: 8f0ddd2decf3e07296d11864eec4b776ecd3a011
+  subdirs:
+  - psql-utils
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true

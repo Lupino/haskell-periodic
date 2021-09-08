@@ -47,13 +47,12 @@ library
                      , map-io
                      , entropy
 
-                     , postgresql-simple
                      , base64-bytestring
-                     , resource-pool
 
                      , sorted-list
 
                      , metro-socket
+                     , psql-utils
   default-language:    Haskell2010
 
 executable periodicd
