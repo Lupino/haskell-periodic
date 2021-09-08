@@ -826,7 +826,9 @@ purgeEmptyLock = do
 getMaxLockCount :: MonadUnliftIO m => SchedT db m Int
 getMaxLockCount = do
   lockList <- asks sLockList
-  maximum . map maxCount <$> IOMap.elems lockList
+  locks <- IOMap.elems lockList
+  if null locks then return 0
+                else return $ maximum $ map maxCount locks
 
 
 status :: (MonadIO m, Persist db) => SchedT db m [FuncStat]
