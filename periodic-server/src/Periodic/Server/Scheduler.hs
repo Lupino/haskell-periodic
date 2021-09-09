@@ -820,14 +820,10 @@ revertRunningQueue = do
   now <- getEpochTime
   tout <- fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
   p <- asks sPersist
-  handles <- liftIO $ P.foldr p Running (foldFunc (check now tout)) []
+  handles <- liftIO $ filter (check now tout) <$> P.getRunningJob p (now - tout)
   mapM_ (failJob . getHandle) handles
 
-  where foldFunc :: (Job -> Bool) -> Job -> [Job] -> [Job]
-        foldFunc f job acc | f job = job : acc
-                           | otherwise = acc
-
-        check :: Int64 -> Int64 -> Job -> Bool
+  where check :: Int64 -> Int64 -> Job -> Bool
         check now t0 job
           | getTimeout job > 0 = getSchedAt job + fromIntegral (getTimeout job) < now
           | otherwise = getSchedAt job + fromIntegral t0 < now

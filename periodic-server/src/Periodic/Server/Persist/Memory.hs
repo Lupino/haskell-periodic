@@ -54,7 +54,7 @@ instance Persist Memory where
   insert         = doInsert
   delete         = doDelete
   size           = doSize
-  foldr          = doFoldr
+  getRunningJob  = doGetRunningJob
   getPendingJob  = doGetPendingJob
   getLockedJob   = doGetLockedJob
   dumpJob        = doDumpJob
@@ -118,13 +118,13 @@ doDelete m f j = atomically $ deleteJobSTM m f j
 doSize :: Memory -> State -> FuncName -> IO Int64
 doSize m s f = fromIntegral . maybe 0 HM.size <$> getJobMap1 m s f
 
-doFoldr :: forall a . Memory -> State -> (Job -> a -> a) -> a -> IO a
-doFoldr m s f acc =
-  IOMap.foldrWithKey (foldFunc f) acc (getJobMap m s)
-  where foldFunc :: (Job -> b -> b) -> FuncName -> Map JobName Job -> b -> b
-        foldFunc ff _ h acc0 = HM.foldr ff acc0 h
+doGetRunningJob :: Memory -> Int64 -> IO [Job]
+doGetRunningJob m ts =
+  filter (\job -> getSchedAt job < ts) <$> IOMap.foldrWithKey foldFunc [] (getJobMap m Running)
+  where foldFunc :: FuncName -> Map JobName Job -> [Job] -> [Job]
+        foldFunc _ h acc0 = HM.foldr (:) acc0 h
 
-doGetPendingJob :: forall a . Memory -> [FuncName] -> Int64 -> Int -> IO [Job]
+doGetPendingJob :: Memory -> [FuncName] -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fns ts c =
   take c <$> IOMap.foldrWithKey foldFunc [] (pending m)
 
@@ -136,7 +136,7 @@ doGetPendingJob m fns ts c =
         foldFunc1 job acc0 | getSchedAt job < ts = job : acc0
                            | otherwise = acc0
 
-doGetLockedJob :: forall a . Memory -> FuncName -> Int -> IO [Job]
+doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
 doGetLockedJob m fn c = take c . maybe [] HM.elems <$> getJobMap1 m Locking fn
 
 doCountPending :: Memory -> Int64 -> [FuncName] -> IO Int

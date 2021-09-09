@@ -27,7 +27,7 @@ class (Exception (PersistException db)) => Persist db where
   insert         :: db -> State -> FuncName -> JobName -> Job -> IO ()
   delete         :: db -> FuncName -> JobName -> IO ()
   size           :: db -> State -> FuncName -> IO Int64
-  foldr          :: forall a . db -> State -> (Job -> a -> a) -> a -> IO a
+  getRunningJob  :: forall a . db -> Int64 -> IO [Job]
   getPendingJob  :: forall a . db -> [FuncName] -> Int64 -> Int -> IO [Job]
   getLockedJob   :: forall a . db -> FuncName -> Int -> IO [Job]
   dumpJob        :: db -> IO [Job]

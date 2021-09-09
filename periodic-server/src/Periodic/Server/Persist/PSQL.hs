@@ -89,7 +89,7 @@ instance Persist PSQL where
   insert         db st fn jn = runDB_ db . doInsert st fn jn
   delete         db fn       = runDB_ db . doDelete fn
   size           db st       = runDB  db . doSize st
-  foldr          db st f     = runDB  db . doFoldr st f
+  getRunningJob  db          = runDB  db . doGetRunningJob
   getPendingJob  db fns ts   = runDB  db . doGetPendingJob fns ts
   getLockedJob   db fn       = runDB  db . doGetLockedJob fn
   dumpJob        db          = runDB  db   doDumpJob
@@ -167,9 +167,9 @@ doInsert state fn jn job = do
 doInsertFuncName :: FuncName -> DB.PSQL Int64
 doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only fn)
 
-doFoldr :: State -> (Job -> a -> a) -> a -> DB.PSQL a
-doFoldr state f acc = do
-  F.foldr f acc <$> selectOnly jobs "value" "state=?" (Only state) 0 100 (asc "sched_at")
+doGetRunningJob :: Int64 -> DB.PSQL [Job]
+doGetRunningJob st =
+  selectOnly jobs "value" "sched_at < ?" (Only st) 0 1000 (asc "sched_at")
 
 doGetPendingJob :: [FuncName] -> Int64 -> Int -> DB.PSQL [Job]
 doGetPendingJob fns ts c =

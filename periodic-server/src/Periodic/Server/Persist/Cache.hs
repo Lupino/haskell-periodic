@@ -40,7 +40,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    insert           = doInsert
    delete           = doDelete
    size             = doSize
-   foldr            = doFoldr
+   getRunningJob    = doGetRunningJob
    getPendingJob    = doGetPendingJob
    getLockedJob     = doGetLockedJob
    dumpJob          = doDumpJob
@@ -94,12 +94,12 @@ doSize m s f = do
   s2 <- size (backend m) s f
   return $ s1 + s2
 
-doFoldr
-  :: forall a db
-  . Persist db
-  => Cache db -> State -> (Job -> a -> a) -> a -> IO a
-doFoldr m s f acc =
-  foldr (backend m) s f =<< foldr (memory m) s f acc
+doGetRunningJob
+  :: forall db . Persist db
+  => Cache db -> Int64 -> IO [Job]
+doGetRunningJob m ts = do
+  r0 <- getRunningJob (memory m) ts
+  (r0 ++) <$> getRunningJob (backend m) ts
 
 doGetPendingJob
   :: forall a db . Persist db

@@ -61,7 +61,7 @@ instance Persist SQLite where
   insert         (SQLite db) = doInsert db
   delete         (SQLite db) = doDelete db
   size           (SQLite db) = doSize db
-  foldr          (SQLite db) = doFoldr db
+  getRunningJob  (SQLite db) = doGetRunningJob db
   getPendingJob  (SQLite db) = doGetPendingJob db
   getLockedJob   (SQLite db) = doGetLockedJob db
   dumpJob        (SQLite db) = doDumpJob db
@@ -140,9 +140,9 @@ doInsertFuncName :: Database -> FuncName -> IO ()
 doInsertFuncName db = execFN db sql
   where sql = Utf8 "INSERT OR REPLACE INTO funcs VALUES (?)"
 
-doFoldr :: Database -> State -> (Job -> a -> a) -> a -> IO a
-doFoldr db state f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE state=" `append` stateName state
+doGetRunningJob :: Database -> Int64 -> IO [Job]
+doGetRunningJob db ts = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE sched_at<" `append` B.pack (show ts)
 
 doGetPendingJob :: Database -> [FuncName] -> Int64 -> Int -> IO [Job]
 doGetPendingJob db fns ts c = take c <$> F.foldrM (foldFunc (:)) [] fns
