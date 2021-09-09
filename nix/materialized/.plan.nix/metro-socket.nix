@@ -23,7 +23,7 @@
       buildType = "Simple";
       isLocal = true;
       detailLevel = "FullDetails";
-      licenseFiles = [];
+      licenseFiles = [ "LICENSE" ];
       dataDir = ".";
       dataFiles = [];
       extraSrcFiles = [ "README.md" "ChangeLog.md" ];
@@ -45,10 +45,28 @@
           (hsPkgs."unliftio" or (errorHandler.buildDepError "unliftio"))
           ];
         buildable = true;
-        modules = [ "Paths_metro_socket" ];
+        modules = [
+          "Paths_metro_socket"
+          "Metro/Socket"
+          "Metro/SocketServer"
+          "Metro/TCPServer"
+          "Metro/TP/Socket"
+          "Metro/TP/TCPSocket"
+          "Metro/TP/UDPSocket"
+          "Metro/UDPServer"
+          ];
         hsSourceDirs = [ "src" ];
         };
       };
-    } // rec {
-    src = (pkgs.lib).mkDefault .././.source-repository-packages/2;
+    } // {
+    src = (pkgs.lib).mkDefault (pkgs.fetchgit {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      }) // {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      };
+    postUnpack = "sourceRoot+=/metro-socket; echo source root reset to \$sourceRoot";
     }) // { cabal-generator = "hpack"; }

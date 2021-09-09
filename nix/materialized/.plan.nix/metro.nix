@@ -23,7 +23,7 @@
       buildType = "Simple";
       isLocal = true;
       detailLevel = "FullDetails";
-      licenseFiles = [];
+      licenseFiles = [ "LICENSE" ];
       dataDir = ".";
       dataFiles = [];
       extraSrcFiles = [ "README.md" "ChangeLog.md" ];
@@ -44,10 +44,30 @@
           (hsPkgs."unliftio" or (errorHandler.buildDepError "unliftio"))
           ];
         buildable = true;
-        modules = [ "Paths_metro" ];
+        modules = [
+          "Paths_metro"
+          "Metro"
+          "Metro/Class"
+          "Metro/Conn"
+          "Metro/Lock"
+          "Metro/Node"
+          "Metro/Server"
+          "Metro/Session"
+          "Metro/TP/BS"
+          "Metro/TP/Debug"
+          "Metro/Utils"
+          ];
         hsSourceDirs = [ "src" ];
         };
       };
-    } // rec {
-    src = (pkgs.lib).mkDefault .././.source-repository-packages/0;
+    } // {
+    src = (pkgs.lib).mkDefault (pkgs.fetchgit {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      }) // {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      };
     }) // { cabal-generator = "hpack"; }

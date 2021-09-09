@@ -23,7 +23,7 @@
       buildType = "Simple";
       isLocal = true;
       detailLevel = "FullDetails";
-      licenseFiles = [];
+      licenseFiles = [ "LICENSE" ];
       dataDir = ".";
       dataFiles = [];
       extraSrcFiles = [ "README.md" "ChangeLog.md" ];
@@ -44,10 +44,23 @@
           (hsPkgs."x509-validation" or (errorHandler.buildDepError "x509-validation"))
           ];
         buildable = true;
-        modules = [ "Paths_metro_transport_tls" ];
+        modules = [
+          "Paths_metro_transport_tls"
+          "Metro/TP/TLS"
+          "Metro/TP/TLSSetting"
+          ];
         hsSourceDirs = [ "src" ];
         };
       };
-    } // rec {
-    src = (pkgs.lib).mkDefault .././.source-repository-packages/3;
+    } // {
+    src = (pkgs.lib).mkDefault (pkgs.fetchgit {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      }) // {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      };
+    postUnpack = "sourceRoot+=/metro-transport-tls; echo source root reset to \$sourceRoot";
     }) // { cabal-generator = "hpack"; }

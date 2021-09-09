@@ -51,10 +51,10 @@
           (hsPkgs."metro" or (errorHandler.buildDepError "metro"))
           (hsPkgs."map-io" or (errorHandler.buildDepError "map-io"))
           (hsPkgs."entropy" or (errorHandler.buildDepError "entropy"))
-          (hsPkgs."postgresql-simple" or (errorHandler.buildDepError "postgresql-simple"))
           (hsPkgs."base64-bytestring" or (errorHandler.buildDepError "base64-bytestring"))
-          (hsPkgs."resource-pool" or (errorHandler.buildDepError "resource-pool"))
           (hsPkgs."sorted-list" or (errorHandler.buildDepError "sorted-list"))
+          (hsPkgs."metro-socket" or (errorHandler.buildDepError "metro-socket"))
+          (hsPkgs."psql-utils" or (errorHandler.buildDepError "psql-utils"))
           ];
         buildable = true;
         modules = [
@@ -68,6 +68,7 @@
           "Periodic/Server/Persist/Cache"
           "Periodic/Server/Client"
           "Periodic/Server/Types"
+          "Periodic/Server/Hook"
           "Periodic/Server"
           ];
         hsSourceDirs = [ "src" ];

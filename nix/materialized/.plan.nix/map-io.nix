@@ -38,10 +38,19 @@
           (hsPkgs."stm" or (errorHandler.buildDepError "stm"))
           ];
         buildable = true;
-        modules = [ "Paths_map_io" ];
+        modules = [ "Paths_map_io" "Data/IOMap" "Data/IOMap/STM" ];
         hsSourceDirs = [ "src" ];
         };
       };
-    } // rec {
-    src = (pkgs.lib).mkDefault .././.source-repository-packages/1;
+    } // {
+    src = (pkgs.lib).mkDefault (pkgs.fetchgit {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      }) // {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      };
+    postUnpack = "sourceRoot+=/map-io; echo source root reset to \$sourceRoot";
     }) // { cabal-generator = "hpack"; }

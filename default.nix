@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc8105" }:
+{ compiler-nix-name ? "ghc8107" }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -26,10 +26,10 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2021-06-30T00:00:00Z";
-    index-sha256 = "0f6213f13984148dbf6ad865576e3a9ebb330751b30b49a7f6e02697865cbb01";
-    plan-sha256 = if compiler-nix-name == "ghc8105" then "14kni3m1q8yx6gj9cvd2h30mfa6z61cq5n3wk8pfp0dpr2w8x0as" else null;
-    materialized = if compiler-nix-name == "ghc8105" then ./nix/materialized else null;
+    index-state = "2021-09-08T00:00:00Z";
+    index-sha256 = "aebd783ca0dc3afa9db213ea75fd43db49d8587fbced19565043d973527b9828";
+    plan-sha256 = if compiler-nix-name == "ghc8107" then "18cp0abqi68k0yp3x73g285f4rqqw03pil9h2kmdrk4rgpp4m8sr" else null;
+    materialized = if compiler-nix-name == "ghc8107" then ./nix/materialized else null;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
     modules = [(
@@ -37,6 +37,9 @@ in pkgs.haskell-nix.cabalProject {
          packages.periodic-server.configureFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isMusl [
            "--ghc-option=-optl=-lssl"
            "--ghc-option=-optl=-lcrypto"
+           "--ghc-option=-optl=-lpgport"
+           "--ghc-option=-optl=-lpgcommon"
+           "--ghc-option=-optl=-L${pkgs.pq.out}/lib"
            "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
          ];
       })];

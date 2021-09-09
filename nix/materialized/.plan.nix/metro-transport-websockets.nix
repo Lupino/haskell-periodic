@@ -26,7 +26,7 @@
       buildType = "Simple";
       isLocal = true;
       detailLevel = "FullDetails";
-      licenseFiles = [];
+      licenseFiles = [ "LICENSE" ];
       dataDir = ".";
       dataFiles = [];
       extraSrcFiles = [ "README.md" "ChangeLog.md" ];
@@ -42,10 +42,19 @@
           (hsPkgs."websockets" or (errorHandler.buildDepError "websockets"))
           ];
         buildable = true;
-        modules = [ "Paths_metro_transport_websockets" ];
+        modules = [ "Paths_metro_transport_websockets" "Metro/TP/WebSockets" ];
         hsSourceDirs = [ "src" ];
         };
       };
-    } // rec {
-    src = (pkgs.lib).mkDefault .././.source-repository-packages/4;
+    } // {
+    src = (pkgs.lib).mkDefault (pkgs.fetchgit {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      }) // {
+      url = "0";
+      rev = "minimal";
+      sha256 = "";
+      };
+    postUnpack = "sourceRoot+=/metro-transport-websockets; echo source root reset to \$sourceRoot";
     }) // { cabal-generator = "hpack"; }
