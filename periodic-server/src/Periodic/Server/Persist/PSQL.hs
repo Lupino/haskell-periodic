@@ -15,16 +15,18 @@ import           Data.ByteString         (ByteString)
 import           Data.ByteString.Base64  (decode, encode)
 import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
-import qualified Data.Foldable           as F (foldrM)
+import qualified Data.Foldable           as F (foldr)
 import           Data.Int                (Int64)
+import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe, isJust)
 import           Data.String             (IsString (..))
-import           Database.PSQL.Types     (Only (..), PSQLPool, Size (..),
-                                          TableName, asc, count, createPSQLPool,
+import           Database.PSQL.Types     (FromField (..), Only (..), PSQLPool,
+                                          Size (..), TableName, ToField (..),
+                                          asc, count, createPSQLPool,
                                           createTable, delete, insertOrUpdate,
                                           none, runPSQLPool, selectOneOnly,
-                                          selectOnly, selectOnly_, update,
-                                          withTransaction)
+                                          selectOnly, selectOnly_, toRow,
+                                          update, withTransaction)
 import qualified Database.PSQL.Types     as DB (PSQL)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
                                           State (..))
@@ -32,14 +34,29 @@ import qualified Periodic.Server.Persist as Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
-import           System.Log.Logger       (errorM, infoM)
-import           UnliftIO                (Exception, SomeException, Typeable,
-                                          liftIO)
+import           System.Log.Logger       (infoM)
+import           UnliftIO                (Exception, SomeException, Typeable)
 
-stateName :: State -> ByteString
-stateName Pending = "0"
-stateName Running = "1"
-stateName Locking = "2"
+instance ToField FuncName where
+  toField (FuncName fn) = toField fn
+
+instance ToField JobName where
+  toField (JobName jn) = toField jn
+
+instance ToField State where
+  toField Pending = toField (0 :: Int)
+  toField Running = toField (1 :: Int)
+  toField Locking = toField (2 :: Int)
+
+instance FromField Job where
+  fromField f dat = do
+    r <- fromField f dat
+    case decodeJob r of
+      Left e   -> error $ "decodeJob " ++ e
+      Right ok -> pure ok
+
+instance ToField Job where
+  toField = toField . encode . toBytes
 
 newtype PSQL = PSQL PSQLPool
 
@@ -128,21 +145,12 @@ createFuncTable =
     ]
 
 allPending :: DB.PSQL Int64
-allPending = update jobs ["state"] "" (Only (stateName Pending))
+allPending = update jobs ["state"] "" (Only Pending)
 
 doLookup :: State -> FuncName -> JobName -> DB.PSQL (Maybe Job)
 doLookup state fn jn = do
-  r <- selectOneOnly jobs "value" "func=? AND name=? AND state=?"
-        (unFN fn, unJN jn, stateName state)
-  case r of
-    Nothing -> return Nothing
-    Just bs ->
-      case decodeJob bs of
-        Left e -> do
-          liftIO $ errorM "Periodic.Server.Persist.PSQL"
-                 $ "doLookup error: decode " ++ show bs ++ " " ++ show e
-          return Nothing
-        Right job -> return $ Just job
+  selectOneOnly jobs "value" "func=? AND name=? AND state=?"
+    (fn, jn, state)
 
 doMember :: State -> FuncName -> JobName -> DB.PSQL Bool
 doMember st fn jn = isJust <$> doLookup st fn jn
@@ -154,64 +162,58 @@ doInsert state fn jn job = do
     ["func", "name"]
     ["value", "state", "sched_at"]
     []
-    (unFN fn, unJN jn, encode $ toBytes job, stateName state, getSchedAt job)
+    (fn, jn, job, state, getSchedAt job)
 
 doInsertFuncName :: FuncName -> DB.PSQL Int64
-doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only $ unFN fn)
+doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only fn)
 
 doFoldr :: State -> (Job -> a -> a) -> a -> DB.PSQL a
 doFoldr state f acc = do
-  selectOnly jobs "value" "state=?" (Only $ stateName state) 0 100 (asc "sched_at")
-    >>= F.foldrM (mkFoldFunc f) acc
+  F.foldr f acc <$> selectOnly jobs "value" "state=?" (Only state) 0 100 (asc "sched_at")
 
 doFoldrPending :: Int64 -> [FuncName] -> (Job -> a -> a) -> a -> DB.PSQL a
-doFoldrPending ts fns f acc = F.foldrM (foldFunc f) acc fns
+doFoldrPending ts fns f acc =
+  F.foldr f acc <$> selectOnly jobs "value" ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
+      (toRow fns ++ toRow (Pending, ts)) 0 1000 (asc "sched_at")
 
-  where foldFunc :: (Job -> a -> a) -> FuncName -> a -> DB.PSQL a
-        foldFunc f0 fn acc0 =
-          selectOnly jobs "value" "func=? AND state=? AND sched_at < ?"
-            (unFN fn, stateName Pending, ts) 0 1000 (asc "sched_at")
-            >>= F.foldrM (mkFoldFunc f0) acc0
+  where fnsv = intercalate ", " $ replicate (length fns) "?"
 
 doFoldrLocking :: Int -> FuncName -> (Job -> a -> a) -> a -> DB.PSQL a
 doFoldrLocking limit fn f acc = do
-  selectOnly jobs "value" "func=? AND state=?"
-    (unFN fn, stateName Locking) 0 (Size $ fromIntegral limit) (asc "sched_at")
-    >>= F.foldrM (mkFoldFunc f) acc
+  F.foldr f acc <$> selectOnly jobs "value" "func=? AND state=?"
+    (fn, Locking) 0 (Size $ fromIntegral limit) (asc "sched_at")
 
 doCountPending :: Int64 -> [FuncName] -> DB.PSQL Int
-doCountPending ts = F.foldrM foldFunc 0
+doCountPending ts fns =
+  fromIntegral <$> count jobs ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
+      (toRow fns ++ toRow (Pending, ts))
 
-  where foldFunc :: FuncName -> Int -> DB.PSQL Int
-        foldFunc fn acc = do
-          (acc +) . fromIntegral <$> count jobs "func=? AND state=? AND sched_at < ?"
-            (unFN fn, stateName Pending, ts)
+  where fnsv = intercalate ", " $ replicate (length fns) "?"
+
 
 doDumpJob :: DB.PSQL [Job]
-doDumpJob =
-  selectOnly_ jobs "value" 0 10000 none
-    >>= F.foldrM (mkFoldFunc (:)) []
+doDumpJob = selectOnly_ jobs "value" 0 10000 none
 
 doFuncList :: DB.PSQL [FuncName]
 doFuncList = map FuncName <$> selectOnly_ funcs "func" 0 10000 none
 
 doDelete :: FuncName -> JobName -> DB.PSQL Int64
-doDelete fn jn = delete jobs "func=? AND name=?" (unFN fn, unJN jn)
+doDelete fn jn = delete jobs "func=? AND name=?" (fn, jn)
 
 doRemoveFuncName :: FuncName -> DB.PSQL ()
 doRemoveFuncName fn = do
-  void $ delete jobs "func=?" (Only $ unFN fn)
-  void $ delete funcs "func=?" (Only $ unFN fn)
+  void $ delete jobs "func=?" (Only fn)
+  void $ delete funcs "func=?" (Only fn)
 
 doMinSchedAt :: State -> FuncName -> DB.PSQL Int64
 doMinSchedAt state fn =
   fromMaybe 0
     . fromMaybe Nothing
     <$> selectOneOnly jobs "min(sched_at)" "func=? AND state=?"
-    (unFN fn, stateName state)
+    (fn, state)
 
 doSize :: State -> FuncName -> DB.PSQL Int64
-doSize state fn = count jobs "func=? AND state=?" (unFN fn, stateName state)
+doSize state fn = count jobs "func=? AND state=?" (fn, state)
 
 doConfigSet :: String -> Int -> DB.PSQL Int64
 doConfigSet name v =
@@ -219,14 +221,6 @@ doConfigSet name v =
 
 doConfigGet :: String -> DB.PSQL (Maybe Int)
 doConfigGet name = selectOneOnly configs  "value" "name=?" (Only name)
-
-mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> DB.PSQL a
-mkFoldFunc f bs acc =
-  case decodeJob bs of
-    Left e -> do
-      liftIO $ errorM "Periodic.Server.Persist.PSQL" $ "mkFoldFunc error: decode " ++ show bs ++ " " ++ show e
-      return acc
-    Right job -> return $ f job acc
 
 decodeJob :: ByteString -> Either String Job
 decodeJob bs =
