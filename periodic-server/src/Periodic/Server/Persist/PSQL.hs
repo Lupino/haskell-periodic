@@ -175,14 +175,9 @@ doFoldrPending ts fns f acc = F.foldrM (foldFunc f) acc fns
 
 doFoldrLocking :: Int -> FuncName -> (Job -> a -> a) -> a -> DB.PSQL a
 doFoldrLocking limit fn f acc = do
-  liftIO $ putStr "doFoldrLocking "
-  liftIO $ print fn
-  liftIO $ putStr "count "
-  liftIO $ print limit
-  bs <- selectOnly jobs "value" "func=? AND state=?"
+  selectOnly jobs "value" "func=? AND state=?"
     (unFN fn, stateName Locking) 0 (Size $ fromIntegral limit) (asc "sched_at")
-  liftIO $ print bs
-  F.foldrM (mkFoldFunc f) acc bs
+    >>= F.foldrM (mkFoldFunc f) acc
 
 doCountPending :: Int64 -> [FuncName] -> DB.PSQL Int
 doCountPending ts = F.foldrM foldFunc 0
