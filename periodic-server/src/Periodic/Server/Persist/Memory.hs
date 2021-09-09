@@ -56,7 +56,7 @@ instance Persist Memory where
   size           = doSize
   foldr          = doFoldr
   foldrPending   = doFoldrPending
-  foldrLocking   = doFoldrLocking
+  getLockedJob   = doGetLockedJob
   dumpJob        = doDumpJob
   configSet      = \_ _ _ -> return ()
   configGet      = \_ _ -> return Nothing
@@ -136,9 +136,8 @@ doFoldrPending m st fns f acc =
         foldFunc1 ff job acc0 | getSchedAt job < st = ff job acc0
                               | otherwise = acc0
 
-doFoldrLocking :: forall a . Memory -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
-doFoldrLocking m _ fn f acc =
-  maybe acc (HM.foldr f acc) <$> getJobMap1 m Locking fn
+doGetLockedJob :: forall a . Memory -> FuncName -> Int -> IO [Job]
+doGetLockedJob m fn c = take c . maybe [] HM.elems <$> getJobMap1 m Locking fn
 
 doCountPending :: Memory -> Int64 -> [FuncName] -> IO Int
 doCountPending m st fns =

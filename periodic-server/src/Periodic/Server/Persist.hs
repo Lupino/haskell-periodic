@@ -29,7 +29,7 @@ class (Exception (PersistException db)) => Persist db where
   size           :: db -> State -> FuncName -> IO Int64
   foldr          :: forall a . db -> State -> (Job -> a -> a) -> a -> IO a
   foldrPending   :: forall a . db -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-  foldrLocking   :: forall a . db -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
+  getLockedJob   :: forall a . db -> FuncName -> Int -> IO [Job]
   dumpJob        :: db -> IO [Job]
   configGet      :: db -> String -> IO (Maybe Int)
   configSet      :: db -> String -> Int -> IO ()

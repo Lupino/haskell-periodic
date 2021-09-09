@@ -63,7 +63,7 @@ instance Persist SQLite where
   size           (SQLite db) = doSize db
   foldr          (SQLite db) = doFoldr db
   foldrPending   (SQLite db) = doFoldrPending db
-  foldrLocking   (SQLite db) = doFoldrLocking db
+  getLockedJob   (SQLite db) = doGetLockedJob db
   dumpJob        (SQLite db) = doDumpJob db
   configSet      (SQLite db) = doConfigSet db
   configGet      (SQLite db) = doConfigGet db
@@ -155,8 +155,8 @@ doFoldrPending db ts fns f acc = F.foldrM (foldFunc f) acc fns
         foldFunc  f0 fn =
           doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f0)
 
-doFoldrLocking :: Database -> Int -> FuncName -> (Job -> a -> a) -> a -> IO a
-doFoldrLocking db limit fn f = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f)
+doGetLockedJob :: Database -> FuncName -> Int -> IO [Job]
+doGetLockedJob db fn limit = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc (:)) []
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
                    <> stateName Locking
                    <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)

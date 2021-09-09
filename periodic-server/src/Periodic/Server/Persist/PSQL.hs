@@ -84,22 +84,22 @@ instance Persist PSQL where
       void allPending
     return $ PSQL pool
 
-  member         db st fn      = runDB  db . doMember st fn
-  lookup         db st fn      = runDB  db . doLookup st fn
-  insert         db st fn jn   = runDB_ db . doInsert st fn jn
-  delete         db fn         = runDB_ db . doDelete fn
-  size           db st         = runDB  db . doSize st
-  foldr          db st f       = runDB  db . doFoldr st f
-  foldrPending   db ts fns f   = runDB  db . doFoldrPending ts fns f
-  foldrLocking   db limit fn f = runDB  db . doFoldrLocking limit fn f
-  dumpJob        db            = runDB  db   doDumpJob
-  configSet      db name       = runDB_ db . doConfigSet name
-  configGet      db            = runDB  db . doConfigGet
-  insertFuncName db            = runDB_ db . doInsertFuncName
-  removeFuncName db            = runDB  db . doRemoveFuncName
-  funcList       db            = runDB  db   doFuncList
-  minSchedAt     db            = runDB  db . doMinSchedAt Pending
-  countPending   db ts         = runDB  db . doCountPending ts
+  member         db st fn    = runDB  db . doMember st fn
+  lookup         db st fn    = runDB  db . doLookup st fn
+  insert         db st fn jn = runDB_ db . doInsert st fn jn
+  delete         db fn       = runDB_ db . doDelete fn
+  size           db st       = runDB  db . doSize st
+  foldr          db st f     = runDB  db . doFoldr st f
+  foldrPending   db ts fns f = runDB  db . doFoldrPending ts fns f
+  getLockedJob   db fn       = runDB  db . doGetLockedJob fn
+  dumpJob        db          = runDB  db   doDumpJob
+  configSet      db name     = runDB_ db . doConfigSet name
+  configGet      db          = runDB  db . doConfigGet
+  insertFuncName db          = runDB_ db . doInsertFuncName
+  removeFuncName db          = runDB  db . doRemoveFuncName
+  funcList       db          = runDB  db   doFuncList
+  minSchedAt     db          = runDB  db . doMinSchedAt Pending
+  countPending   db ts       = runDB  db . doCountPending ts
 
 instance Exception (PersistException PSQL)
 
@@ -178,10 +178,10 @@ doFoldrPending ts fns f acc =
 
   where fnsv = intercalate ", " $ replicate (length fns) "?"
 
-doFoldrLocking :: Int -> FuncName -> (Job -> a -> a) -> a -> DB.PSQL a
-doFoldrLocking limit fn f acc = do
-  F.foldr f acc <$> selectOnly jobs "value" "func=? AND state=?"
-    (fn, Locking) 0 (Size $ fromIntegral limit) (asc "sched_at")
+doGetLockedJob :: FuncName -> Int -> DB.PSQL [Job]
+doGetLockedJob fn c = do
+  selectOnly jobs "value" "func=? AND state=?"
+    (fn, Locking) 0 (Size $ fromIntegral c) (asc "sched_at")
 
 doCountPending :: Int64 -> [FuncName] -> DB.PSQL Int
 doCountPending ts fns =

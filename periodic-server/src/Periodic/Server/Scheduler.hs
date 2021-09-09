@@ -862,7 +862,7 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
         checkAndReleaseLock fn = do
           p <- asks sPersist
           count <- getMaxLockCount
-          handles <- liftIO $ P.foldrLocking p (max count 10) fn (:) []
+          handles <- liftIO $ P.getLockedJob p fn (max count 10)
           mapM_ pushJob handles
 
 
