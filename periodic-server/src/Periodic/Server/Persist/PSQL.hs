@@ -90,7 +90,7 @@ instance Persist PSQL where
   delete         db fn       = runDB_ db . doDelete fn
   size           db st       = runDB  db . doSize st
   foldr          db st f     = runDB  db . doFoldr st f
-  foldrPending   db ts fns f = runDB  db . doFoldrPending ts fns f
+  getPendingJob  db fns ts   = runDB  db . doGetPendingJob fns ts
   getLockedJob   db fn       = runDB  db . doGetLockedJob fn
   dumpJob        db          = runDB  db   doDumpJob
   configSet      db name     = runDB_ db . doConfigSet name
@@ -171,10 +171,10 @@ doFoldr :: State -> (Job -> a -> a) -> a -> DB.PSQL a
 doFoldr state f acc = do
   F.foldr f acc <$> selectOnly jobs "value" "state=?" (Only state) 0 100 (asc "sched_at")
 
-doFoldrPending :: Int64 -> [FuncName] -> (Job -> a -> a) -> a -> DB.PSQL a
-doFoldrPending ts fns f acc =
-  F.foldr f acc <$> selectOnly jobs "value" ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
-      (toRow fns ++ toRow (Pending, ts)) 0 1000 (asc "sched_at")
+doGetPendingJob :: [FuncName] -> Int64 -> Int -> DB.PSQL [Job]
+doGetPendingJob fns ts c =
+  selectOnly jobs "value" ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
+      (toRow fns ++ toRow (Pending, ts)) 0 (Size $ fromIntegral c) (asc "sched_at")
 
   where fnsv = intercalate ", " $ replicate (length fns) "?"
 

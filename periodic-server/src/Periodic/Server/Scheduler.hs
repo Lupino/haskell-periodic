@@ -53,8 +53,6 @@ import           Data.Int                   (Int64)
 import qualified Data.List                  as L (delete)
 import qualified Data.Map.Strict            as Map (filter, map)
 import           Data.Maybe                 (fromJust, fromMaybe, isJust)
-import           Data.SortedList            (SortedList)
-import qualified Data.SortedList            as SL
 import qualified Metro.Lock                 as L (Lock, new, with)
 import           Metro.Utils                (getEpochTime)
 import           Periodic.Server.FuncStat
@@ -345,16 +343,6 @@ getAvaliableFuncList = do
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
         foldFunc (fn, _) acc                  = fn:acc
 
-data SortedJob = SortedJob Int Job
-
-getSortedJob :: SortedJob -> Job
-getSortedJob (SortedJob _ job) = job
-
-instance Eq SortedJob where
-  SortedJob a _ == SortedJob b _ = a == b
-
-instance Ord SortedJob where
-  compare (SortedJob a _) (SortedJob b _) = compare a b
 
 pollJob_
   :: (MonadUnliftIO m, Persist db)
@@ -362,24 +350,15 @@ pollJob_
 pollJob_ _ [] _ = pure ()
 pollJob_ taskList funcList next = do
   handles <- IOMap.keys taskList
-  let check job = notElem (getHandle job) handles && (getSchedAt job < next)
 
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
-  jobs <- liftIO $
-    P.foldrPending p next funcList (foldFunc (maxBatchSize * batchScale) check) $ SL.toSortedList []
+  jobs <- liftIO $ P.getPendingJob p funcList next
+            (maxBatchSize * batchScale + length handles)
 
-  mapM_ (checkJob taskList . getSortedJob) $ SL.fromSortedList jobs
+  mapM_ (checkJob taskList) $ filter (flip notElem handles . getHandle) jobs
 
-  where foldFunc :: Int -> (Job -> Bool) -> Job -> SortedList SortedJob -> SortedList SortedJob
-        foldFunc s f job acc
-          | f job = trimPSQ $ SL.insert (SortedJob (fromIntegral (next - getSchedAt job)) job) acc
-          | otherwise = acc
-          where trimPSQ ::  SortedList SortedJob -> SortedList SortedJob
-                trimPSQ q | length (SL.fromSortedList q) > s = trimPSQ $ SL.drop 1 q
-                          | otherwise = q
-
-        checkJob
+  where checkJob
           :: (MonadUnliftIO m, Persist db)
           => TaskList -> Job -> SchedT db m ()
         checkJob tl job = do

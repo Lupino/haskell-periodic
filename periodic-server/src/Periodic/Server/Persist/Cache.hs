@@ -41,7 +41,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    delete           = doDelete
    size             = doSize
    foldr            = doFoldr
-   foldrPending     = doFoldrPending
+   getPendingJob    = doGetPendingJob
    getLockedJob     = doGetLockedJob
    dumpJob          = doDumpJob
    configSet      m = configSet (backend m)
@@ -101,12 +101,13 @@ doFoldr
 doFoldr m s f acc =
   foldr (backend m) s f =<< foldr (memory m) s f acc
 
-doFoldrPending
-  :: forall a db
-  . Persist db
-  => Cache db -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldrPending m st fns f acc =
-  foldrPending (backend m) st fns f =<< foldrPending (memory m) st fns f acc
+doGetPendingJob
+  :: forall a db . Persist db
+  => Cache db -> [FuncName] -> Int64 -> Int -> IO [Job]
+doGetPendingJob m fns ts c = do
+  r0 <- getPendingJob (memory m) fns ts c
+  if length r0 < c then (r0 ++) <$> getPendingJob (backend m) fns ts (c - length r0)
+                   else pure r0
 
 doGetLockedJob
   :: forall a db

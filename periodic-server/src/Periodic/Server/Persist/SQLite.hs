@@ -62,7 +62,7 @@ instance Persist SQLite where
   delete         (SQLite db) = doDelete db
   size           (SQLite db) = doSize db
   foldr          (SQLite db) = doFoldr db
-  foldrPending   (SQLite db) = doFoldrPending db
+  getPendingJob  (SQLite db) = doGetPendingJob db
   getLockedJob   (SQLite db) = doGetLockedJob db
   dumpJob        (SQLite db) = doDumpJob db
   configSet      (SQLite db) = doConfigSet db
@@ -144,8 +144,8 @@ doFoldr :: Database -> State -> (Job -> a -> a) -> a -> IO a
 doFoldr db state f = doFoldr_ db sql (const $ pure ()) (mkFoldFunc f)
   where sql = Utf8 $ "SELECT value FROM jobs WHERE state=" `append` stateName state
 
-doFoldrPending :: Database -> Int64 -> [FuncName] -> (Job -> a -> a) -> a -> IO a
-doFoldrPending db ts fns f acc = F.foldrM (foldFunc f) acc fns
+doGetPendingJob :: Database -> [FuncName] -> Int64 -> Int -> IO [Job]
+doGetPendingJob db fns ts c = take c <$> F.foldrM (foldFunc (:)) [] fns
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
                    <> stateName Pending
                    <> " AND sched_at<"
