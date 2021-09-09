@@ -182,8 +182,8 @@ doGetLockedJob fn c = do
   selectOnly jobs "value" "func=? AND state=?"
     (fn, Locking) 0 (Size $ fromIntegral c) (asc "sched_at")
 
-doCountPending :: Int64 -> [FuncName] -> DB.PSQL Int
-doCountPending ts fns =
+doCountPending :: [FuncName] -> Int64 -> DB.PSQL Int
+doCountPending fns ts =
   fromIntegral <$> count jobs ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
       (toRow fns ++ toRow (Pending, ts))
 

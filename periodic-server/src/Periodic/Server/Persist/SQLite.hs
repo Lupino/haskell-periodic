@@ -14,7 +14,6 @@ import           Data.ByteString         (ByteString, append)
 import qualified Data.ByteString.Char8   as B (pack)
 import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
-import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
 import           Data.List               (intercalate)
 import           Data.Maybe              (isJust, listToMaybe)
@@ -162,16 +161,15 @@ doGetLockedJob db fn limit = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc (:)) []
                    <> stateName Locking
                    <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)
 
-doCountPending :: Database -> Int64 -> [FuncName] -> IO Int
-doCountPending db ts = F.foldrM foldFunc 0
-  where sql = Utf8 $ "SELECT count(*) FROM jobs WHERE func=? AND state="
+doCountPending :: Database -> [FuncName] -> Int64 -> IO Int
+doCountPending db fns ts =
+  fromIntegral <$> queryStmt db sql (bindFNS 1 fns) stepInt64
+  where fnsv = B.pack $ intercalate ", " $ replicate (length fns) "?"
+        sql = Utf8 $ "SELECT count(*) FROM jobs WHERE"
+                   <> " func in (" <> fnsv <> ")  AND state="
                    <> stateName Pending
                    <> " AND sched_at<"
                    <> B.pack (show ts)
-
-        foldFunc :: FuncName -> Int -> IO Int
-        foldFunc fn acc =
-          (acc +) . fromIntegral <$> queryStmt db sql (`bindFN` fn) stepInt64
 
 doDumpJob :: Database -> IO [Job]
 doDumpJob db = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []

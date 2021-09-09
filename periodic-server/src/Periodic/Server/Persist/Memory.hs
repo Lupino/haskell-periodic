@@ -145,8 +145,8 @@ doGetPendingJob m fns ts c =
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
 doGetLockedJob m fn c = takeMin c . maybe [] HM.elems <$> getJobMap1 m Locking fn
 
-doCountPending :: Memory -> Int64 -> [FuncName] -> IO Int
-doCountPending m st fns =
+doCountPending :: Memory -> [FuncName] -> Int64 -> IO Int
+doCountPending m fns ts =
   IOMap.foldrWithKey foldFunc 0 (pending m)
 
   where foldFunc :: FuncName -> Map JobName Job -> Int -> Int
@@ -154,7 +154,7 @@ doCountPending m st fns =
                           | otherwise = acc
 
         foldFunc1 :: Job -> Int -> Int
-        foldFunc1 job acc | getSchedAt job < st = acc + 1
+        foldFunc1 job acc | getSchedAt job < ts = acc + 1
                           | otherwise = acc
 
 

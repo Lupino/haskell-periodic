@@ -119,10 +119,10 @@ doGetLockedJob m fn c = do
 
 doCountPending
   :: forall db . Persist db
-  => Cache db -> Int64 -> [FuncName] -> IO Int
-doCountPending m st fns = do
-  c1 <- countPending (backend m) st fns
-  c2 <- countPending (memory m) st fns
+  => Cache db -> [FuncName] -> Int64 -> IO Int
+doCountPending m fns ts = do
+  c1 <- countPending (backend m) fns ts
+  c2 <- countPending (memory m) fns ts
   return $ c1 + c2
 
 doDumpJob :: Persist db => Cache db -> IO [Job]
