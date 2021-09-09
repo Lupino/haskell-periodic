@@ -7,6 +7,8 @@ What is Periodic?
 Periodic is a [Gearman](http://gearman.org) like task system,
 provides a generic application framework to do the periodic work.
 
+[![built with nix](https://builtwithnix.org/badge.svg)](https://builtwithnix.org)
+
 How Does Periodic work?
 -----------------------
 A Periodic powered application consists of three parts: a client, a worker, and a periodic server.
