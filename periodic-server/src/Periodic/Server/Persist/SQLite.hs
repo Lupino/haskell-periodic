@@ -16,6 +16,7 @@ import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
 import qualified Data.Foldable           as F (foldrM)
 import           Data.Int                (Int64)
+import           Data.List               (intercalate)
 import           Data.Maybe              (isJust, listToMaybe)
 import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
@@ -145,15 +146,15 @@ doGetRunningJob db ts = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
   where sql = Utf8 $ "SELECT value FROM jobs WHERE sched_at<" `append` B.pack (show ts)
 
 doGetPendingJob :: Database -> [FuncName] -> Int64 -> Int -> IO [Job]
-doGetPendingJob db fns ts c = take c <$> F.foldrM (foldFunc (:)) [] fns
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
+doGetPendingJob db fns ts c =
+  doFoldr_ db sql (bindFNS 1 fns) (mkFoldFunc (:)) []
+  where fnsv = B.pack $ intercalate ", " $ replicate (length fns) "?"
+        sql = Utf8 $ "SELECT value FROM jobs WHERE"
+                   <> " func in (" <> fnsv <> ")  AND state="
                    <> stateName Pending
                    <> " AND sched_at<"
                    <> B.pack (show ts)
-
-        foldFunc :: (Job -> a -> a) -> FuncName -> a -> IO a
-        foldFunc  f0 fn =
-          doFoldr_ db sql (`bindFN` fn) (mkFoldFunc f0)
+                   <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show c)
 
 doGetLockedJob :: Database -> FuncName -> Int -> IO [Job]
 doGetLockedJob db fn limit = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc (:)) []
@@ -232,6 +233,12 @@ prepStmt c q = do
 
 bindFN :: Statement -> FuncName -> IO ()
 bindFN stmt (FuncName fn) = void $ bindBlob stmt 1 fn
+
+bindFNS :: ParamIndex -> [FuncName] -> Statement -> IO ()
+bindFNS _ [] _                        = pure ()
+bindFNS idx ((FuncName fn): fns) stmt = do
+  void $ bindBlob stmt idx fn
+  bindFNS (idx + 1) fns stmt
 
 execStmt :: Database -> Utf8 -> (Statement -> IO ()) -> IO ()
 execStmt db sql bindStmt = do

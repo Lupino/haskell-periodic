@@ -15,7 +15,6 @@ import           Data.ByteString         (ByteString)
 import           Data.ByteString.Base64  (decode, encode)
 import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
-import qualified Data.Foldable           as F (foldr)
 import           Data.Int                (Int64)
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe, isJust)
@@ -168,8 +167,8 @@ doInsertFuncName :: FuncName -> DB.PSQL Int64
 doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only fn)
 
 doGetRunningJob :: Int64 -> DB.PSQL [Job]
-doGetRunningJob st =
-  selectOnly jobs "value" "sched_at < ?" (Only st) 0 1000 (asc "sched_at")
+doGetRunningJob ts =
+  selectOnly jobs "value" "sched_at < ?" (Only ts) 0 1000 (asc "sched_at")
 
 doGetPendingJob :: [FuncName] -> Int64 -> Int -> DB.PSQL [Job]
 doGetPendingJob fns ts c =

@@ -102,7 +102,7 @@ doGetRunningJob m ts = do
   (r0 ++) <$> getRunningJob (backend m) ts
 
 doGetPendingJob
-  :: forall a db . Persist db
+  :: forall db . Persist db
   => Cache db -> [FuncName] -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fns ts c = do
   r0 <- getPendingJob (memory m) fns ts c
@@ -110,8 +110,7 @@ doGetPendingJob m fns ts c = do
                    else pure r0
 
 doGetLockedJob
-  :: forall a db
-  . Persist db
+  :: forall db . Persist db
   => Cache db -> FuncName -> Int -> IO [Job]
 doGetLockedJob m fn c = do
   r0 <- getLockedJob (memory m) fn c
@@ -119,8 +118,7 @@ doGetLockedJob m fn c = do
                    else pure r0
 
 doCountPending
-  :: forall a db
-  . Persist db
+  :: forall db . Persist db
   => Cache db -> Int64 -> [FuncName] -> IO Int
 doCountPending m st fns = do
   c1 <- countPending (backend m) st fns

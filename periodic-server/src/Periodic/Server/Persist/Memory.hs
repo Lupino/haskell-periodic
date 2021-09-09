@@ -11,10 +11,12 @@ module Periodic.Server.Persist.Memory
   , memorySize
   ) where
 
+
 import           Data.IOMap              (IOMap)
 import qualified Data.IOMap              as IOMap
 import qualified Data.IOMap.STM          as IOMapS
 import           Data.Int                (Int64)
+import           Data.List               (sortOn)
 import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as HM
 import           Data.Maybe              (fromMaybe)
@@ -120,13 +122,17 @@ doSize m s f = fromIntegral . maybe 0 HM.size <$> getJobMap1 m s f
 
 doGetRunningJob :: Memory -> Int64 -> IO [Job]
 doGetRunningJob m ts =
-  filter (\job -> getSchedAt job < ts) <$> IOMap.foldrWithKey foldFunc [] (getJobMap m Running)
+  filter ((< ts) . getSchedAt)
+    <$> IOMap.foldrWithKey foldFunc [] (getJobMap m Running)
   where foldFunc :: FuncName -> Map JobName Job -> [Job] -> [Job]
         foldFunc _ h acc0 = HM.foldr (:) acc0 h
 
+takeMin :: Int -> [Job] -> [Job]
+takeMin c = take c . sortOn getSchedAt
+
 doGetPendingJob :: Memory -> [FuncName] -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fns ts c =
-  take c <$> IOMap.foldrWithKey foldFunc [] (pending m)
+  takeMin c <$> IOMap.foldrWithKey foldFunc [] (pending m)
 
   where foldFunc :: FuncName -> Map JobName Job -> [Job] -> [Job]
         foldFunc fn h acc0 | fn `elem` fns = HM.foldr foldFunc1 acc0 h
@@ -137,7 +143,7 @@ doGetPendingJob m fns ts c =
                            | otherwise = acc0
 
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
-doGetLockedJob m fn c = take c . maybe [] HM.elems <$> getJobMap1 m Locking fn
+doGetLockedJob m fn c = takeMin c . maybe [] HM.elems <$> getJobMap1 m Locking fn
 
 doCountPending :: Memory -> Int64 -> [FuncName] -> IO Int
 doCountPending m st fns =
