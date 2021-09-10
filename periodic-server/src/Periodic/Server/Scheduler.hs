@@ -390,13 +390,15 @@ pushChanList act = do
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 pushJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
-  runHook eventPushJob job 1
+  t0 <- liftIO getUnixTime
   p <- asks sPersist
   isRunning <- liftIO $ P.member p Running fn jn
   unless isRunning $ do
     job' <- fixedSchedAt job
     liftIO $ P.insert p Pending fn jn job'
     pushChanList (Add job')
+
+  getDuration t0 >>= runHook eventPushJob job
 
   where fn = getFuncName job
         jn = getName job
@@ -534,12 +536,14 @@ adjustFuncStat fn = do
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 removeJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
-  runHook eventRemoveJob job 1
+  t0 <- liftIO getUnixTime
   p <- asks sPersist
   liftIO $ P.delete p fn jn
 
   pushChanList (Remove job)
   pushResult jh ""
+  getDuration t0 >>= runHook eventRemoveJob job
+
   where jn = getName job
         fn = getFuncName job
         jh = getHandle job
@@ -593,9 +597,10 @@ dropFunc n = do
 
 pushGrab :: MonadIO m => TVar [FuncName] -> Nid -> Msgid -> SchedT db m ()
 pushGrab funcList nid msgid = do
-  runHook eventPushGrab (FuncName "pushgrab") 1
+  t0 <- liftIO getUnixTime
   queue <- asks sGrabQueue
   pushAgent queue funcList nid msgid
+  getDuration t0 >>= runHook eventPushGrab (FuncName "pushgrab")
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do
@@ -635,10 +640,13 @@ getJobDuration jh = do
   IOMap.delete jh h
   case m of
     Nothing -> pure 0
-    Just t0 -> do
-      t1 <- liftIO getUnixTime
-      case t1 `diffUnixTime` t0 of
-        UnixDiffTime (CTime s) u -> pure $ fromIntegral s + fromIntegral u / 1000000
+    Just t0 -> getDuration t0
+
+getDuration :: MonadIO m => UnixTime -> SchedT db m Double
+getDuration t0 = do
+  t1 <- liftIO getUnixTime
+  case t1 `diffUnixTime` t0 of
+    UnixDiffTime (CTime s) u -> pure $ fromIntegral s + fromIntegral u / 1000000
 
 
 doneJob
@@ -647,8 +655,7 @@ doneJob
 doneJob jh w = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
   p <- asks sPersist
-  dura <- getJobDuration jh
-  runHook eventDoneJob jh dura
+  getJobDuration jh >>= runHook eventDoneJob jh
   releaseLock' jh
   liftIO $ P.delete p fn jn
   pushResult jh w
@@ -672,9 +679,7 @@ schedLaterJob jh later step = do
 
       nextSchedAt <- (later +) <$> getEpochTime
 
-      dura <- getJobDuration jh
-
-      runHook eventSchedLaterJob jh dura
+      getJobDuration jh >>= runHook eventSchedLaterJob jh
       retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
 
   where (fn, jn) = unHandle jh
@@ -683,8 +688,16 @@ acquireLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> Int -> JobHandle -> SchedT db m Bool
 acquireLock name count jh = do
+  t0 <- liftIO getUnixTime
+  r <- acquireLock_ name count jh
+  getDuration t0 >>= runHook eventAcquireLock name
+  return r
+
+acquireLock_
+  :: (MonadUnliftIO m, Persist db)
+  => LockName -> Int -> JobHandle -> SchedT db m Bool
+acquireLock_ name count jh = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("acquireLock: " ++ show name ++ " " ++ show count ++ " " ++ show jh)
-  runHook eventAcquireLock name 1
   locker <- asks sLocker
   L.with locker $ do
     lockList <- asks sLockList
@@ -732,9 +745,10 @@ releaseLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> JobHandle -> SchedT db m ()
 releaseLock name jh = do
-  runHook eventReleaseLock name 1
+  t0 <- liftIO getUnixTime
   locker <- asks sLocker
   L.with locker $ releaseLock_ name jh
+  getDuration t0 >>= runHook eventReleaseLock name
 
 releaseLock_
   :: (MonadUnliftIO m, Persist db)
