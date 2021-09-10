@@ -51,6 +51,7 @@ library
 
                      , metro-socket
                      , psql-utils
+                     , unix-time
   default-language:    Haskell2010
 
 executable periodicd

@@ -53,6 +53,9 @@ import           Data.Int                   (Int64)
 import qualified Data.List                  as L (delete)
 import qualified Data.Map.Strict            as Map (filter, map)
 import           Data.Maybe                 (fromJust, fromMaybe, isJust)
+import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
+                                             diffUnixTime, getUnixTime)
+import           Foreign.C.Types            (CTime (..))
 import qualified Metro.Lock                 as L (Lock, new, with)
 import           Metro.Utils                (getEpochTime)
 import           Periodic.Server.FuncStat
@@ -130,6 +133,7 @@ data SchedEnv db = SchedEnv
     , sPersist        :: db
     , sAssignJob      :: Nid -> Msgid -> Job -> IO Bool
     , sHook           :: Hook
+    , sAssignJobTime  :: IOMap JobHandle UnixTime
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -177,6 +181,7 @@ initSchedEnv config sC sAssignJob sHook = do
   sExpiration     <- newTVarIO 300
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
+  sAssignJobTime  <- IOMap.empty
   pure SchedEnv{..}
 
 startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -487,12 +492,13 @@ schedJob_ job = do
         popAgentThen = do
           SchedEnv{..} <- ask
           (nid, msgid) <- liftIO $ popAgent sGrabQueue fn
-          nextSchedAt <- getEpochTime
-          liftIO $ P.insert sPersist Running fn jn $ setSchedAt nextSchedAt job
+          liftIO $ P.insert sPersist Running fn jn job
+          t <- liftIO getUnixTime
+          IOMap.insert (getHandle job) t sAssignJobTime
           r <- liftIO $ sAssignJob nid msgid job
           if r then endSchedJob
                else do
-                 liftIO $ P.insert sPersist Pending fn jn $ setSchedAt nextSchedAt job
+                 liftIO $ P.insert sPersist Pending fn jn job
                  schedJob_ job
 
         popAgentListThen :: (MonadUnliftIO m) => SchedT db m ()
@@ -594,7 +600,8 @@ pushGrab funcList nid msgid = do
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("failJob: " ++ show jh)
-  runHook eventFailJob jh 1
+  dura <- getJobDuration jh
+  runHook eventFailJob jh dura
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
@@ -621,17 +628,17 @@ retryJob job = do
 
 getJobDuration
   :: (MonadIO m, Persist db)
-  => JobHandle -> SchedT db m Int64
+  => JobHandle -> SchedT db m Double
 getJobDuration jh = do
-  p <- asks sPersist
-  mjob <- liftIO $ P.lookup p Running fn jn
-  case mjob of
-    Nothing -> pure 1
-    Just job -> do
-      now <- getEpochTime
-      return $ max 1 $ now - getSchedAt job
-
-  where (fn, jn) = unHandle jh
+  h <- asks sAssignJobTime
+  m <- IOMap.lookup jh h
+  IOMap.delete jh h
+  case m of
+    Nothing -> pure 0
+    Just t0 -> do
+      t1 <- liftIO getUnixTime
+      case t1 `diffUnixTime` t0 of
+        UnixDiffTime (CTime s) u -> pure $ fromIntegral s + fromIntegral u / 1000000
 
 
 doneJob
@@ -663,9 +670,9 @@ schedLaterJob jh later step = do
     when (isJust job) $ do
       let job' = fromJust job
 
-      now <- getEpochTime
-      let dura = max 1 $ now - getSchedAt job'
-          nextSchedAt = now + later
+      nextSchedAt <- (later +) <$> getEpochTime
+
+      dura <- getJobDuration jh
 
       runHook eventSchedLaterJob jh dura
       retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
@@ -939,7 +946,7 @@ removeFromWaitList jh = do
   wl <- asks sWaitList
   IOMap.delete jh wl
 
-runHook :: (MonadIO m, GetHookName a, Integral n) => HookEvent -> a -> n -> SchedT db m ()
+runHook :: (MonadIO m, GetHookName a) => HookEvent -> a -> Double -> SchedT db m ()
 runHook evt n c = do
   hook <- asks sHook
-  Hook.runHook hook evt n $ fromIntegral c
+  Hook.runHook hook evt n c

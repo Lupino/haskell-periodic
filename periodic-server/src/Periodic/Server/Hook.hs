@@ -30,14 +30,14 @@ import           UnliftIO              (MonadIO (..), TVar, atomically,
                                         newTVarIO, readTVarIO, timeout, tryAny,
                                         writeTVar)
 
-data HookEvent = HookEvent String
+newtype HookEvent = HookEvent String
   deriving (Show)
 
-data HookName = HookName String
+newtype HookName = HookName String
   deriving (Show)
 
 newtype Hook = Hook
-  { runHook_ :: HookEvent -> HookName -> Int -> IO ()
+  { runHook_ :: HookEvent -> HookName -> Double -> IO ()
   }
 
 eventPushJob       = HookEvent "pushJob"
@@ -49,7 +49,7 @@ eventAcquireLock   = HookEvent "acquireLock"
 eventReleaseLock   = HookEvent "releaseLock"
 eventRemoveJob     = HookEvent "removeJob"
 
-runHook :: (MonadIO m, GetHookName a) => Hook -> HookEvent -> a -> Int -> m ()
+runHook :: (MonadIO m, GetHookName a) => Hook -> HookEvent -> a -> Double -> m ()
 runHook hook evt n c = liftIO $ runHook_ hook evt (hookName n) c
 
 emptyHook :: Hook
@@ -71,7 +71,10 @@ instance GetHookName JobHandle where
   hookName = hookName . fst . unHandle
 
 
-genSocketHook :: Transport tp => L.Lock -> TVar (Maybe tp) -> TransportConfig tp -> HookEvent -> HookName -> Int -> IO ()
+genSocketHook
+  :: Transport tp
+  => L.Lock -> TVar (Maybe tp) -> TransportConfig tp
+  -> HookEvent -> HookName -> Double -> IO ()
 genSocketHook lock tph config (HookEvent evt) (HookName name) count = L.with lock $ do
   mtp <- readTVarIO tph
   case mtp of
