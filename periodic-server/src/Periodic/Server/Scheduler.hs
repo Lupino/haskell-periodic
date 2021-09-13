@@ -823,12 +823,10 @@ purgeEmptyLock = do
           where ff :: LockItem -> Bool
                 ff (LockItem _ t) = t > e
 
-getMaxLockCount :: MonadUnliftIO m => SchedT db m Int
-getMaxLockCount = do
+getMaxLockCount :: MonadUnliftIO m => Int -> SchedT db m Int
+getMaxLockCount minV = do
   lockList <- asks sLockList
-  locks <- IOMap.elems lockList
-  if null locks then return 0
-                else return $ maximum $ map maxCount locks
+  maximum . (minV:) . map maxCount <$> IOMap.elems lockList
 
 
 status :: (MonadIO m, Persist db) => SchedT db m [FuncStat]
@@ -857,8 +855,8 @@ revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks 
           => FuncName -> SchedT db m ()
         checkAndReleaseLock fn = do
           p <- asks sPersist
-          count <- getMaxLockCount
-          handles <- liftIO $ P.getLockedJob p fn (max count 10)
+          count <- getMaxLockCount 10
+          handles <- liftIO $ P.getLockedJob p fn count
           mapM_ pushJob handles
 
 
