@@ -52,9 +52,9 @@
           (hsPkgs."map-io" or (errorHandler.buildDepError "map-io"))
           (hsPkgs."entropy" or (errorHandler.buildDepError "entropy"))
           (hsPkgs."base64-bytestring" or (errorHandler.buildDepError "base64-bytestring"))
-          (hsPkgs."sorted-list" or (errorHandler.buildDepError "sorted-list"))
           (hsPkgs."metro-socket" or (errorHandler.buildDepError "metro-socket"))
           (hsPkgs."psql-utils" or (errorHandler.buildDepError "psql-utils"))
+          (hsPkgs."unix-time" or (errorHandler.buildDepError "unix-time"))
           ];
         buildable = true;
         modules = [
