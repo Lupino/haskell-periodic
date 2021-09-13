@@ -52,7 +52,7 @@ instance Persist Memory where
     return Memory {..}
 
   member         = doMember
-  lookup         = doLookup
+  getOne         = doGetOne
   insert         = doInsert
   delete         = doDelete
   size           = doSize
@@ -85,8 +85,8 @@ getJobMap1 m s = flip IOMap.lookup (getJobMap m s)
 doMember :: Memory -> State -> FuncName -> JobName -> IO Bool
 doMember m s f j = maybe False (HM.member j) <$> getJobMap1 m s f
 
-doLookup :: Memory -> State -> FuncName -> JobName -> IO (Maybe Job)
-doLookup m s f j = maybe Nothing (HM.lookup j) <$> getJobMap1 m s f
+doGetOne :: Memory -> State -> FuncName -> JobName -> IO (Maybe Job)
+doGetOne m s f j = maybe Nothing (HM.lookup j) <$> getJobMap1 m s f
 
 deleteJobSTM0 :: JobMap -> FuncName -> JobName -> STM ()
 deleteJobSTM0 m f j = do

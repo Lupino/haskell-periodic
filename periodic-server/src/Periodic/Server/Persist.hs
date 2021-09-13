@@ -23,7 +23,7 @@ class (Exception (PersistException db)) => Persist db where
   data PersistException db
   newPersist     :: PersistConfig db -> IO db
   member         :: db -> State -> FuncName -> JobName -> IO Bool
-  lookup         :: db -> State -> FuncName -> JobName -> IO (Maybe Job)
+  getOne         :: db -> State -> FuncName -> JobName -> IO (Maybe Job)
   insert         :: db -> State -> FuncName -> JobName -> Job -> IO ()
   delete         :: db -> FuncName -> JobName -> IO ()
   size           :: db -> State -> FuncName -> IO Int64

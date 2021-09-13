@@ -84,7 +84,7 @@ instance Persist PSQL where
     return $ PSQL pool
 
   member         db st fn    = runDB  db . doMember st fn
-  lookup         db st fn    = runDB  db . doLookup st fn
+  getOne         db st fn    = runDB  db . doGetOne st fn
   insert         db st fn jn = runDB_ db . doInsert st fn jn
   delete         db fn       = runDB_ db . doDelete fn
   size           db st       = runDB  db . doSize st
@@ -146,13 +146,13 @@ createFuncTable =
 allPending :: DB.PSQL Int64
 allPending = update jobs ["state"] "" (Only Pending)
 
-doLookup :: State -> FuncName -> JobName -> DB.PSQL (Maybe Job)
-doLookup state fn jn = do
+doGetOne :: State -> FuncName -> JobName -> DB.PSQL (Maybe Job)
+doGetOne state fn jn = do
   selectOneOnly jobs "value" "func=? AND name=? AND state=?"
     (fn, jn, state)
 
 doMember :: State -> FuncName -> JobName -> DB.PSQL Bool
-doMember st fn jn = isJust <$> doLookup st fn jn
+doMember st fn jn = isJust <$> doGetOne st fn jn
 
 doInsert :: State -> FuncName -> JobName -> Job -> DB.PSQL Int64
 doInsert state fn jn job = do

@@ -57,7 +57,7 @@ instance Persist SQLite where
         return $ SQLite db
 
   member         (SQLite db) = doMember db
-  lookup         (SQLite db) = doLookup db
+  getOne         (SQLite db) = doGetOne db
   insert         (SQLite db) = doInsert db
   delete         (SQLite db) = doDelete db
   size           (SQLite db) = doSize db
@@ -116,15 +116,15 @@ createFuncTable db = void . exec db $ Utf8 $
 allPending :: Database -> IO ()
 allPending db = void . exec db $ Utf8 "UPDATE jobs SET state=0"
 
-doLookup :: Database -> State -> FuncName -> JobName -> IO (Maybe Job)
-doLookup db state fn jn =
+doGetOne :: Database -> State -> FuncName -> JobName -> IO (Maybe Job)
+doGetOne db state fn jn =
   listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc f) []
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND name=? AND state=" `append` stateName state `append` " LIMIT 1"
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
 
 doMember :: Database -> State -> FuncName -> JobName -> IO Bool
-doMember db st fn jn = isJust <$> doLookup db st fn jn
+doMember db st fn jn = isJust <$> doGetOne db st fn jn
 
 doInsert :: Database -> State -> FuncName -> JobName -> Job -> IO ()
 doInsert db state fn jn job = do

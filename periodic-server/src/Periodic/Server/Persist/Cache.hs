@@ -36,7 +36,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
      return Cache {..}
 
    member           = doMember
-   lookup           = doLookup
+   getOne           = doGetOne
    insert           = doInsert
    delete           = doDelete
    size             = doSize
@@ -63,12 +63,12 @@ doMember m s f j = do
   if r then return True
        else member (backend m) s f j
 
-doLookup :: Persist db => Cache db -> State -> FuncName -> JobName -> IO (Maybe Job)
-doLookup m s f j = do
-  r <- lookup (memory m) s f j
+doGetOne :: Persist db => Cache db -> State -> FuncName -> JobName -> IO (Maybe Job)
+doGetOne m s f j = do
+  r <- getOne (memory m) s f j
   case r of
     Just v  -> return $ Just v
-    Nothing -> lookup (backend m) s f j
+    Nothing -> getOne (backend m) s f j
 
 doInsert :: Persist db => Cache db -> State -> FuncName -> JobName -> Job -> IO ()
 doInsert Cache{..} s f j v = do

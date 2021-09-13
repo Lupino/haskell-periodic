@@ -614,7 +614,7 @@ failJob jh = do
     doneJob jh ""
   else do
     p <- asks sPersist
-    job <- liftIO $ P.lookup p Running fn jn
+    job <- liftIO $ P.getOne p Running fn jn
     when (isJust job) $ do
       nextSchedAt <- getEpochTime
       retryJob $ setSchedAt nextSchedAt $ fromJust job
@@ -673,7 +673,7 @@ schedLaterJob jh later step = do
     doneJob jh ""
   else do
     p <- asks sPersist
-    job <- liftIO $ P.lookup p Running fn jn
+    job <- liftIO $ P.getOne p Running fn jn
     when (isJust job) $ do
       let job' = fromJust job
 
@@ -702,7 +702,7 @@ acquireLock_ name count jh = do
   L.with locker $ do
     lockList <- asks sLockList
     p <- asks sPersist
-    j <- liftIO $ P.lookup p Running fn jn
+    j <- liftIO $ P.getOne p Running fn jn
     case j of
       Nothing -> pure True
       Just job -> do
@@ -781,7 +781,7 @@ releaseLock_ name jh = do
     Nothing -> pure ()
     Just (LockItem hh _) -> do
       let (fn, jn) = unHandle hh
-      j <- liftIO $ P.lookup p Locking fn jn
+      j <- liftIO $ P.getOne p Locking fn jn
       case j of
         Nothing  -> releaseLock_ name hh
         Just job -> do
