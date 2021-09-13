@@ -51,7 +51,6 @@ instance Persist Memory where
     funcs   <- IOMap.empty
     return Memory {..}
 
-  member         = doMember
   getOne         = doGetOne
   insert         = doInsert
   delete         = doDelete
@@ -81,9 +80,6 @@ getJobMap m Locking = locking m
 
 getJobMap1 :: Memory -> State -> FuncName -> IO (Maybe (Map JobName Job))
 getJobMap1 m s = flip IOMap.lookup (getJobMap m s)
-
-doMember :: Memory -> State -> FuncName -> JobName -> IO Bool
-doMember m s f j = maybe False (HM.member j) <$> getJobMap1 m s f
 
 doGetOne :: Memory -> State -> FuncName -> JobName -> IO (Maybe Job)
 doGetOne m s f j = maybe Nothing (HM.lookup j) <$> getJobMap1 m s f

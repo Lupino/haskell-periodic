@@ -17,7 +17,7 @@ import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
 import           Data.Int                (Int64)
 import           Data.List               (intercalate)
-import           Data.Maybe              (fromMaybe, isJust)
+import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..))
 import           Database.PSQL.Types     (FromField (..), Only (..), PSQLPool,
                                           Size (..), TableName, ToField (..),
@@ -83,7 +83,6 @@ instance Persist PSQL where
       void allPending
     return $ PSQL pool
 
-  member         db st fn    = runDB  db . doMember st fn
   getOne         db st fn    = runDB  db . doGetOne st fn
   insert         db st fn jn = runDB_ db . doInsert st fn jn
   delete         db fn       = runDB_ db . doDelete fn
@@ -150,9 +149,6 @@ doGetOne :: State -> FuncName -> JobName -> DB.PSQL (Maybe Job)
 doGetOne state fn jn = do
   selectOneOnly jobs "value" "func=? AND name=? AND state=?"
     (fn, jn, state)
-
-doMember :: State -> FuncName -> JobName -> DB.PSQL Bool
-doMember st fn jn = isJust <$> doGetOne st fn jn
 
 doInsert :: State -> FuncName -> JobName -> Job -> DB.PSQL Int64
 doInsert state fn jn job = do

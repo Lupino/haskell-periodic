@@ -16,7 +16,7 @@ import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
 import           Data.Int                (Int64)
 import           Data.List               (intercalate)
-import           Data.Maybe              (isJust, listToMaybe)
+import           Data.Maybe              (listToMaybe)
 import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist
@@ -56,7 +56,6 @@ instance Persist SQLite where
         commitTx db
         return $ SQLite db
 
-  member         (SQLite db) = doMember db
   getOne         (SQLite db) = doGetOne db
   insert         (SQLite db) = doInsert db
   delete         (SQLite db) = doDelete db
@@ -122,9 +121,6 @@ doGetOne db state fn jn =
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND name=? AND state=" `append` stateName state `append` " LIMIT 1"
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
-
-doMember :: Database -> State -> FuncName -> JobName -> IO Bool
-doMember db st fn jn = isJust <$> doGetOne db st fn jn
 
 doInsert :: Database -> State -> FuncName -> JobName -> Job -> IO ()
 doInsert db state fn jn job = do

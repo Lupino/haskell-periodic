@@ -22,7 +22,6 @@ class (Exception (PersistException db)) => Persist db where
   data PersistConfig db
   data PersistException db
   newPersist     :: PersistConfig db -> IO db
-  member         :: db -> State -> FuncName -> JobName -> IO Bool
   getOne         :: db -> State -> FuncName -> JobName -> IO (Maybe Job)
   insert         :: db -> State -> FuncName -> JobName -> Job -> IO ()
   delete         :: db -> FuncName -> JobName -> IO ()

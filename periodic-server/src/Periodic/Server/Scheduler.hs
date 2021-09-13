@@ -371,7 +371,7 @@ pollJob_ taskList funcList next = do
           case w of
             Nothing -> do
               p <- asks sPersist
-              isProc <- liftIO $ P.member p Running fn jn
+              isProc <- liftIO $ isJust <$> P.getOne p Running fn jn
               unless isProc $ reSchedJob tl job
             Just w0 -> do
               r <- canRun fn
@@ -392,7 +392,7 @@ pushJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   t0 <- liftIO getUnixTime
   p <- asks sPersist
-  isRunning <- liftIO $ P.member p Running fn jn
+  isRunning <- liftIO $ isJust <$> P.getOne p Running fn jn
   unless isRunning $ do
     job' <- fixedSchedAt job
     liftIO $ P.insert p Pending fn jn job'

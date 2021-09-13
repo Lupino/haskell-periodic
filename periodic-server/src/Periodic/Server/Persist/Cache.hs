@@ -35,7 +35,6 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
      memory  <- newPersist useMemory
      return Cache {..}
 
-   member           = doMember
    getOne           = doGetOne
    insert           = doInsert
    delete           = doDelete
@@ -56,12 +55,6 @@ instance Typeable db => Exception (PersistException (Cache db))
 
 useCache :: Int64 -> PersistConfig db -> PersistConfig (Cache db)
 useCache = UseCache
-
-doMember :: Persist db => Cache db -> State -> FuncName -> JobName -> IO Bool
-doMember m s f j = do
-  r <- member (memory m) s f j
-  if r then return True
-       else member (backend m) s f j
 
 doGetOne :: Persist db => Cache db -> State -> FuncName -> JobName -> IO (Maybe Job)
 doGetOne m s f j = do
