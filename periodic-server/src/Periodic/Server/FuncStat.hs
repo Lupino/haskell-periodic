@@ -18,7 +18,7 @@ data FuncStat = FuncStat
     , sWorker    :: Int64
     , sJob       :: Int64
     , sRunning   :: Int64
-    , sLocking   :: Int64
+    , sLocked    :: Int64
     , sFuncName  :: FuncName
     , sBroadcast :: Bool
     }
@@ -29,7 +29,7 @@ instance Byteable FuncStat where
     , B.pack $ show sWorker
     , B.pack $ show sJob
     , B.pack $ show sRunning
-    , B.pack $ show sLocking
+    , B.pack $ show sLocked
     , B.pack $ show sSchedAt
     ]
 
@@ -37,4 +37,11 @@ type FuncStatList = IOMap FuncName FuncStat
 
 funcStat :: FuncName -> FuncStat
 funcStat sFuncName = FuncStat
-  { sSchedAt = 0, sWorker = 0, sJob = 0, sRunning = 0, sLocking = 0, sBroadcast = False, .. }
+  { sSchedAt   = 0
+  , sWorker    = 0
+  , sJob       = 0
+  , sRunning   = 0
+  , sLocked    = 0
+  , sBroadcast = False
+  , ..
+  }

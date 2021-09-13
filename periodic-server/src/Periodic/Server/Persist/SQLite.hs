@@ -29,12 +29,12 @@ import           UnliftIO                (Exception, Typeable, throwIO)
 stateName :: State -> ByteString
 stateName Pending = "0"
 stateName Running = "1"
-stateName Locking = "2"
+stateName Locked  = "2"
 
 stateName' :: State -> Int64
 stateName' Pending = 0
 stateName' Running = 1
-stateName' Locking = 2
+stateName' Locked  = 2
 
 newtype SQLite = SQLite Database
 
@@ -154,7 +154,7 @@ doGetPendingJob db fns ts c =
 doGetLockedJob :: Database -> FuncName -> Int -> IO [Job]
 doGetLockedJob db fn limit = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc (:)) []
   where sql = Utf8 $ "SELECT value FROM jobs WHERE func=? AND state="
-                   <> stateName Locking
+                   <> stateName Locked
                    <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)
 
 doCountPending :: Database -> [FuncName] -> Int64 -> IO Int

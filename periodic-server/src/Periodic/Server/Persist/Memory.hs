@@ -35,7 +35,7 @@ type FuncNameList = IOMap FuncName ()
 data Memory = Memory
   { pending :: JobMap
   , running :: JobMap
-  , locking :: JobMap
+  , locked  :: JobMap
   , funcs   :: FuncNameList
   }
 
@@ -47,7 +47,7 @@ instance Persist Memory where
     infoM "Periodic.Server.Persist.Memory" "Memory connected"
     pending <- IOMap.empty
     running <- IOMap.empty
-    locking <- IOMap.empty
+    locked <- IOMap.empty
     funcs   <- IOMap.empty
     return Memory {..}
 
@@ -76,7 +76,7 @@ useMemory = UseMemory
 getJobMap :: Memory -> State -> JobMap
 getJobMap m Pending = pending m
 getJobMap m Running = running m
-getJobMap m Locking = locking m
+getJobMap m Locked  = locked m
 
 getJobMap1 :: Memory -> State -> FuncName -> IO (Maybe (Map JobName Job))
 getJobMap1 m s = flip IOMap.lookup (getJobMap m s)
@@ -96,7 +96,7 @@ deleteJobSTM :: Memory -> FuncName -> JobName -> STM ()
 deleteJobSTM m f j = do
   deleteJobSTM0 (pending m) f j
   deleteJobSTM0 (running m) f j
-  deleteJobSTM0 (locking m) f j
+  deleteJobSTM0 (locked m) f j
 
 
 insertJobSTM :: Memory -> State -> FuncName -> JobName -> Job -> STM ()
@@ -139,7 +139,7 @@ doGetPendingJob m fns ts c =
                            | otherwise = acc0
 
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
-doGetLockedJob m fn c = takeMin c . maybe [] HM.elems <$> getJobMap1 m Locking fn
+doGetLockedJob m fn c = takeMin c . maybe [] HM.elems <$> getJobMap1 m Locked fn
 
 doCountPending :: Memory -> [FuncName] -> Int64 -> IO Int
 doCountPending m fns ts =
@@ -158,7 +158,7 @@ doDumpJob :: Memory -> IO [Job]
 doDumpJob m = do
   hm1 <- IOMap.elems (pending m)
   hm2 <- IOMap.elems (running m)
-  hm3 <- IOMap.elems (locking m)
+  hm3 <- IOMap.elems (locked m)
   return $ HM.elems . HM.unions $ concat [hm1, hm2, hm3]
 
 
@@ -171,7 +171,7 @@ doRemoveFuncName m fn = atomically $ do
   IOMapS.delete fn $ funcs m
   IOMapS.delete fn $ pending m
   IOMapS.delete fn $ running m
-  IOMapS.delete fn $ locking m
+  IOMapS.delete fn $ locked m
 
 doFuncList :: Memory -> IO [FuncName]
 doFuncList = IOMap.keys . funcs
@@ -193,6 +193,6 @@ memorySize :: Memory -> IO Int64
 memorySize Memory {..} = do
   s0 <- jobMapSize pending
   s1 <- jobMapSize running
-  s2 <- jobMapSize locking
+  s2 <- jobMapSize locked
 
   return $ s0 + s1 + s2

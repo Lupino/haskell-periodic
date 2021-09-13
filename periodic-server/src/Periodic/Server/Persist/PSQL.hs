@@ -45,7 +45,7 @@ instance ToField JobName where
 instance ToField State where
   toField Pending = toField (0 :: Int)
   toField Running = toField (1 :: Int)
-  toField Locking = toField (2 :: Int)
+  toField Locked  = toField (2 :: Int)
 
 instance FromField Job where
   fromField f dat = do
@@ -176,7 +176,7 @@ doGetPendingJob fns ts c =
 doGetLockedJob :: FuncName -> Int -> DB.PSQL [Job]
 doGetLockedJob fn c = do
   selectOnly jobs "value" "func=? AND state=?"
-    (fn, Locking) 0 (Size $ fromIntegral c) (asc "sched_at")
+    (fn, Locked) 0 (Size $ fromIntegral c) (asc "sched_at")
 
 doCountPending :: [FuncName] -> Int64 -> DB.PSQL Int
 doCountPending fns ts =

@@ -193,7 +193,7 @@ startSchedT = do
   runTask_ sPollInterval $ pushChanList PollJob
   runTask 0 $ runChanJob taskList
   runTask 100 purgeExpired
-  runTask 60 revertLockingQueue
+  runTask 60 revertLockedQueue
   runTask 100 purgeEmptyLock
 
   loadInt "poll-interval" sPollInterval
@@ -518,7 +518,7 @@ adjustFuncStat fn = do
   SchedEnv{..} <- ask
   size <- liftIO $ P.size sPersist Pending fn
   sizePQ <- liftIO $ P.size sPersist Running fn
-  sizeL <- liftIO $ P.size sPersist Locking fn
+  sizeL <- liftIO $ P.size sPersist Locked fn
   sc <- liftIO $ P.minSchedAt sPersist fn
 
   schedAt <- if sc > 0 then pure sc else getEpochTime
@@ -529,7 +529,7 @@ adjustFuncStat fn = do
         update size sizePQ sizeL schedAt st =
           Just ((fromMaybe (funcStat fn) st) { sJob = size
                                              , sRunning = sizePQ
-                                             , sLocking = sizeL
+                                             , sLocked = sizeL
                                              , sSchedAt = schedAt
                                              })
 
@@ -736,7 +736,7 @@ acquireLock_ name count jh = do
                     } lockList
                   pure False
 
-        unless r $ liftIO $ P.insert p Locking fn jn job
+        unless r $ liftIO $ P.insert p Locked fn jn job
         return r
 
   where (fn, jn) = unHandle jh
@@ -781,7 +781,7 @@ releaseLock_ name jh = do
     Nothing -> pure ()
     Just (LockItem hh _) -> do
       let (fn, jn) = unHandle hh
-      j <- liftIO $ P.getOne p Locking fn jn
+      j <- liftIO $ P.getOne p Locked fn jn
       case j of
         Nothing  -> releaseLock_ name hh
         Just job -> do
@@ -847,8 +847,8 @@ revertRunningQueue = do
           | getTimeout job > 0 = getSchedAt job + fromIntegral (getTimeout job) < now
           | otherwise = getSchedAt job + fromIntegral t0 < now
 
-revertLockingQueue :: (MonadUnliftIO m, Persist db) => SchedT db m ()
-revertLockingQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks sPersist
+revertLockedQueue :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+revertLockedQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks sPersist
 
   where checkAndReleaseLock
           :: (MonadUnliftIO m, Persist db)
