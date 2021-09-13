@@ -88,7 +88,7 @@ Quick start
 
 #### Static build with [nix](https://nixos.org/nix/)
 
-    $(nix-build --no-link -A fullBuildScript)
+    make
 
 ### Start periodic server
 
