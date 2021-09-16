@@ -31,9 +31,11 @@ import           Data.Binary                  (Binary)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString.Lazy         (fromStrict)
 import           Data.IOMap                   (IOMap)
-import qualified Data.IOMap                   as Map (delete, empty, insert,
+import qualified Data.IOMap                   as Map (delete, empty,
+                                                      foldrWithKey', insert,
                                                       lookup)
 import qualified Data.IOMap.STM               as MapS (modifyIOMap, toList)
+import           Data.Int                     (Int64)
 import qualified Data.Map.Strict              as RMap (empty)
 import           Metro.Class                  (RecvPacket (..), Transport,
                                                TransportConfig, getPacketId)
@@ -47,6 +49,7 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                startNodeT_, withEnv,
                                                withSessionT)
 import           Metro.Session                (send)
+import           Metro.Utils                  (getEpochTime)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
                                                      close, getClientEnv, ping)
@@ -66,13 +69,17 @@ type TaskList tp m = IOMap FuncName (JobT tp m ())
 
 type JobList = IOMap (Msgid, JobHandle) Job
 
+type GrabList = IOMap Msgid Int64
+
 instance (Binary a) => RecvPacket (Maybe Job) (Packet a) where
   recvPacket _ = recvRawPacket
 
 data WorkerEnv tp m = WorkerEnv
     { taskList :: TaskList tp m
     , jobList  :: JobList
-    , taskSize :: TVar Int
+    , tskSizeH :: TVar Int
+    , maxSizeH :: TVar Int
+    , grabList :: GrabList
     }
 
 newtype WorkerT tp m a = WorkerT {unWorkerT :: ReaderT (WorkerEnv tp m) (JobT tp m) a}
@@ -110,8 +117,10 @@ startWorkerT config m = do
               _      -> 0
 
   taskList <- Map.empty
-  jobList <- Map.empty
-  taskSize <- newTVarIO 0
+  jobList  <- Map.empty
+  tskSizeH <- newTVarIO 0
+  maxSizeH <- newTVarIO 0
+  grabList <- Map.empty
 
   jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) True sessionGen
   setDefaultSessionTimeout1 jobEnv1 100
@@ -189,27 +198,50 @@ getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
 getAssignJob _               = Nothing
 
+nextGrab :: (Transport tp, MonadUnliftIO m) => GrabList -> JobT tp m ()
+nextGrab gl = do
+  v <- Map.foldrWithKey' foldFunc Nothing gl
+  case v of
+    Nothing -> pure ()
+    Just (msgid, ts) -> do
+      now <- getEpochTime
+      when (ts + 300 < now) $ do
+        jobEnv <- newSessionEnv (Just (-1)) msgid
+        runSessionT_ jobEnv $ send (packetREQ GrabJob)
+        Map.insert msgid now gl
+
+  where foldFunc :: Msgid -> Int64 -> Maybe (Msgid, Int64) -> Maybe (Msgid, Int64)
+        foldFunc msgid ts Nothing = Just (msgid, ts)
+        foldFunc msgid ts (Just (msgid0, ts0))
+          | ts0 > ts  = Just (msgid, ts)
+          | otherwise = Just (msgid0, ts0)
+
 work
   :: (MonadUnliftIO m, Transport tp)
   => Int -> WorkerT tp m ()
 work size = do
-  tskSize <- asks taskSize
-  runJobT $ do
-    envs <- mapM (newSessionEnv (Just (-1))) =<< replicateM size nextSessionId
-    forever $ do
-      atomically $ do
-        s <- readTVar tskSize
-        when (s >= size) retrySTM
+  maxSize <- asks maxSizeH
+  gl      <- asks grabList
 
-      mapM_ (`runSessionT_` (send $ packetREQ GrabJob)) envs
-      threadDelay 300000000 -- 300s
+  atomically $ writeTVar maxSize size
+
+  runJobT $ do
+    mapM_ (\msgid -> Map.insert msgid 0 gl) =<< replicateM size nextSessionId
+    forever $ do
+      nextGrab gl
+      threadDelay 60000000 -- 60s
 
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()
 processJob WorkerEnv{..} ((sid, _), job) = do
   atomically $ do
-    s <- readTVar taskSize
-    writeTVar taskSize (s + 1)
+    s <- readTVar tskSizeH
+    maxSize <- readTVar maxSizeH
+    when (maxSize <= s) retrySTM
+    writeTVar tskSizeH (s + 1)
+
+  nextGrab grabList
+
   withEnv (Just job) $ do
     f <- func_
     task <- Map.lookup f taskList
@@ -232,8 +264,8 @@ processJob WorkerEnv{..} ((sid, _), job) = do
           workFail
 
   atomically $ do
-    s <- readTVar taskSize
-    writeTVar taskSize (s - 1)
+    s <- readTVar tskSizeH
+    writeTVar tskSizeH (s - 1)
 
   jobEnv <- newSessionEnv (Just (-1)) sid
   runSessionT_ jobEnv $ send (packetREQ GrabJob)
