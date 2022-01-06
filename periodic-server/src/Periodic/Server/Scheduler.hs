@@ -870,7 +870,7 @@ purgeExpired = do
     mapM_ (`IOMapS.delete` wl) ks
     pure vs
 
-  forM_ waiters $ \(nid, msgid) -> liftIO $ pushData nid msgid ""
+  liftIO $ forM_ waiters $ \(nid, msgid) -> pushData nid msgid ""
 
   where foldFunc
           :: (WaitItem -> Bool)
@@ -898,10 +898,10 @@ prepareWait :: MonadIO m => Job -> Nid -> Msgid -> SchedT db m ()
 prepareWait job nid msgid = do
   wl <- asks sWaitList
   now <- getEpochTime
-  IOMap.alter (updateWL waiter now) jh wl
-  where updateWL :: Waiter -> Int64 -> Maybe WaitItem -> Maybe WaitItem
-        updateWL waiter now Nothing     = Just $ WaitItem {itemTs = now, itemWaiters = []}
-        updateWL waiter now (Just item) = Just $ item {itemTs = now, itemWaiters = waiter:itemWaiters item}
+  IOMap.alter (updateWL now) jh wl
+  where updateWL :: Int64 -> Maybe WaitItem -> Maybe WaitItem
+        updateWL now Nothing     = Just $ WaitItem {itemTs = now, itemWaiters = [waiter]}
+        updateWL now (Just item) = Just $ item {itemTs = now, itemWaiters = waiter:itemWaiters item}
 
         jh = getHandle job
         waiter = (nid, msgid)
@@ -921,7 +921,7 @@ pushResult jh w = do
       Nothing   -> pure []
       Just item -> pure $ itemWaiters item
 
-  forM_ waiters $ \(nid, msgid) -> liftIO $ pushData nid msgid w
+  liftIO $ forM_ waiters $ \(nid, msgid) -> pushData nid msgid w
 
 existsWaitList :: MonadIO m => JobHandle -> SchedT db m Bool
 existsWaitList jh = do
