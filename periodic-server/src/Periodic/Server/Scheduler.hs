@@ -15,6 +15,7 @@ module Periodic.Server.Scheduler
   , SchedEnv
   , initSchedEnv
   , startSchedT
+  , runJob
   , pushJob
   , pushGrab
   , failJob
@@ -388,6 +389,23 @@ pushChanList act = do
     l <- readTVar cl
     writeTVar cl (act:l)
 
+
+runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+runJob job = do
+  liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
+  SchedEnv{..} <- ask
+  (nid, msgid) <- liftIO $ popAgent sGrabQueue fn
+  liftIO $ P.insert sPersist Running fn jn job
+  t <- liftIO getUnixTime
+  IOMap.insert (getHandle job) t sAssignJobTime
+  r <- liftIO $ sAssignJob nid msgid job
+  if r then pure ()
+       else liftIO $ P.delete sPersist fn jn
+
+  where fn = getFuncName job
+        jn = getName job
+
+
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 pushJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
@@ -513,6 +531,7 @@ schedJob_ job = do
 
         endSchedJob :: MonadIO m => SchedT db m ()
         endSchedJob = pushChanList (Poll1 jh)
+
 
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
 adjustFuncStat fn = do
