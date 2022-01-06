@@ -99,21 +99,25 @@ instance Binary a => Binary (Packet a) where
     putBS $ enc pid <> toStrict (encode body)
     where enc = toStrict . toLazyByteString . word32BE
 
-commonRecvPacket :: (MonadIO m, Binary pkt) => (pkt -> CRC32) -> (Int -> m ByteString) -> m pkt
-commonRecvPacket f recv = do
+commonRecvPacket :: (MonadIO m, Binary pkt) => (pkt -> CRC32) -> (ByteString -> m ()) -> (Int -> m ByteString) -> m pkt
+commonRecvPacket f putBack recv = do
     (_, magicbs) <- discoverMagic B.empty recv
     hbs <- recv 4
     crcbs <- recv 4
     case decode (fromStrict hbs) of
       PacketLength len -> do
         bs <- recv len
+        let putBackAndThrow e = do
+              putBack $ hbs <> crcbs <> bs
+              throwIO e
+
         case decodeOrFail (fromStrict $ magicbs <> hbs <> crcbs <> bs) of
-          Left (_, _, e1)   -> throwIO $ PacketDecodeError $ "Packet: " <> e1
+          Left (_, _, e1)   -> putBackAndThrow $ PacketDecodeError $ "Packet: " <> e1
           Right (_, _, pkt) ->
             if digest bs == f pkt then return pkt
-                                  else throwIO CRCNotMatch
+                                  else putBackAndThrow CRCNotMatch
 
-recvRawPacket :: (MonadIO m, Binary a) => (Int -> m ByteString) -> m (Packet a)
+recvRawPacket :: (MonadIO m, Binary a) => (ByteString -> m ()) -> (Int -> m ByteString) -> m (Packet a)
 recvRawPacket = commonRecvPacket packetCRC
 
 instance Binary a => RecvPacket () (Packet a) where
@@ -160,7 +164,7 @@ instance Binary a => Binary (RegPacket a) where
     put magic
     putBS $ toStrict (encode body)
 
-recvRegPacket :: (MonadIO m, Binary a) => (Int -> m ByteString) -> m (RegPacket a)
+recvRegPacket :: (MonadIO m, Binary a) => (ByteString -> m ()) -> (Int -> m ByteString) -> m (RegPacket a)
 recvRegPacket = commonRecvPacket regCRC
 
 instance Binary a => RecvPacket () (RegPacket a) where
