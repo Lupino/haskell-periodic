@@ -34,7 +34,6 @@ module Periodic.Server.Scheduler
   , setConfigInt
   , getConfigInt
   , prepareWait
-  , waitResult
   , canRun
   ) where
 
@@ -76,7 +75,7 @@ data Action = Add Job
     | PollJob
     | Poll1 JobHandle
 
-type Waiter = TVar (Maybe ByteString)
+type Waiter = (Nid, Msgid)
 
 data WaitItem = WaitItem
     { itemTs      :: Int64
@@ -132,6 +131,7 @@ data SchedEnv db = SchedEnv
     , sLockList       :: LockList
     , sPersist        :: db
     , sAssignJob      :: Nid -> Msgid -> Job -> IO Bool
+    , sPushData       :: Nid -> Msgid -> ByteString -> IO ()
     , sHook           :: Hook
     , sAssignJobTime  :: IOMap JobHandle UnixTime
     }
@@ -162,9 +162,10 @@ initSchedEnv
   :: (MonadUnliftIO m, Persist db)
   => P.PersistConfig db -> m ()
   -> (Nid -> Msgid -> Job -> IO Bool)
+  -> (Nid -> Msgid -> ByteString -> IO ())
   -> Hook
   -> m (SchedEnv db)
-initSchedEnv config sC sAssignJob sHook = do
+initSchedEnv config sC sAssignJob sPushData sHook = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
@@ -862,11 +863,14 @@ purgeExpired :: MonadIO m => SchedT db m ()
 purgeExpired = do
   now <- getEpochTime
   wl <- asks sWaitList
+  pushData <- asks sPushData
   ex <- fmap fromIntegral . readTVarIO =<< asks sExpiration
-  atomically $ do
+  waiters <- atomically $ do
     (ks, vs) <- IOMapS.foldrWithKey (foldFunc (check (now - ex))) ([],[]) wl
-    mapM_ (`writeTVar` Just "") vs
     mapM_ (`IOMapS.delete` wl) ks
+    pure vs
+
+  forM_ waiters $ \(nid, msgid) -> liftIO $ pushData nid msgid ""
 
   where foldFunc
           :: (WaitItem -> Bool)
@@ -890,37 +894,34 @@ shutdown = do
     return t
   when alive . void . async $ liftIO sCleanup
 
-prepareWait :: MonadIO m => Job -> SchedT db m Waiter
-prepareWait job = do
+prepareWait :: MonadIO m => Job -> Nid -> Msgid -> SchedT db m ()
+prepareWait job nid msgid = do
   wl <- asks sWaitList
-  waiter <- newTVarIO Nothing
   now <- getEpochTime
   IOMap.alter (updateWL waiter now) jh wl
-  return waiter
   where updateWL :: Waiter -> Int64 -> Maybe WaitItem -> Maybe WaitItem
-        updateWL waiter now Nothing     = Just $ WaitItem {itemTs = now, itemWaiters = [waiter]}
+        updateWL waiter now Nothing     = Just $ WaitItem {itemTs = now, itemWaiters = []}
         updateWL waiter now (Just item) = Just $ item {itemTs = now, itemWaiters = waiter:itemWaiters item}
 
         jh = getHandle job
+        waiter = (nid, msgid)
 
-waitResult :: MonadIO m => TVar Bool -> Waiter -> m ByteString
-waitResult state waiter = atomically $ do
-  st <- readTVar state
-  if st then readTVar waiter >>= maybe retrySTM pure
-        else pure ""
 
 pushResult
   :: MonadIO m
   => JobHandle -> ByteString -> SchedT db m ()
 pushResult jh w = do
   wl <- asks sWaitList
-  atomically $ do
+  pushData <- asks sPushData
+  waiters <- atomically $ do
     w0 <- IOMapS.lookup jh wl
     IOMapS.delete jh wl
 
     case w0 of
-      Nothing   -> pure ()
-      Just item -> mapM_ (`writeTVar` Just w) (itemWaiters item)
+      Nothing   -> pure []
+      Just item -> pure $ itemWaiters item
+
+  forM_ waiters $ \(nid, msgid) -> liftIO $ pushData nid msgid w
 
 existsWaitList :: MonadIO m => JobHandle -> SchedT db m Bool
 existsWaitList jh = do

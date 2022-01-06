@@ -47,11 +47,9 @@ handleClientSessionT (CC.SubmitJob job) = do
 handleClientSessionT (CC.RunJob job) = do
   c <- lift . canRun $ getFuncName job
   if c then do
-    waiter <- lift $ prepareWait job
+    (!nid, !msgid) <- ident <$> getSessionEnv1
+    lift $ prepareWait job nid msgid
     lift $ pushJob job
-    state <- fromConn Conn.statusTVar
-    w <- waitResult state waiter
-    send . packetRES $ Data w
   else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
@@ -87,9 +85,8 @@ handleWorkerSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
   => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
-  !agent <- ident <$> getSessionEnv1
-  case agent of
-    (!nid, !msgid) -> lift $ pushGrab wFuncList nid msgid
+  (!nid, !msgid) <- ident <$> getSessionEnv1
+  lift $ pushGrab wFuncList nid msgid
 
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w

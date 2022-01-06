@@ -6,7 +6,9 @@ module Periodic.Server
   ) where
 
 
+import           Control.Monad                (void)
 import           Data.Binary.Get              (getWord32be, runGet)
+import           Data.ByteString              (ByteString)
 import           Data.ByteString.Lazy         (fromStrict)
 import qualified Data.IOMap                   as IOMap
 import           Metro                        (NodeMode (..), SessionMode (..))
@@ -65,6 +67,19 @@ doAssignJob sEnv nid msgid job = do
           atomically $ modifyTVar' (wJobQueue env1) (getHandle job :)
           return True
 
+doPushData :: Transport tp => ServerEnv serv tp -> Nid -> Msgid -> ByteString -> IO ()
+doPushData sEnv nid msgid w = do
+  menv0 <- IOMap.lookup nid $ getNodeEnvList sEnv
+  case menv0 of
+    Nothing   -> return ()
+    Just env0 -> do
+      void
+        $ tryAny
+        $ runConnT (connEnv env0)
+        $ send
+        $ setPacketId msgid
+        $ packetRES (Data w)
+
 startServer
   :: (Servable serv, Transport tp, Persist db, MonadUnliftIO m)
   => PersistConfig db
@@ -86,7 +101,7 @@ startServer dbconfig mk config hook = do
 
   schedEnv <- initSchedEnv dbconfig
               (runServerT sEnv stopServerT)
-              (doAssignJob sEnv) hook
+              (doAssignJob sEnv) (doPushData sEnv) hook
 
   setOnNodeLeave sEnv $ \_ ClientConfig {..} ->
     runSchedT schedEnv $ do
