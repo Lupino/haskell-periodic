@@ -45,18 +45,14 @@ handleClientSessionT (CC.SubmitJob job) = do
   lift $ pushJob job
   send $ packetRES Success
 handleClientSessionT (CC.RunJob job) = do
-  preR <- lift $ lookupPrevResult job
-  case preR of
-    Just v -> send $ packetRES $ Data v
-    Nothing -> do
-      c <- lift . canRun $ getFuncName job
-      if c then do
-        lift $ prepareWait job
-        lift $ pushJob job
-        state <- fromConn Conn.statusTVar
-        w <- lift $ waitResult state job
-        send . packetRES $ Data w
-      else send $ packetRES NoWorker
+  c <- lift . canRun $ getFuncName job
+  if c then do
+    waiter <- lift $ prepareWait job
+    lift $ pushJob job
+    state <- fromConn Conn.statusTVar
+    w <- waitResult state waiter
+    send . packetRES $ Data w
+  else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
   stats <- lift $ map toBytes <$> status
