@@ -85,8 +85,12 @@ handleWorkerSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
   => ClientConfig -> WC.WorkerCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
-  (!nid, !msgid) <- ident <$> getSessionEnv1
-  lift $ pushGrab wFuncList nid msgid
+  (_, !msgid) <- ident <$> getSessionEnv1
+  atomically $ do
+    msgidList <- readTVar wMsgidList
+    if msgid `elem` msgidList
+       then pure ()
+       else writeTVar wMsgidList $! msgid : msgidList
 
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   lift $ doneJob jh w

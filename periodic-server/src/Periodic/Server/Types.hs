@@ -12,6 +12,7 @@ import           Data.Binary.Get              (lookAhead)
 import           Metro.Class                  (RecvPacket (..))
 import           Periodic.Node                (SessionEnv1)
 import qualified Periodic.Types.ClientCommand as CC
+import           Periodic.Types.Internal      (Msgid)
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.Packet        (Packet, recvRawPacket)
 import           Periodic.Types.ServerCommand (ServerCommand (..))
@@ -53,8 +54,9 @@ instance Binary Command where
   put (WC cmd) = put cmd
 
 data ClientConfig = ClientConfig
-  { wFuncList :: TVar [FuncName]
-  , wJobQueue :: TVar [JobHandle]
+  { wFuncList  :: TVar [FuncName]
+  , wJobQueue  :: TVar [JobHandle]
+  , wMsgidList :: TVar [Msgid]
   }
 
 type CSEnv = SessionEnv1 ClientConfig Command

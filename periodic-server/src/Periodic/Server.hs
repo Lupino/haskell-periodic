@@ -28,6 +28,8 @@ import           Metro.Server                 (getNodeEnvList, initServerEnv,
 import qualified Metro.Server                 as M (ServerEnv, startServer)
 import           Periodic.Node                (sessionGen)
 import           Periodic.Server.Client       (handleSessionT)
+import           Periodic.Server.GrabQueue    (dropAgentList, newGrabQueue,
+                                               pushAgent)
 import           Periodic.Server.Hook         (Hook)
 import           Periodic.Server.Persist      (Persist, PersistConfig)
 import           Periodic.Server.Scheduler    (failJob, initSchedEnv,
@@ -88,25 +90,30 @@ startServer
   -> Hook
   -> m ()
 startServer dbconfig mk config hook = do
+  grabQueue <- newGrabQueue
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv0 -> do
     (_ :: ClientType) <- getClientType <$> runConnT connEnv0 receive_
     nid <- getEntropy 4
     runConnT connEnv0 $ send (regPacketRES $ Data nid)
-    wFuncList <- newTVarIO []
-    wJobQueue <- newTVarIO []
-    return $ Just (Nid $! runGet getWord32be $ fromStrict nid, ClientConfig {..})
+    let nidV = Nid $! runGet getWord32be $ fromStrict nid
+    wFuncList  <- newTVarIO []
+    wJobQueue  <- newTVarIO []
+    wMsgidList <- newTVarIO []
+    pushAgent grabQueue wFuncList nidV wMsgidList
+    return $ Just (nidV, ClientConfig {..})
 
   setDefaultSessionTimeout sEnv 100
   setKeepalive sEnv 500
 
-  schedEnv <- initSchedEnv dbconfig
+  schedEnv <- initSchedEnv dbconfig grabQueue
               (runServerT sEnv stopServerT)
               (doAssignJob sEnv) (doPushData sEnv) hook
 
-  setOnNodeLeave sEnv $ \_ ClientConfig {..} ->
+  setOnNodeLeave sEnv $ \nid ClientConfig {..} ->
     runSchedT schedEnv $ do
       mapM_ failJob =<< readTVarIO wJobQueue
       mapM_ removeFunc =<< readTVarIO wFuncList
+      dropAgentList grabQueue nid
 
   runSchedT schedEnv $ do
     startSchedT

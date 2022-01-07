@@ -47,7 +47,7 @@ instance Persist Memory where
     infoM "Periodic.Server.Persist.Memory" "Memory connected"
     pending <- IOMap.empty
     running <- IOMap.empty
-    locked <- IOMap.empty
+    locked  <- IOMap.empty
     funcs   <- IOMap.empty
     return Memory {..}
 

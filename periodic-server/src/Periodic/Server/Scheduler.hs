@@ -17,7 +17,6 @@ module Periodic.Server.Scheduler
   , startSchedT
   , runJob
   , pushJob
-  , pushGrab
   , failJob
   , doneJob
   , schedLaterJob
@@ -161,17 +160,18 @@ runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
 
 initSchedEnv
   :: (MonadUnliftIO m, Persist db)
-  => P.PersistConfig db -> m ()
+  => P.PersistConfig db
+  -> GrabQueue
+  -> m ()
   -> (Nid -> Msgid -> Job -> IO Bool)
   -> (Nid -> Msgid -> ByteString -> IO ())
   -> Hook
   -> m (SchedEnv db)
-initSchedEnv config sC sAssignJob sPushData sHook = do
+initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
   sLocker         <- L.new
-  sGrabQueue      <- newGrabQueue
   sAlive          <- newTVarIO True
   sChanList       <- newTVarIO []
   sPollInterval   <- newTVarIO 300
@@ -400,7 +400,7 @@ runJob job = do
   IOMap.insert (getHandle job) t sAssignJobTime
   r <- liftIO $ sAssignJob nid msgid job
   if r then pure ()
-       else liftIO $ P.delete sPersist fn jn
+       else runJob job
 
   where fn = getFuncName job
         jn = getName job
@@ -615,12 +615,6 @@ dropFunc n = do
 
   pushChanList PollJob
 
-pushGrab :: MonadIO m => TVar [FuncName] -> Nid -> Msgid -> SchedT db m ()
-pushGrab funcList nid msgid = do
-  t0 <- liftIO getUnixTime
-  queue <- asks sGrabQueue
-  pushAgent queue funcList nid msgid
-  getDuration t0 >>= runHook eventPushGrab (FuncName "pushgrab")
 
 failJob :: (MonadUnliftIO m, Persist db) => JobHandle -> SchedT db m ()
 failJob jh = do

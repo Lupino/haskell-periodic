@@ -7,7 +7,6 @@ module Periodic.Server.Hook
   , genHook
   , hookName
   , eventPushJob
-  , eventPushGrab
   , eventFailJob
   , eventDoneJob
   , eventSchedLaterJob
@@ -41,7 +40,6 @@ newtype Hook = Hook
   }
 
 eventPushJob       = HookEvent "pushJob"
-eventPushGrab      = HookEvent "pushGrab"
 eventFailJob       = HookEvent "failJob"
 eventDoneJob       = HookEvent "doneJob"
 eventSchedLaterJob = HookEvent "schedLaterJob"
