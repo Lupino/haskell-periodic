@@ -32,7 +32,10 @@ newGrabQueue = do
   GrabQueue nidList <$> IOMap.empty
 
 pushAgent :: MonadIO m => GrabQueue -> TVar [FuncName] -> Nid -> TVar [Msgid] -> m ()
-pushAgent (GrabQueue _ q) fl nid ml = IOMap.insert nid (GrabItem ml fl) q
+pushAgent (GrabQueue s q) fl nid ml = atomically $ do
+  nl <- readTVar s
+  writeTVar s $! nid : nl
+  IOMapS.insert nid (GrabItem ml fl) q
 
 findMsgid :: GrabQueue -> FuncName -> Nid -> STM (Maybe (Nid, Msgid))
 findMsgid (GrabQueue _ q) fn nid = do
