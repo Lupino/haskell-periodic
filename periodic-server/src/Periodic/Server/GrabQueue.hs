@@ -8,29 +8,34 @@ module Periodic.Server.GrabQueue
   ) where
 
 
+import           Data.Foldable  (toList)
 import           Data.IOMap     (IOMap)
 import qualified Data.IOMap     as IOMap
 import qualified Data.IOMap.STM as IOMapS
+import           Data.List      (delete)
 import           Data.Maybe     (catMaybes)
 import           Periodic.Types (FuncName, Msgid, Nid)
-import           UnliftIO       (MonadIO, STM, TVar, atomically, readTVar,
-                                 retrySTM, writeTVar)
+import           UnliftIO       (MonadIO, STM, TVar, atomically, newTVarIO,
+                                 readTVar, retrySTM, writeTVar)
 
 data GrabItem = GrabItem
   { msgidList :: TVar [Msgid]
   , funcList  :: TVar [FuncName]
   }
 
-newtype GrabQueue = GrabQueue (IOMap Nid GrabItem)
+
+data GrabQueue = GrabQueue (TVar [Nid]) (IOMap Nid GrabItem)
 
 newGrabQueue :: MonadIO m => m GrabQueue
-newGrabQueue = GrabQueue <$> IOMap.empty
+newGrabQueue = do
+  nidList <- newTVarIO []
+  GrabQueue nidList <$> IOMap.empty
 
 pushAgent :: MonadIO m => GrabQueue -> TVar [FuncName] -> Nid -> TVar [Msgid] -> m ()
-pushAgent (GrabQueue q) fl nid ml = IOMap.insert nid (GrabItem ml fl) q
+pushAgent (GrabQueue _ q) fl nid ml = IOMap.insert nid (GrabItem ml fl) q
 
 findMsgid :: GrabQueue -> FuncName -> Nid -> STM (Maybe (Nid, Msgid))
-findMsgid (GrabQueue q) fn nid = do
+findMsgid (GrabQueue _ q) fn nid = do
   mitem <- IOMapS.lookup nid q
   case mitem of
     Nothing -> pure Nothing
@@ -47,23 +52,28 @@ findMsgid (GrabQueue q) fn nid = do
 
 
 popAgent :: MonadIO m => GrabQueue -> FuncName -> m (Nid, Msgid)
-popAgent gq@(GrabQueue q) fn = atomically $
-  IOMapS.keys q
-    >>= go
+popAgent gq@(GrabQueue s _) fn = atomically $
+  readTVar s
+    >>= go []
     >>= maybe retrySTM pure
-  where go :: [Nid] -> STM (Maybe (Nid, Msgid))
-        go [] = pure Nothing
-        go (x:xs) = do
+  where go :: [Nid] -> [Nid] -> STM (Maybe (Nid, Msgid))
+        go _ [] = pure Nothing
+        go ys (x:xs) = do
           r <- findMsgid gq fn x
           case r of
-            Nothing -> go xs
-            Just rr -> pure $ Just rr
+            Nothing -> go (ys ++ [x]) xs
+            Just (nid, msgid) -> do
+              writeTVar s $! xs ++ ys ++ [x]
+              pure $ Just (nid, msgid)
 
 
 popAgentList :: MonadIO m => GrabQueue -> FuncName -> m [(Nid, Msgid)]
-popAgentList gq@(GrabQueue q) fn = atomically $ do
-  nids <- IOMapS.keys q
-  catMaybes <$> mapM (findMsgid gq fn) nids
+popAgentList gq@(GrabQueue s _) fn = atomically $ do
+  seqV <- toList <$> readTVar s
+  catMaybes <$> mapM (findMsgid gq fn) seqV
 
 dropAgentList :: MonadIO m => GrabQueue -> Nid -> m ()
-dropAgentList (GrabQueue q) nid = IOMap.delete nid q
+dropAgentList (GrabQueue s q) nid = atomically $ do
+  IOMapS.delete nid q
+  nids <- readTVar s
+  writeTVar s $! delete nid nids
