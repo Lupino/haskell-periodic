@@ -65,7 +65,7 @@ import qualified Periodic.Server.Persist    as P
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
 import           Periodic.Types.Job
-import           System.Log.Logger          (debugM, errorM, infoM)
+import           System.Log.Logger          (debugM, infoM)
 import           UnliftIO
 import           UnliftIO.Concurrent        (threadDelay)
 
@@ -73,7 +73,7 @@ data Action = Add Job
     | Remove Job
     | Cancel
     | PollJob
-    | Poll1 JobHandle
+    | Poll1
 
 type Waiter = (Nid, Msgid)
 
@@ -106,6 +106,17 @@ type LockList = IOMap LockName LockInfo
 batchScale :: Int
 batchScale = 10
 
+data PoolState = PoolState
+  { poolState :: Bool
+  , poolDelay :: TVar Bool  -- when delay true job is sched
+  , poolJob   :: Maybe Job
+  }
+
+data Pooler = Pooler
+  { poolerState  :: TVar PoolState
+  , poolerWorker :: Async ()
+  }
+
 data SchedEnv db = SchedEnv
     { sPollInterval   :: TVar Int -- main poll loop every time interval
     -- revert process queue loop every time interval
@@ -134,6 +145,7 @@ data SchedEnv db = SchedEnv
     , sPushData       :: Nid -> Msgid -> ByteString -> IO ()
     , sHook           :: Hook
     , sAssignJobTime  :: IOMap JobHandle UnixTime
+    , sPoolerList     :: TVar [Pooler]
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -152,8 +164,6 @@ instance MonadUnliftIO m => MonadUnliftIO (SchedT db m) where
       withRunInIO $ \run ->
         inner (run . runSchedT r)
 
-
-type TaskList = IOMap JobHandle (Int64, Async ())
 
 runSchedT :: SchedEnv db -> SchedT db m a -> m a
 runSchedT schedEnv = flip runReaderT schedEnv . unSchedT
@@ -184,6 +194,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
+  sPoolerList     <- newTVarIO []
   pure SchedEnv{..}
 
 startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -191,9 +202,8 @@ startSchedT = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask_ sRevertInterval revertRunningQueue
-  taskList <- IOMap.empty
   runTask_ sPollInterval $ pushChanList PollJob
-  runTask 0 $ runChanJob taskList
+  runTask 0 runChanJob
   runTask 100 purgeExpired
   runTask 60 revertLockedQueue
   runTask 100 purgeEmptyLock
@@ -261,10 +271,8 @@ runTask_ d m = void . async $ do
     if alive then lift m
              else exit ()
 
-runChanJob
-  :: (MonadUnliftIO m, Persist db)
-  => TaskList -> SchedT db m ()
-runChanJob taskList = do
+runChanJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+runChanJob = do
   cl <- asks sChanList
   al <- asks sAlive
   acts <- atomically $ do
@@ -282,58 +290,32 @@ runChanJob taskList = do
   where doChanJob
           :: (MonadUnliftIO m, Persist db)
           => Action -> SchedT db m ()
-        doChanJob (Add job)    = reSchedJob taskList job
-        doChanJob (Remove job) = findTask taskList job >>= mapM_ (cancelWaitJob taskList (getHandle job))
-        doChanJob Cancel       = mapM_ (cancel . snd) =<< IOMap.elems taskList
-        doChanJob PollJob      = pollJob0 taskList
-        doChanJob (Poll1 jh)   = pollJob1 taskList jh
-
-cancelWaitJob :: MonadIO m => TaskList -> JobHandle -> Async () -> m ()
-cancelWaitJob taskList jh w = do
-  cancel w
-  IOMap.delete jh taskList
+        doChanJob (Add job)    = reSchedJob job
+        doChanJob (Remove job) = findPooler job >>= mapM_ removePoolerJob
+        doChanJob Cancel       = asks sPoolerList
+                                   >>= readTVarIO
+                                   >>= mapM_ (cancel . poolerWorker)
+        doChanJob PollJob      = pollJob0
+        doChanJob Poll1        = pollJob1
 
 
-pollJob0
-  :: (MonadUnliftIO m, Persist db)
-  => TaskList -> SchedT db m ()
-pollJob0 taskList = do
-  mapM_ checkPoll =<< IOMap.toList taskList
+pollJob0 :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+pollJob0 = do
   funcList <- getAvaliableFuncList
   next <- getNextPoll
-  pollJob_ taskList funcList next
+  pollJob_ funcList next
 
-  where checkPoll
-          :: (MonadIO m)
-          => (JobHandle, (Int64, Async ())) -> SchedT db m ()
-        checkPoll (jh, (_, w)) = do
-          r <- poll w
-          case r of
-            Just (Right ())  -> IOMap.delete jh taskList
-            Just (Left e)  -> do
-              IOMap.delete jh taskList
-              case show e of
-                "AsyncCancelled" -> pure ()
-                ee -> liftIO $ errorM "Periodic.Server.Scheduler" ("Poll error: " ++ ee)
-            Nothing -> do
-              r0 <- canRun fn
-              unless r0 $ cancelWaitJob taskList jh w
 
-          where (fn, _) = unHandle jh
-
-pollJob1
-  :: (MonadUnliftIO m, Persist db)
-  => TaskList -> JobHandle -> SchedT db m ()
-pollJob1 taskList jh = do
-  IOMap.delete jh taskList
+pollJob1 :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+pollJob1 = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-  size <- IOMap.size taskList
+  size <- length <$> getHandleList
   when (size < maxBatchSize) $ do
     funcList <- getAvaliableFuncList
     next <- getNextPoll
     p <- asks sPersist
     count <- liftIO $ P.countPending p funcList next
-    when (count > size) $ pollJob_ taskList funcList next
+    when (count > size) $ pollJob_ funcList next
 
 getNextPoll :: MonadIO m => SchedT db m Int64
 getNextPoll = do
@@ -353,31 +335,31 @@ getAvaliableFuncList = do
 
 pollJob_
   :: (MonadUnliftIO m, Persist db)
-  => TaskList -> [FuncName] -> Int64 -> SchedT db m ()
-pollJob_ _ [] _ = pure ()
-pollJob_ taskList funcList next = do
-  handles <- IOMap.keys taskList
+  => [FuncName] -> Int64 -> SchedT db m ()
+pollJob_ [] _ = pure ()
+pollJob_ funcList next = do
+  handles <- getHandleList
 
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   p <- asks sPersist
   jobs <- liftIO $ P.getPendingJob p funcList next
             (maxBatchSize * batchScale + length handles)
 
-  mapM_ (checkJob taskList) $ filter (flip notElem handles . getHandle) jobs
+  mapM_ checkJob $ filter (flip notElem handles . getHandle) jobs
 
   where checkJob
           :: (MonadUnliftIO m, Persist db)
-          => TaskList -> Job -> SchedT db m ()
-        checkJob tl job = do
-          w <- findTask tl job
-          case w of
+          => Job -> SchedT db m ()
+        checkJob job = do
+          mPooler <- findPooler job
+          case mPooler of
             Nothing -> do
               p <- asks sPersist
               isProc <- liftIO $ isJust <$> P.getOne p Running fn jn
-              unless isProc $ reSchedJob tl job
-            Just w0 -> do
+              unless isProc $ reSchedJob job
+            Just pooler -> do
               r <- canRun fn
-              unless r $ cancelWaitJob taskList (getHandle job) w0
+              unless r $ removePoolerJob pooler
 
           where fn = getFuncName job
                 jn = getName job
@@ -430,46 +412,58 @@ fixedSchedAt job = do
     return $ setSchedAt now job
   else return job
 
-reSchedJob :: (MonadUnliftIO m, Persist db) => TaskList -> Job -> SchedT db m ()
-reSchedJob taskList job = do
-  w <- findTask taskList job
-  forM_ w (cancelWaitJob taskList (getHandle job))
-
+reSchedJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+reSchedJob job = do
   next <- getNextPoll
   when (getSchedAt job < next) $ do
     r <- canRun $ getFuncName job
-    c <- check taskList
-    when (r && c) $ do
-      w' <- schedJob job
-      IOMap.insert (getHandle job) (getSchedAt job, w') taskList
-  where check :: (MonadIO m) => TaskList -> SchedT db m Bool
-        check tl = do
-          maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-          size <- IOMap.size tl
-          if size < maxBatchSize * batchScale then return True
-          else do
-            lastTask <- findLastTask tl
-            case lastTask of
-              Nothing -> return True
-              Just (sc, jh, w) ->
-                if sc < getSchedAt job then return False
-                else do
-                  cancelWaitJob taskList jh w
-                  return True
+    when r $ schedJob job
 
-findTask :: MonadIO m => TaskList -> Job -> SchedT db m (Maybe (Async ()))
-findTask taskList job = fmap snd <$> IOMap.lookup (getHandle job) taskList
+findPooler :: MonadIO m => Job -> SchedT db m (Maybe Pooler)
+findPooler job = do
+  poolerList <- asks sPoolerList
+  atomically $ readTVar poolerList >>= go
+  where go :: [Pooler] -> STM (Maybe Pooler)
+        go [] = pure Nothing
+        go (x:xs) = do
+          state <- readTVar $ poolerState x
+          case poolJob state of
+            Nothing -> go xs
+            Just j ->
+              if getHandle j == jh then do
+                delay <- readTVar $ poolDelay state
+                if delay then pure Nothing
+                         else pure $ Just x
+              else go xs
+        jh = getHandle job
 
-findLastTask :: MonadIO m => TaskList -> SchedT db m (Maybe (Int64, JobHandle, Async ()))
-findLastTask = IOMap.foldrWithKey f Nothing
-  where f :: JobHandle
-          -> (Int64, a)
-          -> Maybe (Int64, JobHandle, a)
-          -> Maybe (Int64, JobHandle, a)
-        f jh (sc, t) Nothing = Just (sc, jh, t)
-        f jh (sc, t) (Just (sc1, jh1, t1))
-          | sc > sc1 = Just (sc, jh, t)
-          | otherwise = Just (sc1, jh1, t1)
+
+getHandleList :: MonadIO m => SchedT db m [JobHandle]
+getHandleList = do
+  poolerList <- asks sPoolerList
+  atomically $ readTVar poolerList >>= go
+  where go :: [Pooler] -> STM [JobHandle]
+        go [] = pure []
+        go (x:xs) = do
+          state <- readTVar $ poolerState x
+          case poolJob state of
+            Nothing -> go xs
+            Just j -> do
+              delay <- readTVar $ poolDelay state
+              if delay then go xs
+                       else do
+                         handles <- go xs
+                         pure $ getHandle j : handles
+
+
+removePoolerJob :: MonadIO m => Pooler -> m ()
+removePoolerJob pooler = atomically $ do
+  st <- readTVar $ poolerState pooler
+  writeTVar (poolerState pooler) $ st
+    { poolJob = Nothing
+    , poolState = False
+    }
+
 
 canRun :: MonadIO m => FuncName -> SchedT db m Bool
 canRun fn = asks sFuncStatList >>= flip canRun_ fn
@@ -482,31 +476,116 @@ canRun_ stList fn = do
     Just FuncStat{sWorker=0} -> pure False
     Just _                   -> pure True
 
+getPooler :: MonadIO m => TVar [Pooler] -> m (Maybe Pooler, Maybe Pooler)
+getPooler poolerList = do
+  atomically $ readTVar poolerList >>= go [] Nothing
+
+  where go :: [Pooler] -> Maybe Pooler -> [Pooler] -> STM (Maybe Pooler, Maybe Pooler)
+        go _ mPooler [] = pure (Nothing, mPooler)
+        go ys mPooler (x:xs) = do
+          state <- readTVar $ poolerState x
+          if poolState state then do
+                               newMPooler <- comp mPooler x
+                               go (ys ++ [x]) newMPooler xs
+                             else do
+                               writeTVar (poolerState x) state {poolState=True}
+                               writeTVar poolerList (xs ++ ys ++ [x])
+                               pure (Just x, Nothing)
+
+        comp :: Maybe Pooler -> Pooler -> STM (Maybe Pooler)
+        comp Nothing pooler = do
+          delay <- poolDelay <$> readTVar (poolerState pooler)
+          st <- readTVar delay
+          if st then pure Nothing
+                else pure $ Just pooler
+        comp (Just pooler0) pooler1 = do
+          s0 <- getPoolerSchedAt pooler0
+          s1 <- getPoolerSchedAt pooler1
+          if s0 > s1 then pure $ Just pooler0
+                     else pure $ Just pooler1
+
+
+getPoolerSchedAt :: Pooler -> STM Int64
+getPoolerSchedAt pooler =
+  maybe 0 getSchedAt . poolJob <$> readTVar (poolerState pooler)
+
+
+startPoolWorker
+  :: (MonadUnliftIO m, Persist db)
+  => TVar PoolState -> SchedT db m (Async ())
+startPoolWorker h = async $ forever $ do
+  job <- atomically $ do
+    v <- readTVar h
+    case poolJob v of
+      Nothing  -> retrySTM
+      Just job -> do
+        canDo <- readTVar $ poolDelay v
+        if canDo then pure job
+                 else retrySTM
+
+  schedJob_ job
+  atomically $ do
+    v <- readTVar h
+    writeTVar h v
+      { poolJob   = Nothing
+      , poolState = False
+      }
+
 schedJob
   :: (MonadUnliftIO m, Persist db)
-  => Job -> SchedT db m (Async ())
-schedJob = async . schedJob_
+  => Job -> SchedT db m ()
+schedJob job = do
+  poolerList <- asks sPoolerList
+  (mFreePooler, mLastPooler) <- getPooler poolerList
+  now <- getEpochTime
+  case mFreePooler of
+    Just pooler -> do
+      delay <- getDelay now
+      atomically $ writeTVar (poolerState pooler) $ genPoolState delay
+
+    Nothing -> do
+      maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+      size <- length <$> readTVarIO poolerList
+      if size < maxBatchSize * batchScale then do
+        delay <- getDelay now
+        state <- newTVarIO $ genPoolState delay
+        io <- startPoolWorker state
+        atomically $ do
+          pl <- readTVar poolerList
+          writeTVar poolerList $! pl ++ [Pooler state io]
+      else
+        case mLastPooler of
+          Nothing     -> pure ()
+          Just pooler -> do
+            st0 <- atomically $ getPoolerSchedAt pooler
+            when (st0 > schedAt) $ do
+              delay <- getDelay now
+              atomically $ writeTVar (poolerState pooler) $ genPoolState delay
+
+  where schedAt = getSchedAt job
+        genPoolState delay = PoolState
+          { poolState = True
+          , poolJob = Just job
+          , poolDelay = delay
+          }
+        getDelay :: MonadIO m => Int64 -> m (TVar Bool)
+        getDelay now
+          | schedAt > now + 1 = registerDelay delayUS
+          | otherwise         = newTVarIO True
+          where delayUS = fromIntegral $ (schedAt - now) * 1000000
 
 schedJob_ :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 schedJob_ job = do
-  SchedEnv{..} <- ask
-  r <- canRun fn
-  when r $ do
-    now <- getEpochTime
-    when (schedAt > now + 1) . threadDelay . fromIntegral $ (schedAt - now) * 1000000
-    FuncStat{..} <- atomically $ do
-      st <- IOMapS.lookup fn sFuncStatList
-      case st of
-        Nothing                  -> retrySTM
-        Just FuncStat{sWorker=0} -> retrySTM
-        Just st'                 -> pure st'
-    if sBroadcast then popAgentListThen
-                  else popAgentThen
+  mFuncStat <- asks sFuncStatList >>= IOMap.lookup fn
+  case mFuncStat of
+    Nothing                  -> pure ()
+    Just FuncStat{sWorker=0} -> pure ()
+    Just st ->
+      if sBroadcast st then popAgentListThen
+                       else popAgentThen
 
   where fn = getFuncName job
         jn = getName job
-        schedAt = getSchedAt job
-        jh = getHandle job
 
         popAgentThen
           :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -520,7 +599,7 @@ schedJob_ job = do
           if r then endSchedJob
                else do
                  liftIO $ P.insert sPersist Pending fn jn job
-                 schedJob_ job
+                 popAgentThen
 
         popAgentListThen :: (MonadUnliftIO m) => SchedT db m ()
         popAgentListThen = do
@@ -530,7 +609,7 @@ schedJob_ job = do
           unless (null agents) endSchedJob -- wait to resched the broadcast job
 
         endSchedJob :: MonadIO m => SchedT db m ()
-        endSchedJob = pushChanList (Poll1 jh)
+        endSchedJob = pushChanList Poll1
 
 
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
