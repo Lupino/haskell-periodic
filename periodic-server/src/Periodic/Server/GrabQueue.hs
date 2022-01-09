@@ -2,8 +2,8 @@ module Periodic.Server.GrabQueue
   ( GrabQueue
   , newGrabQueue
   , pushAgent
-  , popAgent
-  , popAgentList
+  , popAgentSTM
+  , popAgentListSTM
   , dropAgentList
   ) where
 
@@ -54,11 +54,10 @@ findMsgid (GrabQueue _ q) fn nid = do
                              else pure Nothing
 
 
-popAgent :: MonadIO m => GrabQueue -> FuncName -> m (Nid, Msgid)
-popAgent gq@(GrabQueue s _) fn = atomically $
+popAgentSTM :: GrabQueue -> FuncName -> STM (Maybe (Nid, Msgid))
+popAgentSTM gq@(GrabQueue s _) fn = do
   readTVar s
     >>= go []
-    >>= maybe retrySTM pure
   where go :: [Nid] -> [Nid] -> STM (Maybe (Nid, Msgid))
         go _ [] = pure Nothing
         go ys (x:xs) = do
@@ -70,8 +69,8 @@ popAgent gq@(GrabQueue s _) fn = atomically $
               pure $ Just (nid, msgid)
 
 
-popAgentList :: MonadIO m => GrabQueue -> FuncName -> m [(Nid, Msgid)]
-popAgentList gq@(GrabQueue s _) fn = atomically $ do
+popAgentListSTM :: GrabQueue -> FuncName -> STM [(Nid, Msgid)]
+popAgentListSTM gq@(GrabQueue s _) fn = do
   seqV <- toList <$> readTVar s
   catMaybes <$> mapM (findMsgid gq fn) seqV
 

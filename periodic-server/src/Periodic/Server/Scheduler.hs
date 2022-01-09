@@ -376,13 +376,16 @@ runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 runJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
   SchedEnv{..} <- ask
-  (nid, msgid) <- liftIO $ popAgent sGrabQueue fn
-  liftIO $ P.insert sPersist Running fn jn job
-  t <- liftIO getUnixTime
-  IOMap.insert (getHandle job) t sAssignJobTime
-  r <- liftIO $ sAssignJob nid msgid job
-  if r then pure ()
-       else runJob job
+  mAgent <- atomically $ popAgentSTM sGrabQueue fn
+  case mAgent of
+    Nothing -> pushJob job
+    Just (nid, msgid) -> do
+      liftIO $ P.insert sPersist Running fn jn job
+      t <- liftIO getUnixTime
+      IOMap.insert (getHandle job) t sAssignJobTime
+      r <- liftIO $ sAssignJob nid msgid job
+      if r then pure ()
+           else pushJob job
 
   where fn = getFuncName job
         jn = getName job
@@ -513,23 +516,45 @@ getPoolerSchedAt pooler =
 startPoolWorker
   :: (MonadUnliftIO m, Persist db)
   => TVar PoolState -> SchedT db m (Async ())
-startPoolWorker h = async $ forever $ do
-  job <- atomically $ do
-    v <- readTVar h
-    case poolJob v of
-      Nothing  -> retrySTM
-      Just job -> do
-        canDo <- readTVar $ poolDelay v
-        if canDo then pure job
-                 else retrySTM
+startPoolWorker h = do
+  funcStatList <- asks sFuncStatList
+  grabQueue <- asks sGrabQueue
+  async $ forever $ do
+    mTask <- atomically $ do
+      v <- readTVar h
+      case poolJob v of
+        Nothing  -> retrySTM
+        Just job -> do
+          canDo <- readTVar $ poolDelay v
+          if canDo then do
+            mFuncStat <- IOMapS.lookup (getFuncName job) funcStatList
+            case mFuncStat of
+              Nothing                  -> pure Nothing
+              Just FuncStat{sWorker=0} -> pure Nothing
+              Just st -> do
+                if sBroadcast st then do
+                  agents <- popAgentListSTM grabQueue (getFuncName job)
+                  pure $ Just (job, agents, True)
+                else do
+                  mAgent <- popAgentSTM grabQueue (getFuncName job)
+                  case mAgent of
+                    Nothing    -> retrySTM
+                    Just agent -> pure $ Just (job, [agent], False)
 
-  schedJob_ job
-  atomically $ do
-    v <- readTVar h
-    writeTVar h v
-      { poolJob   = Nothing
-      , poolState = False
-      }
+          else retrySTM
+
+    case mTask of
+      Nothing                -> pure ()
+      Just (job, agents, bc) -> do
+        mapM_ (schedJob_ job bc) agents
+        unless (null agents) $ pushChanList Poll1
+
+    atomically $ do
+      v <- readTVar h
+      writeTVar h v
+        { poolJob   = Nothing
+        , poolState = False
+        }
 
 schedJob
   :: (MonadUnliftIO m, Persist db)
@@ -574,42 +599,25 @@ schedJob job = do
           | otherwise         = newTVarIO True
           where delayUS = fromIntegral $ (schedAt - now) * 1000000
 
-schedJob_ :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
-schedJob_ job = do
-  mFuncStat <- asks sFuncStatList >>= IOMap.lookup fn
-  case mFuncStat of
-    Nothing                  -> pure ()
-    Just FuncStat{sWorker=0} -> pure ()
-    Just st ->
-      if sBroadcast st then popAgentListThen
-                       else popAgentThen
+schedJob_ :: (MonadIO m, Persist db) => Job -> Bool -> (Nid, Msgid) -> SchedT db m ()
+schedJob_ job True (nid, msgid) = do
+  assignJob <- asks sAssignJob
+  liftIO . void $ assignJob nid msgid job
+schedJob_ job False (nid, msgid) = do
+  assignJob <- asks sAssignJob
+  assignJobTime <- asks sAssignJobTime
+  persist <- asks sPersist
+  liftIO $ P.insert persist Running fn jn job
+  t <- liftIO getUnixTime
+  IOMap.insert (getHandle job) t assignJobTime
+  r <- liftIO $ assignJob nid msgid job
+  if r then pure ()
+       else do
+         liftIO $ P.insert persist Pending fn jn job
+         pushChanList (Add job)
 
   where fn = getFuncName job
         jn = getName job
-
-        popAgentThen
-          :: (MonadUnliftIO m, Persist db) => SchedT db m ()
-        popAgentThen = do
-          SchedEnv{..} <- ask
-          (nid, msgid) <- liftIO $ popAgent sGrabQueue fn
-          liftIO $ P.insert sPersist Running fn jn job
-          t <- liftIO getUnixTime
-          IOMap.insert (getHandle job) t sAssignJobTime
-          r <- liftIO $ sAssignJob nid msgid job
-          if r then endSchedJob
-               else do
-                 liftIO $ P.insert sPersist Pending fn jn job
-                 popAgentThen
-
-        popAgentListThen :: (MonadUnliftIO m) => SchedT db m ()
-        popAgentListThen = do
-          SchedEnv{..} <- ask
-          agents <- popAgentList sGrabQueue fn
-          liftIO $ mapM_ (\(nid, msgid) -> sAssignJob nid msgid job) agents
-          unless (null agents) endSchedJob -- wait to resched the broadcast job
-
-        endSchedJob :: MonadIO m => SchedT db m ()
-        endSchedJob = pushChanList Poll1
 
 
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
