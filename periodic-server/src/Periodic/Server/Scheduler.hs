@@ -71,7 +71,6 @@ import           UnliftIO.Concurrent        (threadDelay)
 
 data Action = Add Job
     | Remove Job
-    | Cancel
     | PollJob
     | Poll1
 
@@ -292,9 +291,6 @@ runChanJob = do
           => Action -> SchedT db m ()
         doChanJob (Add job)    = reSchedJob job
         doChanJob (Remove job) = findPooler job >>= mapM_ removePoolerJob
-        doChanJob Cancel       = asks sPoolerList
-                                   >>= readTVarIO
-                                   >>= mapM_ (cancel . poolerWorker)
         doChanJob PollJob      = pollJob0
         doChanJob Poll1        = pollJob1
 
@@ -987,7 +983,7 @@ shutdown :: (MonadUnliftIO m) => SchedT db m ()
 shutdown = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler shutdown"
   SchedEnv{..} <- ask
-  pushChanList Cancel
+  readTVarIO sPoolerList >>= mapM_ (cancel . poolerWorker)
   alive <- atomically $ do
     t <- readTVar sAlive
     writeTVar sAlive False
