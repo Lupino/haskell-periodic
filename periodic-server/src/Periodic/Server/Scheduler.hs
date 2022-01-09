@@ -126,6 +126,7 @@ data SchedEnv db = SchedEnv
     , sMaxBatchSize   :: TVar Int
     -- poll batch scale
     , sBatchScale     :: TVar Int
+    , sTaskSize       :: TVar Int
     -- client or worker keepalive
     , sKeepalive      :: TVar Int
     -- run job cache expiration
@@ -189,6 +190,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sLockTimeout    <- newTVarIO 300
   sMaxBatchSize   <- newTVarIO 100
   sBatchScale     <- newTVarIO 5
+  sTaskSize       <- newTVarIO 0
   sKeepalive      <- newTVarIO 300
   sExpiration     <- newTVarIO 300
   sCleanup        <- toIO sC
@@ -309,7 +311,7 @@ pollJob0 = do
 pollJob1 :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 pollJob1 = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-  size <- length <$> getHandleList
+  size <- readTVarIO =<< asks sTaskSize
   when (size < maxBatchSize) $ do
     funcList <- getAvaliableFuncList
     next <- getNextPoll
@@ -460,13 +462,15 @@ getHandleList = do
                          pure $ getHandle j : handles
 
 
-removePoolerJob :: MonadIO m => Pooler -> m ()
-removePoolerJob pooler = atomically $ do
-  st <- readTVar $ poolerState pooler
-  writeTVar (poolerState pooler) $ st
-    { poolJob = Nothing
-    , poolState = False
-    }
+removePoolerJob :: MonadIO m => Pooler -> SchedT db m ()
+removePoolerJob pooler = do
+  taskSize <- asks sTaskSize
+  atomically $ do
+    modifyTVar' (poolerState pooler) $ \st -> st
+      { poolJob = Nothing
+      , poolState = False
+      }
+    modifyTVar' taskSize (\v -> v - 1)
 
 
 canRun :: MonadIO m => FuncName -> SchedT db m Bool
@@ -492,8 +496,8 @@ getPooler poolerList = do
                                newMPooler <- comp mPooler x
                                go (ys ++ [x]) newMPooler xs
                              else do
-                               writeTVar (poolerState x) state {poolState=True}
-                               writeTVar poolerList (xs ++ ys ++ [x])
+                               writeTVar (poolerState x) $ state {poolState=True}
+                               writeTVar poolerList $! (xs ++ ys ++ [x])
                                pure (Just x, Nothing)
 
         comp :: Maybe Pooler -> Pooler -> STM (Maybe Pooler)
@@ -520,6 +524,7 @@ startPoolWorker
 startPoolWorker h = do
   funcStatList <- asks sFuncStatList
   grabQueue <- asks sGrabQueue
+  taskSize <- asks sTaskSize
   async $ forever $ do
     mTask <- atomically $ do
       v <- readTVar h
@@ -546,39 +551,43 @@ startPoolWorker h = do
 
     case mTask of
       Nothing                -> pure ()
-      Just (job, agents, bc) -> do
-        mapM_ (schedJob_ job bc) agents
-        unless (null agents) $ pushChanList Poll1
+      Just (job, agents, bc) -> mapM_ (schedJob_ job bc) agents
 
     atomically $ do
-      v <- readTVar h
-      writeTVar h v
+      modifyTVar' h $ \v -> v
         { poolJob   = Nothing
         , poolState = False
         }
+      modifyTVar' taskSize (\v -> v - 1)
+
+    pushChanList Poll1
 
 schedJob
   :: (MonadUnliftIO m, Persist db)
   => Job -> SchedT db m ()
 schedJob job = do
   poolerList <- asks sPoolerList
+  taskSize <- asks sTaskSize
   (mFreePooler, mLastPooler) <- getPooler poolerList
   now <- getEpochTime
   case mFreePooler of
     Just pooler -> do
       delay <- getDelay now
-      atomically $ writeTVar (poolerState pooler) $ genPoolState delay
+      atomically $ do
+        writeTVar (poolerState pooler) $ genPoolState delay
+        modifyTVar' taskSize (+1)
 
     Nothing -> do
       maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+      batchScale <- readTVarIO =<< asks sBatchScale
       size <- length <$> readTVarIO poolerList
       if size < maxBatchSize * batchScale then do
         delay <- getDelay now
         state <- newTVarIO $ genPoolState delay
         io <- startPoolWorker state
         atomically $ do
-          pl <- readTVar poolerList
-          writeTVar poolerList $! pl ++ [Pooler state io]
+          modifyTVar' poolerList (++[Pooler state io])
+          modifyTVar' taskSize (+1)
       else
         case mLastPooler of
           Nothing     -> pure ()
