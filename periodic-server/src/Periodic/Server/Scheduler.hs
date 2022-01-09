@@ -102,9 +102,6 @@ data LockInfo = LockInfo
 
 type LockList = IOMap LockName LockInfo
 
-batchScale :: Int
-batchScale = 10
-
 data PoolState = PoolState
   { poolState :: Bool
   , poolDelay :: TVar Bool  -- when delay true job is sched
@@ -117,25 +114,28 @@ data Pooler = Pooler
   }
 
 data SchedEnv db = SchedEnv
-    { sPollInterval   :: TVar Int -- main poll loop every time interval
+    -- main poll loop every time interval
+    { sPollInterval   :: TVar Int
     -- revert process queue loop every time interval
-    , sRevertInterval :: TVar Int -- revert process queue loop every time interval
+    , sRevertInterval :: TVar Int
     -- the task do timeout
-    , sTaskTimeout    :: TVar Int -- the task do timeout
+    , sTaskTimeout    :: TVar Int
     -- lock timeout
-    , sLockTimeout    :: TVar Int -- lock timeout
+    , sLockTimeout    :: TVar Int
     -- max poll batch size
-    , sMaxBatchSize   :: TVar Int -- max poll batch size
+    , sMaxBatchSize   :: TVar Int
+    -- poll batch scale
+    , sBatchScale     :: TVar Int
     -- client or worker keepalive
-    , sKeepalive      :: TVar Int -- client or worker keepalive
+    , sKeepalive      :: TVar Int
     -- run job cache expiration
-    , sExpiration     :: TVar Int -- run job cache expiration
+    , sExpiration     :: TVar Int
     , sCleanup        :: IO ()
     , sFuncStatList   :: FuncStatList
     , sLocker         :: L.Lock
     , sGrabQueue      :: GrabQueue
     -- sched state, when false sched is exited.
-    , sAlive          :: TVar Bool -- sched state, when false sched is exited.
+    , sAlive          :: TVar Bool
     , sChanList       :: TVar [Action]
     , sWaitList       :: WaitList
     , sLockList       :: LockList
@@ -187,7 +187,8 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
-  sMaxBatchSize   <- newTVarIO 250
+  sMaxBatchSize   <- newTVarIO 100
+  sBatchScale     <- newTVarIO 5
   sKeepalive      <- newTVarIO 300
   sExpiration     <- newTVarIO 300
   sCleanup        <- toIO sC
@@ -213,6 +214,7 @@ startSchedT = do
   loadInt "lock-timeout" sLockTimeout
   loadInt "keepalive" sKeepalive
   loadInt "max-batch-size" sMaxBatchSize
+  loadInt "batch-scale" sBatchScale
   loadInt "expiration" sExpiration
 
 loadInt :: (MonadIO m, Persist db) => String -> TVar Int -> SchedT db m ()
@@ -238,6 +240,7 @@ setConfigInt key val = do
     "lock-timeout"    -> saveInt "lock-timeout" val sLockTimeout
     "keepalive"       -> saveInt "keepalive" val sKeepalive
     "max-batch-size"  -> saveInt "max-batch-size" val sMaxBatchSize
+    "batch-scale"     -> saveInt "batch-scale" val sBatchScale
     "expiration"      -> saveInt "expiration" val sExpiration
     _                 -> pure ()
 
@@ -251,6 +254,7 @@ getConfigInt key = do
     "lock-timeout"    -> readTVarIO sLockTimeout
     "keepalive"       -> readTVarIO sKeepalive
     "max-batch-size"  -> readTVarIO sMaxBatchSize
+    "batch-scale"     -> readTVarIO sBatchScale
     "expiration"      -> readTVarIO sExpiration
     _                 -> pure 0
 
@@ -337,6 +341,7 @@ pollJob_ funcList next = do
   handles <- getHandleList
 
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+  batchScale <- readTVarIO =<< asks sBatchScale
   p <- asks sPersist
   jobs <- liftIO $ P.getPendingJob p funcList next
             (maxBatchSize * batchScale + length handles)

@@ -192,6 +192,7 @@ printConfigKeyList = do
   putStrLn "  lock-timeout    - lock timeout"
   putStrLn "  keepalive       - client keepalive"
   putStrLn "  max-batch-size  - max poll batch size"
+  putStrLn "  batch-scale     - poll batch scale"
   putStrLn "  expiration      - run job result cache expiration"
   putStrLn ""
   exitSuccess
