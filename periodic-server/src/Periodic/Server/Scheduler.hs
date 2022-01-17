@@ -148,6 +148,7 @@ data SchedEnv db = SchedEnv
     , sPoolerList     :: TVar [Pooler]
     , sLastPoolState  :: TVar (Maybe (TVar PoolState))
     , sFreePoolStates :: TVar [TVar PoolState]
+    , sQuickRunJob    :: TVar [Job]
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -201,6 +202,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sPoolerList     <- newTVarIO []
   sLastPoolState  <- newTVarIO Nothing
   sFreePoolStates <- newTVarIO []
+  sQuickRunJob    <- newTVarIO []
   pure SchedEnv{..}
 
 startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -582,6 +584,7 @@ startPoolWorker h = do
   grabQueue <- asks sGrabQueue
   taskSize <- asks sTaskSize
   stateList <- asks sFreePoolStates
+  quickRunJob <- asks sQuickRunJob
   async $ forever $ do
     mTask <- atomically $ do
       v <- readTVar h
@@ -611,12 +614,20 @@ startPoolWorker h = do
       Just (job, agents, bc) -> mapM_ (schedJob_ job bc) agents
 
     atomically $ do
-      modifyTVar' h $ \v -> v
-        { poolJob   = Nothing
-        , poolState = False
-        }
-      modifyTVar' taskSize (\v -> v - 1)
-      modifyTVar' stateList (h:)
+      jobs <- readTVar quickRunJob
+      case jobs of
+        [] -> do
+          modifyTVar' h $ \v -> v
+            { poolJob   = Nothing
+            , poolState = False
+            }
+          modifyTVar' taskSize (\v -> v - 1)
+          modifyTVar' stateList (h:)
+        (x:xs) -> do
+          writeTVar quickRunJob xs
+          modifyTVar' h $ \v -> v
+            { poolJob = Just x
+            }
 
     pushChanList Poll1
 
@@ -629,6 +640,7 @@ schedJob job = do
   taskSize <- asks sTaskSize
   mPoolState <- getOnePoolState =<< asks sFreePoolStates
   lastPoolState <- asks sLastPoolState
+  quickRunJob <- asks sQuickRunJob
   now <- getEpochTime
   case mPoolState of
     Just ps -> do
@@ -665,7 +677,9 @@ schedJob job = do
                   Just pooler -> do
                     swapLastPoolState lastPoolState (poolerState pooler)
                     pure $ Just state
-          else pure Nothing
+          else do
+            when (schedAt <= now + 1) $ modifyTVar' quickRunJob (job:)
+            pure Nothing
         case mState of
           Nothing -> pure ()
           Just state -> do
