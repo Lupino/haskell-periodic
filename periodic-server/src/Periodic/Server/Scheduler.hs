@@ -188,7 +188,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sLocker         <- L.new
   sAlive          <- newTVarIO True
   sChanList       <- newTVarIO []
-  sPollInterval   <- newTVarIO 300
+  sPollInterval   <- newTVarIO 10
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
@@ -320,27 +320,26 @@ pollJob1 :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 pollJob1 = do
   now <- getEpochTime
   waitingJob <- asks sWaitingJob
-  (jobs, wJobs) <- atomically $ do
+  jobs <- atomically $ do
     (jobs, wJobs) <- partition (\x -> getSchedAt x <= now ) <$> readTVar waitingJob
 
-    if length jobs > 0 then do
-      writeTVar waitingJob wJobs
-      pure (jobs, [])
-    else do
+    if null jobs  then do
       let sorted = sortOn getSchedAt wJobs
       writeTVar waitingJob $! drop 1 sorted
-      pure ([], take 1 sorted)
+      pure $ take 1 sorted
+    else do
+      writeTVar waitingJob wJobs
+      pure jobs
 
-  case (jobs, wJobs) of
-    ([], xs) -> mapM_ reSchedJob xs
-    (xs, []) -> mapM_ reSchedJob xs
-    _        -> do
-      size <- readTVarIO =<< asks sPoolSize
-      funcList <- getAvaliableFuncList
-      next <- getNextPoll
-      p <- asks sPersist
-      count <- liftIO $ P.countPending p funcList next
-      when (count > size) $ pollJob_ funcList next
+  mapM_ reSchedJob jobs
+
+  when (null jobs) $ do
+    size <- readTVarIO =<< asks sPoolSize
+    funcList <- getAvaliableFuncList
+    next <- getNextPoll
+    p <- asks sPersist
+    count <- liftIO $ P.countPending p funcList next
+    when (count > size) $ pollJob_ funcList next
 
 
 getNextPoll :: MonadIO m => SchedT db m Int64
