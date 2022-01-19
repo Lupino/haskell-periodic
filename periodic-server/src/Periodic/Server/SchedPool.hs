@@ -11,7 +11,8 @@ module Periodic.Server.SchedPool
   ) where
 
 
-import           Control.Monad      (forever, unless, when)
+import           Control.Monad      (forM_, forever, unless, when)
+import           Control.Monad.Cont (callCC, lift, runContT)
 import           Data.Int           (Int64)
 import           Data.List          (sortOn)
 import           Metro.Utils        (getEpochTime)
@@ -23,6 +24,8 @@ data SchedState = SchedState
   { stateIsBusy :: Bool
   , stateDelay  :: TVar Bool  -- when delay true job is sched
   , stateJob    :: Maybe Job
+  , stateId     :: Int
+  , stateAlive  :: Bool
   }
 
 
@@ -33,6 +36,7 @@ type FreeStates = TVar [PoolerState]
 data SchedPooler = SchedPooler
   { poolerState :: PoolerState
   , poolerIO    :: Async ()
+  , poolerId    :: Int
   }
 
 type LastState = TVar (Maybe PoolerState)
@@ -46,8 +50,10 @@ data SchedPool = SchedPool
   , sortedFlag  :: TVar Bool
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
+  , currentSize :: TVar Int
   , onFree      :: STM ()
   , prepareWork :: FuncName -> STM [(Nid, Msgid)]
+  , lastStateId :: TVar Int
   }
 
 
@@ -65,6 +71,8 @@ newSchedPool maxPoolSize onFree prepareWork = do
   waitingJob  <- newTVarIO []
   sortedFlag  <- newTVarIO True
   poolSize    <- newTVarIO 0
+  currentSize <- newTVarIO 0
+  lastStateId <- newTVarIO 0
   pure SchedPool {..}
 
 
@@ -168,7 +176,7 @@ startPoolerIO
   -> (Job -> Bool -> (Nid, Msgid) -> m ())
   -> PoolerState -> m (Async ())
 startPoolerIO pool@SchedPool {..} work state =
-  async $ forever $ do
+  async $ (`runContT` pure) $ callCC $ \exit -> forever $ do
     (job, agents) <- atomically $ do
       v <- readTVar state
       case stateJob v of
@@ -180,9 +188,12 @@ startPoolerIO pool@SchedPool {..} work state =
             pure (job, agents)
           else retrySTM
 
-    mapM_ (work job (length agents == 1)) agents
+    mapM_ (lift . work job (length agents == 1)) agents
 
-    finishPoolerState pool state
+    s <- readTVarIO state
+
+    if stateAlive s then finishPoolerState pool state
+                    else exit ()
 
 
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
@@ -195,7 +206,7 @@ finishPoolerState SchedPool {..} state =
           { stateJob   = Nothing
           , stateIsBusy = False
           }
-        modifyTVar' poolSize (\v -> v - 1)
+        modifyTVar' currentSize (\v -> v - 1)
         modifyTVar' freeStates (state:)
         onFree
       (x:xs) -> do
@@ -222,24 +233,37 @@ spawn pool@SchedPool {..} work job = do
       delay <- getDelay now
       atomically $ do
         modifyTVar' state $ genPoolState delay
-        modifyTVar' poolSize (+1)
+        modifyTVar' currentSize (+1)
         trySwapLastState lastState state schedAt
     Nothing -> do
-      size <- length <$> readTVarIO poolerList
-      maxSise <- readTVarIO maxPoolSize
-      if size < maxSise then do
+      size <- readTVarIO poolSize
+      maxSize <- readTVarIO maxPoolSize
+      when (maxSize < size) $ atomically $ do
+        poolers <- readTVar poolerList
+        writeTVar poolerList $! drop (size - maxSize) poolers
+        forM_ (take (size - maxSize) poolers) $ \p ->
+          modifyTVar' (poolerState p) $ \st -> st {stateAlive = False}
+
+      if size < maxSize then do
         delay <- getDelay now
+        sid <- atomically $ do
+          modifyTVar' lastStateId (+1)
+          readTVar lastStateId
 
         state <- newTVarIO SchedState
           { stateIsBusy = True
-          , stateJob = Just job
-          , stateDelay = delay
+          , stateJob    = Just job
+          , stateDelay  = delay
+          , stateId     = sid
+          , stateAlive  = True
           }
+
         io <- startPoolerIO pool work state
 
         atomically $ do
-          modifyTVar' poolerList (++[SchedPooler state io])
+          modifyTVar' poolerList (++[SchedPooler state io sid])
           modifyTVar' poolSize (+1)
+          modifyTVar' currentSize (+1)
           trySwapLastState lastState state schedAt
       else do
         mState <- atomically $ do
@@ -312,7 +336,7 @@ poll SchedPool {..} respawn trySpawn = do
 
   mapM_ respawn jobs
 
-  when (null jobs) $ readTVarIO poolSize >>= trySpawn
+  when (null jobs) $ readTVarIO currentSize >>= trySpawn
 
 
 close :: MonadIO m => SchedPool -> m ()
