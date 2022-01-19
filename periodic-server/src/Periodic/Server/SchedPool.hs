@@ -24,7 +24,6 @@ data SchedState = SchedState
   { stateIsBusy :: Bool
   , stateDelay  :: TVar Bool  -- when delay true job is sched
   , stateJob    :: Maybe Job
-  , stateId     :: Int
   , stateAlive  :: Bool
   }
 
@@ -36,7 +35,6 @@ type FreeStates = TVar [PoolerState]
 data SchedPooler = SchedPooler
   { poolerState :: PoolerState
   , poolerIO    :: Async ()
-  , poolerId    :: Int
   }
 
 type LastState = TVar (Maybe PoolerState)
@@ -53,7 +51,6 @@ data SchedPool = SchedPool
   , currentSize :: TVar Int
   , onFree      :: STM ()
   , prepareWork :: FuncName -> STM [(Nid, Msgid)]
-  , lastStateId :: TVar Int
   }
 
 
@@ -72,7 +69,6 @@ newSchedPool maxPoolSize onFree prepareWork = do
   sortedFlag  <- newTVarIO True
   poolSize    <- newTVarIO 0
   currentSize <- newTVarIO 0
-  lastStateId <- newTVarIO 0
   pure SchedPool {..}
 
 
@@ -246,22 +242,18 @@ spawn pool@SchedPool {..} work job = do
 
       if size < maxSize then do
         delay <- getDelay now
-        sid <- atomically $ do
-          modifyTVar' lastStateId (+1)
-          readTVar lastStateId
 
         state <- newTVarIO SchedState
           { stateIsBusy = True
           , stateJob    = Just job
           , stateDelay  = delay
-          , stateId     = sid
           , stateAlive  = True
           }
 
         io <- startPoolerIO pool work state
 
         atomically $ do
-          modifyTVar' poolerList (++[SchedPooler state io sid])
+          modifyTVar' poolerList (++[SchedPooler state io])
           modifyTVar' poolSize (+1)
           modifyTVar' currentSize (+1)
           trySwapLastState lastState state schedAt
