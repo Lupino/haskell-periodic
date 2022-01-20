@@ -62,7 +62,8 @@ import           Periodic.Server.Hook       hiding (runHook)
 import qualified Periodic.Server.Hook       as Hook
 import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
-import           Periodic.Server.SchedPool  (SchedPool, newSchedPool)
+import           Periodic.Server.SchedPool  (SchedPool, newSchedPool,
+                                             runSchedPool)
 import qualified Periodic.Server.SchedPool  as Pool
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
@@ -210,6 +211,7 @@ startSchedT = do
   runTask 100 purgeExpired
   runTask 60 revertLockedQueue
   runTask 100 purgeEmptyLock
+  runTask 0 $ runSchedPool sSchedPool schedJob_
 
   loadInt "poll-interval" sPollInterval
   loadInt "revert-interval" sRevertInterval
@@ -294,7 +296,7 @@ runChanJob = do
   mapM_ doChanJob acts
 
   where doChanJob
-          :: (MonadUnliftIO m, Persist db)
+          :: (MonadIO m, Persist db)
           => Action -> SchedT db m ()
         doChanJob (Add job)    = reSchedJob job
         doChanJob (Remove job) = asks sSchedPool >>= flip Pool.unspawn job
@@ -302,14 +304,14 @@ runChanJob = do
         doChanJob Poll1        = pollJob1
 
 
-pollJob0 :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+pollJob0 :: (MonadIO m, Persist db) => SchedT db m ()
 pollJob0 = do
   funcList <- getAvaliableFuncList
   next <- getNextPoll
   pollJob_ funcList next
 
 
-pollJob1 :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+pollJob1 :: (MonadIO m, Persist db) => SchedT db m ()
 pollJob1 = do
   pool <- asks sSchedPool
   Pool.poll pool reSchedJob $ \size -> do
@@ -337,7 +339,7 @@ getAvaliableFuncList = do
 
 
 pollJob_
-  :: (MonadUnliftIO m, Persist db)
+  :: (MonadIO m, Persist db)
   => [FuncName] -> Int64 -> SchedT db m ()
 pollJob_ [] _ = pure ()
 pollJob_ funcList next = do
@@ -400,14 +402,14 @@ fixedSchedAt job = do
     return $ setSchedAt now job
   else return job
 
-reSchedJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+reSchedJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 reSchedJob job = do
   next <- getNextPoll
   when (getSchedAt job < next) $ do
     r <- canRun $ getFuncName job
     when r $ do
       pool <- asks sSchedPool
-      Pool.spawn pool schedJob_ job
+      Pool.spawn pool job
 
 
 canRun :: MonadIO m => FuncName -> SchedT db m Bool
