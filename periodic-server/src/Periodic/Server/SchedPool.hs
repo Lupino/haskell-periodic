@@ -11,19 +11,29 @@ module Periodic.Server.SchedPool
   ) where
 
 
-import           Control.Monad      (forM_, forever, unless, when)
-import           Control.Monad.Cont (callCC, lift, runContT)
-import           Data.Int           (Int64)
-import           Data.List          (sortOn)
-import           Metro.Utils        (getEpochTime)
-import           Periodic.Types     (Msgid, Nid)
+import           Control.Monad       (forM_, forever, unless, when)
+import           Control.Monad.Cont  (callCC, lift, runContT)
+import           Control.Monad.ListM (dropWhileM, sortByM, takeWhileM)
+import           Data.IOMap          (IOMap)
+import qualified Data.IOMap          as IOMap
+import qualified Data.IOMap.STM      as IOMapS
+import           Data.Int            (Int64)
+import           Metro.Utils         (getEpochTime)
+import           Periodic.Types      (Msgid, Nid)
 import           Periodic.Types.Job
-import           UnliftIO           hiding (poll)
+import           UnliftIO            hiding (poll)
+
+
+data SchedJob = SchedJob
+  { schedJob   :: Job
+  , schedDelay :: TVar Bool
+  -- when true job is sched
+  }
+
 
 data SchedState = SchedState
   { stateIsBusy :: Bool
-  , stateDelay  :: TVar Bool  -- when delay true job is sched
-  , stateJob    :: Maybe Job
+  , stateJob    :: Maybe (TVar SchedJob)
   , stateAlive  :: Bool
   }
 
@@ -43,8 +53,9 @@ data SchedPool = SchedPool
   { poolerList  :: TVar [SchedPooler]
   , lastState   :: LastState
   , freeStates  :: FreeStates
-  , quickRunJob :: TVar [Job]
-  , waitingJob  :: TVar [Job]
+  , quickRunJob :: TVar [TVar SchedJob]
+  , waitingJob  :: TVar [TVar SchedJob]
+  , jobList     :: IOMap JobHandle (TVar SchedJob)
   , sortedFlag  :: TVar Bool
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
@@ -69,6 +80,7 @@ newSchedPool maxPoolSize onFree prepareWork = do
   sortedFlag  <- newTVarIO True
   poolSize    <- newTVarIO 0
   currentSize <- newTVarIO 0
+  jobList     <- IOMap.empty
   pure SchedPool {..}
 
 
@@ -81,9 +93,10 @@ findPoolerState SchedPool {..} job =
           state <- readTVar $ poolerState x
           case stateJob state of
             Nothing -> go xs
-            Just j ->
-              if getHandle j == jh then do
-                delay <- readTVar $ stateDelay state
+            Just sjt -> do
+              sj <- readTVar sjt
+              if getHandle (schedJob sj) == jh then do
+                delay <- readTVar $ schedDelay sj
                 if delay then pure Nothing
                          else pure $ Just $ poolerState x
               else go xs
@@ -92,28 +105,11 @@ findPoolerState SchedPool {..} job =
 
 
 getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
-getHandleList SchedPool {..} =
-  atomically $ do
-    handles0 <- readTVar poolerList >>= go
-    handles1 <- map getHandle <$> readTVar quickRunJob
-    handles2 <- map getHandle <$> readTVar waitingJob
-    pure $ handles0 ++ handles1 ++ handles2
-  where go :: [SchedPooler] -> STM [JobHandle]
-        go [] = pure []
-        go (x:xs) = do
-          state <- readTVar $ poolerState x
-          case stateJob state of
-            Nothing -> go xs
-            Just j -> do
-              delay <- readTVar $ stateDelay state
-              if delay then go xs
-                       else do
-                         handles <- go xs
-                         pure $ getHandle j : handles
+getHandleList SchedPool {..} = IOMap.keys jobList
 
 
-getFreeState :: MonadIO m => FreeStates -> m (Maybe PoolerState)
-getFreeState freeStates = atomically $ do
+getFreeState :: FreeStates -> STM (Maybe PoolerState)
+getFreeState freeStates = do
   states <- readTVar freeStates
   case states of
     [] -> pure Nothing
@@ -132,19 +128,26 @@ getLastPooler pl = readTVar pl >>= go Nothing
 
         comp :: Maybe SchedPooler -> SchedPooler -> STM (Maybe SchedPooler)
         comp Nothing pooler = do
-          delay <- stateDelay <$> readTVar (poolerState pooler)
-          st <- readTVar delay
-          if st then pure Nothing
-                else pure $ Just pooler
+          mStateJob <- stateJob <$> readTVar (poolerState pooler)
+          case mStateJob of
+            Nothing -> pure Nothing
+            Just sJob -> do
+              delay <- schedDelay <$> readTVar sJob
+              st <- readTVar delay
+              if st then pure Nothing
+                    else pure $ Just pooler
         comp (Just pooler0) pooler1 = do
-          s0 <- getPoolerSchedAt pooler0
-          s1 <- getPoolerSchedAt pooler1
+          s0 <- getStateSchedAt $ poolerState pooler0
+          s1 <- getStateSchedAt $ poolerState pooler1
           if s0 > s1 then pure $ Just pooler0
                      else pure $ Just pooler1
 
-getPoolerSchedAt :: SchedPooler -> STM Int64
-getPoolerSchedAt pooler =
-  maybe 0 getSchedAt . stateJob <$> readTVar (poolerState pooler)
+getStateSchedAt :: PoolerState -> STM Int64
+getStateSchedAt state = do
+  mJob <- stateJob <$> readTVar state
+  case mJob of
+    Nothing  -> pure 0
+    Just job -> getSchedAt . schedJob <$> readTVar job
 
 
 getLastStateSchedAt :: LastState -> STM Int64
@@ -152,7 +155,7 @@ getLastStateSchedAt ls = do
   mState <- readTVar ls
   case mState of
     Nothing    -> pure 0
-    Just state -> maybe 0 getSchedAt . stateJob <$> readTVar state
+    Just state -> getStateSchedAt state
 
 
 swapLastState :: LastState -> PoolerState -> STM ()
@@ -177,37 +180,45 @@ startPoolerIO pool@SchedPool {..} work state =
       v <- readTVar state
       case stateJob v of
         Nothing  -> retrySTM
-        Just job -> do
-          canDo <- readTVar $ stateDelay v
+        Just jobT -> do
+          job <- readTVar jobT
+          canDo <- readTVar $ schedDelay job
           if canDo then do
-            agents <- prepareWork $ getFuncName job
-            pure (job, agents)
+            agents <- prepareWork $ getFuncName $ schedJob job
+            pure (schedJob job, agents)
           else retrySTM
 
     mapM_ (lift . work job (length agents == 1)) agents
 
-    s <- readTVarIO state
+    finishPoolerState pool state
 
-    if stateAlive s then finishPoolerState pool state
-                    else exit ()
+    s <- readTVarIO state
+    unless (stateAlive s) $ exit ()
 
 
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
-finishPoolerState SchedPool {..} state =
-  atomically $ do
+finishPoolerState SchedPool {..} state = atomically $ do
+  v <- readTVar state
+  case stateJob v of
+    Nothing -> pure ()
+    Just jobT -> do
+      job <- schedJob <$> readTVar jobT
+      IOMapS.delete (getHandle job) jobList
+
+  when (stateAlive v) $ do
     jobs <- readTVar quickRunJob
     case jobs of
       [] -> do
-        modifyTVar' state $ \v -> v
-          { stateJob   = Nothing
+        writeTVar state v
+          { stateJob    = Nothing
           , stateIsBusy = False
           }
-        modifyTVar' currentSize (\v -> v - 1)
+        modifyTVar' currentSize (\x -> x - 1)
         modifyTVar' freeStates (state:)
         onFree
       (x:xs) -> do
         writeTVar quickRunJob xs
-        modifyTVar' state $ \v -> v
+        writeTVar state v
           { stateJob = Just x
           }
 
@@ -223,81 +234,90 @@ spawn
   -> Job -> m ()
 spawn pool@SchedPool {..} work job = do
   now <- getEpochTime
-  mFreeState <- getFreeState freeStates
-  case mFreeState of
-    Just state -> do
-      delay <- getDelay now
-      atomically $ do
-        modifyTVar' state $ genPoolState delay
-        modifyTVar' currentSize (+1)
-        trySwapLastState lastState state schedAt
-    Nothing -> do
-      size <- readTVarIO poolSize
-      maxSize <- readTVarIO maxPoolSize
-      when (maxSize < size) $ atomically $ do
-        poolers <- readTVar poolerList
-        writeTVar poolerList $! drop (size - maxSize) poolers
-        forM_ (take (size - maxSize) poolers) $ \p ->
-          modifyTVar' (poolerState p) $ \st -> st {stateAlive = False}
-
-      if size < maxSize then do
-        delay <- getDelay now
-
-        state <- newTVarIO SchedState
-          { stateIsBusy = True
-          , stateJob    = Just job
-          , stateDelay  = delay
-          , stateAlive  = True
+  delay <- getDelay now
+  mStartState <- newTVarIO Nothing
+  atomically $ do
+    mSchedJob <- IOMapS.lookup jh jobList
+    case mSchedJob of
+      Just sJobT -> do
+        sJob <- readTVar sJobT
+        oDelay <- readTVar $ schedDelay sJob
+        unless oDelay $
+          writeTVar sJobT sJob
+            { schedDelay = delay
+            , schedJob   = job
+            }
+      Nothing   -> do
+        sJob <- newTVar SchedJob
+          { schedJob   = job
+          , schedDelay = delay
           }
-
-        io <- startPoolerIO pool work state
-
-        atomically $ do
-          modifyTVar' poolerList (++[SchedPooler state io])
-          modifyTVar' poolSize (+1)
-          modifyTVar' currentSize (+1)
-          trySwapLastState lastState state schedAt
-      else do
-        mState <- atomically $ do
-          lastSchedAt <- getLastStateSchedAt lastState
-          if lastSchedAt > schedAt then do
-            delay <- newTVar False
-            mLastState <- readTVar lastState
-            case mLastState of
-              Nothing -> pure Nothing
-              Just state -> do
-                mJob <- stateJob <$> readTVar state
-                case mJob of
-                  Nothing   -> pure ()
-                  Just oJob -> do
-                    modifyTVar' waitingJob (oJob:)
-                    writeTVar sortedFlag False
-
-                modifyTVar' state $ genPoolState delay
-                mLastPooler <- getLastPooler poolerList
-                case mLastPooler of
-                  Nothing -> pure $ Just state
-                  Just pooler -> do
-                    swapLastState lastState (poolerState pooler)
-                    pure $ Just state
-          else do
-            if schedAt <= now + 1 then modifyTVar' quickRunJob (job:)
-                                  else do
-                                    modifyTVar' waitingJob (job:)
-                                    writeTVar sortedFlag False
-
-            pure Nothing
-        case mState of
-          Nothing -> pure ()
+        IOMapS.insert jh sJob jobList
+        mFreeState <- getFreeState freeStates
+        case mFreeState of
           Just state -> do
-            delay <- getDelay now
-            atomically $ modifyTVar' state $ \v -> v {stateDelay = delay}
+            modifyTVar' state $ genPoolerState sJob
+            modifyTVar' currentSize (+1)
+            trySwapLastState lastState state schedAt
+          Nothing -> do
+            size <- readTVar poolSize
+            maxSize <- readTVar maxPoolSize
+            when (maxSize < size) $ do
+              poolers <- readTVar poolerList
+              writeTVar poolerList $! drop (size - maxSize) poolers
+              forM_ (take (size - maxSize) poolers) $ \p ->
+                modifyTVar' (poolerState p) $ \st -> st {stateAlive = False}
+
+            if size < maxSize then do
+              state <- newTVar SchedState
+                { stateIsBusy = True
+                , stateJob    = Just sJob
+                , stateAlive  = True
+                }
+
+              writeTVar mStartState $ Just state
+
+              modifyTVar' poolSize (+1)
+              modifyTVar' currentSize (+1)
+              trySwapLastState lastState state schedAt
+            else do
+              lastSchedAt <- getLastStateSchedAt lastState
+              if lastSchedAt > schedAt then do
+                mLastState <- readTVar lastState
+                case mLastState of
+                  Nothing -> pure ()
+                  Just state -> do
+                    mJob <- stateJob <$> readTVar state
+                    case mJob of
+                      Nothing   -> pure ()
+                      Just oJob -> do
+                        modifyTVar' waitingJob (oJob:)
+                        writeTVar sortedFlag False
+
+                    modifyTVar' state $ genPoolerState sJob
+                    mLastPooler <- getLastPooler poolerList
+                    case mLastPooler of
+                      Nothing -> pure ()
+                      Just pooler -> swapLastState lastState (poolerState pooler)
+              else
+                if schedAt <= now + 1 then
+                  modifyTVar' quickRunJob (sJob:)
+                else do
+                  modifyTVar' waitingJob (sJob:)
+                  writeTVar sortedFlag False
+
+  mState <- readTVarIO mStartState
+  case mState of
+    Nothing -> pure ()
+    Just state -> do
+      io <- startPoolerIO pool work state
+      atomically $ modifyTVar' poolerList (++[SchedPooler state io])
 
   where schedAt = getSchedAt job
-        genPoolState delay state = state
+        jh = getHandle job
+        genPoolerState sJob state = state
           { stateIsBusy = True
-          , stateJob = Just job
-          , stateDelay = delay
+          , stateJob = Just sJob
           }
 
         getDelay :: MonadIO m => Int64 -> m (TVar Bool)
@@ -312,23 +332,43 @@ poll SchedPool {..} respawn trySpawn = do
   now <- getEpochTime
   jobs <- atomically $ do
     isSorted <- readTVar sortedFlag
-    unless isSorted $ modifyTVar' waitingJob $ sortOn getSchedAt
+    unless isSorted
+      $ readTVar waitingJob
+      >>= sortByM comp
+      >>= writeTVar waitingJob
+
     wJobs <- readTVar waitingJob
 
-    case takeWhile (\x -> getSchedAt x <= now) wJobs of
+    jobs <- takeWhileM (compSchedAt now) wJobs
+
+    case jobs of
       [] -> do
         case wJobs of
           [] -> pure []
           (x:xs) -> do
             writeTVar waitingJob xs
-            pure [x]
+            job <- schedJob <$> readTVar x
+            pure [job]
       xs -> do
-        writeTVar waitingJob $! dropWhile (\x -> getSchedAt x <= now) wJobs
-        pure xs
+        dropWhileM (compSchedAt now) wJobs
+          >>= writeTVar waitingJob
+
+        mapM (fmap schedJob . readTVar) xs
 
   mapM_ respawn jobs
 
   when (null jobs) $ readTVarIO currentSize >>= trySpawn
+
+  where comp :: TVar SchedJob -> TVar SchedJob -> STM Ordering
+        comp a b = do
+          schedAt0 <- getSchedAt . schedJob <$> readTVar a
+          schedAt1 <- getSchedAt . schedJob <$> readTVar b
+          pure $ compare schedAt0 schedAt1
+
+        compSchedAt :: Int64 -> TVar SchedJob -> STM Bool
+        compSchedAt now t = do
+          j <- getSchedAt . schedJob <$> readTVar t
+          pure $ j <= now
 
 
 close :: MonadIO m => SchedPool -> m ()
