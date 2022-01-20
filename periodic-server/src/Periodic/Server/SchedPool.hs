@@ -5,9 +5,9 @@ module Periodic.Server.SchedPool
   , newSchedPool
   , getHandleList
   , runSchedPool
+  , getCurrentSize
   , unspawn
   , spawn
-  , poll
   , close
   ) where
 
@@ -22,7 +22,7 @@ import           Data.Int            (Int64)
 import           Metro.Utils         (getEpochTime)
 import           Periodic.Types      (Msgid, Nid)
 import           Periodic.Types.Job
-import           UnliftIO            hiding (poll)
+import           UnliftIO
 
 
 data SchedJob = SchedJob
@@ -57,7 +57,7 @@ data SchedPool = SchedPool
   , quickRunJob :: TVar [TVar SchedJob]
   , waitingJob  :: TVar [TVar SchedJob]
   , jobList     :: IOMap JobHandle (TVar SchedJob)
-  , sortedFlag  :: TVar Bool
+  , sortedFlag  :: TVar (Maybe Bool)
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
   , currentSize :: TVar Int
@@ -79,7 +79,7 @@ newSchedPool maxPoolSize onFree prepareWork = do
   freeStates  <- newTVarIO []
   quickRunJob <- newTVarIO []
   waitingJob  <- newTVarIO []
-  sortedFlag  <- newTVarIO True
+  sortedFlag  <- newTVarIO (Just True)
   poolSize    <- newTVarIO 0
   currentSize <- newTVarIO 0
   jobList     <- IOMap.empty
@@ -216,9 +216,13 @@ runSchedPool pool@SchedPool {..} work = do
   io <- startPoolerIO pool work state
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
 
-
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
-finishPoolerState SchedPool {..} state = atomically $ do
+finishPoolerState pool state = do
+  now <- getEpochTime
+  finishPoolerState_ pool state now
+
+finishPoolerState_ :: MonadIO m => SchedPool -> PoolerState -> Int64 -> m ()
+finishPoolerState_ pool@SchedPool {..} state now = atomically $ do
   v <- readTVar state
   case stateJob v of
     Nothing -> pure ()
@@ -230,18 +234,44 @@ finishPoolerState SchedPool {..} state = atomically $ do
     jobs <- readTVar quickRunJob
     case jobs of
       [] -> do
-        writeTVar state v
-          { stateJob    = Nothing
-          , stateIsBusy = False
-          }
-        modifyTVar' currentSize (\x -> x - 1)
-        modifyTVar' freeStates (state:)
-        onFree
+        trySortWaitingJob pool
+        wJobs <- readTVar waitingJob
+        jobs1 <- takeWhileM compSchedAt wJobs
+
+        case jobs1 of
+          [] ->
+            case wJobs of
+              [] -> do
+                writeTVar state v
+                  { stateJob    = Nothing
+                  , stateIsBusy = False
+                  }
+                modifyTVar' currentSize (\x -> x - 1)
+                modifyTVar' freeStates (state:)
+                onFree
+              (x:xs) -> do
+                writeTVar waitingJob xs
+                writeTVar state v
+                  { stateJob = Just x
+                  }
+          (x:xs) -> do
+            writeTVar quickRunJob xs
+            writeTVar state v
+              { stateJob = Just x
+              }
+            dropWhileM compSchedAt wJobs >>= writeTVar waitingJob
+
+
       (x:xs) -> do
         writeTVar quickRunJob xs
         writeTVar state v
           { stateJob = Just x
           }
+
+  where compSchedAt :: TVar SchedJob -> STM Bool
+        compSchedAt t = do
+          j <- getSchedAt . schedJob <$> readTVar t
+          pure $ j <= now
 
 
 unspawn :: MonadIO m => SchedPool -> Job -> m ()
@@ -311,7 +341,7 @@ spawn SchedPool {..} job = do
                       Nothing   -> pure ()
                       Just oJob -> do
                         modifyTVar' waitingJob (oJob:)
-                        writeTVar sortedFlag False
+                        writeTVar sortedFlag $ Just False
 
                     modifyTVar' state $ genPoolerState sJob
                     mLastPooler <- getLastPooler poolerList
@@ -323,7 +353,7 @@ spawn SchedPool {..} job = do
                   modifyTVar' quickRunJob (sJob:)
                 else do
                   modifyTVar' waitingJob (sJob:)
-                  writeTVar sortedFlag False
+                  writeTVar sortedFlag $ Just False
 
 
   where schedAt = getSchedAt job
@@ -340,48 +370,28 @@ spawn SchedPool {..} job = do
           where delayUS = fromIntegral $ (schedAt - now) * 1000000
 
 
-poll :: MonadIO m => SchedPool -> (Job -> m ()) -> (Int -> m ()) -> m ()
-poll SchedPool {..} respawn trySpawn = do
-  now <- getEpochTime
-  jobs <- atomically $ do
-    isSorted <- readTVar sortedFlag
-    unless isSorted
-      $ readTVar waitingJob
-      >>= sortByM comp
-      >>= writeTVar waitingJob
+getCurrentSize :: MonadIO m => SchedPool -> m Int
+getCurrentSize SchedPool {..} = readTVarIO currentSize
 
-    wJobs <- readTVar waitingJob
 
-    jobs <- takeWhileM (compSchedAt now) wJobs
-
-    case jobs of
-      [] -> do
-        case wJobs of
-          [] -> pure []
-          (x:xs) -> do
-            writeTVar waitingJob xs
-            job <- schedJob <$> readTVar x
-            pure [job]
-      xs -> do
-        dropWhileM (compSchedAt now) wJobs
-          >>= writeTVar waitingJob
-
-        mapM (fmap schedJob . readTVar) xs
-
-  mapM_ respawn jobs
-
-  when (null jobs) $ readTVarIO currentSize >>= trySpawn
+trySortWaitingJob :: SchedPool -> STM ()
+trySortWaitingJob SchedPool {..} = do
+  mIsSorted <- readTVar sortedFlag
+  case mIsSorted of
+    Nothing -> retrySTM
+    Just True -> pure ()
+    Just False -> do
+      writeTVar sortedFlag Nothing
+      readTVar waitingJob
+        >>= sortByM comp
+        >>= writeTVar waitingJob
+      writeTVar sortedFlag $ Just True
 
   where comp :: TVar SchedJob -> TVar SchedJob -> STM Ordering
         comp a b = do
           schedAt0 <- getSchedAt . schedJob <$> readTVar a
           schedAt1 <- getSchedAt . schedJob <$> readTVar b
           pure $ compare schedAt0 schedAt1
-
-        compSchedAt :: Int64 -> TVar SchedJob -> STM Bool
-        compSchedAt now t = do
-          j <- getSchedAt . schedJob <$> readTVar t
-          pure $ j <= now
 
 
 close :: MonadIO m => SchedPool -> m ()

@@ -75,7 +75,6 @@ import           UnliftIO.Concurrent        (threadDelay)
 data Action = Add Job
     | Remove Job
     | PollJob
-    | Poll1
 
 type Waiter = (Nid, Msgid)
 
@@ -107,10 +106,8 @@ type LockList = IOMap LockName LockInfo
 
 
 data SchedEnv db = SchedEnv
-    -- main poll loop every time interval
-    { sPollInterval   :: TVar Int
     -- revert process queue loop every time interval
-    , sRevertInterval :: TVar Int
+    { sRevertInterval :: TVar Int
     -- the task do timeout
     , sTaskTimeout    :: TVar Int
     -- lock timeout
@@ -175,7 +172,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sLocker         <- L.new
   sAlive          <- newTVarIO True
   sChanList       <- newTVarIO []
-  sPollInterval   <- newTVarIO 10
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
@@ -186,7 +182,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
   sMaxPoolSize    <- newTVarIO 10
-  sSchedPool      <- newSchedPool sMaxPoolSize (modifyTVar' sChanList (Poll1:)) $ \fn -> do
+  sSchedPool      <- newSchedPool sMaxPoolSize (modifyTVar' sChanList (PollJob:)) $ \fn -> do
     mFuncStat <- IOMapS.lookup fn sFuncStatList
     case mFuncStat of
       Nothing                  -> pure []
@@ -206,14 +202,12 @@ startSchedT = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask_ sRevertInterval revertRunningQueue
-  runTask_ sPollInterval $ pushChanList Poll1
   runTask 0 runChanJob
   runTask 100 purgeExpired
   runTask 60 revertLockedQueue
   runTask 100 purgeEmptyLock
   runTask 0 $ runSchedPool sSchedPool schedJob_
 
-  loadInt "poll-interval" sPollInterval
   loadInt "revert-interval" sRevertInterval
   loadInt "timeout" sTaskTimeout
   loadInt "lock-timeout" sLockTimeout
@@ -239,7 +233,6 @@ setConfigInt :: (MonadIO m, Persist db) => String -> Int -> SchedT db m ()
 setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
-    "poll-interval"   -> saveInt "poll-interval" val sPollInterval
     "revert-interval" -> saveInt "revert-interval" val sRevertInterval
     "timeout"         -> saveInt "timeout" val sTaskTimeout
     "lock-timeout"    -> saveInt "lock-timeout" val sLockTimeout
@@ -253,7 +246,6 @@ getConfigInt :: (MonadIO m, Persist db) => String -> SchedT db m Int
 getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
-    "poll-interval"   -> readTVarIO sPollInterval
     "revert-interval" -> readTVarIO sRevertInterval
     "timeout"         -> readTVarIO sTaskTimeout
     "lock-timeout"    -> readTVarIO sLockTimeout
@@ -300,33 +292,21 @@ runChanJob = do
           => Action -> SchedT db m ()
         doChanJob (Add job)    = reSchedJob job
         doChanJob (Remove job) = asks sSchedPool >>= flip Pool.unspawn job
-        doChanJob PollJob      = pollJob0
-        doChanJob Poll1        = pollJob1
+        doChanJob PollJob      = pollJob
 
 
-pollJob0 :: (MonadIO m, Persist db) => SchedT db m ()
-pollJob0 = do
+pollJob :: (MonadIO m, Persist db) => SchedT db m ()
+pollJob = do
+  size <- Pool.getCurrentSize =<< asks sSchedPool
   funcList <- getAvaliableFuncList
   next <- getNextPoll
-  pollJob_ funcList next
-
-
-pollJob1 :: (MonadIO m, Persist db) => SchedT db m ()
-pollJob1 = do
-  pool <- asks sSchedPool
-  Pool.poll pool reSchedJob $ \size -> do
-    funcList <- getAvaliableFuncList
-    next <- getNextPoll
-    p <- asks sPersist
-    count <- liftIO $ P.countPending p funcList next
-    when (count > size) $ pollJob_ funcList next
+  p <- asks sPersist
+  count <- liftIO $ P.countPending p funcList next
+  when (count > size) $ pollJob_ funcList next
 
 
 getNextPoll :: MonadIO m => SchedT db m Int64
-getNextPoll = do
-  now <- getEpochTime
-  pollInterval <- asks sPollInterval
-  (+ (100 + now)) . fromIntegral <$> readTVarIO pollInterval
+getNextPoll = (+100) <$> getEpochTime
 
 getAvaliableFuncList :: MonadIO m => SchedT db m [FuncName]
 getAvaliableFuncList = do
