@@ -288,7 +288,7 @@ runChanJob = do
 
   mapM_ (const pollJob) mAction
 
-pollJob :: (MonadIO m, Persist db) => SchedT db m ()
+pollJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 pollJob = do
   funcList <- getAvaliableFuncList
   unless (null funcList) $ do
@@ -313,7 +313,7 @@ getAvaliableFuncList = do
 
 
 pollJob_
-  :: (MonadIO m, Persist db)
+  :: (MonadUnliftIO m, Persist db)
   => [FuncName] -> [JobHandle] -> Int64 -> SchedT db m ()
 pollJob_ funcList handles next = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
@@ -330,7 +330,7 @@ pushChanList act = do
   atomically $ writeTVar cl (Just act)
 
 
-runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+runJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 runJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
   SchedEnv{..} <- ask
@@ -349,7 +349,7 @@ runJob job = do
         jn = getName job
 
 
-pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+pushJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 pushJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   t0 <- liftIO getUnixTime
@@ -373,7 +373,7 @@ fixedSchedAt job = do
     return $ setSchedAt now job
   else return job
 
-reSchedJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+reSchedJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 reSchedJob job = do
   next <- getNextPoll
   when (getSchedAt job < next) $ do
@@ -395,7 +395,7 @@ canRun_ stList fn = do
     Just _                   -> pure True
 
 
-schedJob_ :: (MonadIO m, Persist db) => Job -> Bool -> (Nid, Msgid) -> SchedT db m ()
+schedJob_ :: (MonadUnliftIO m, Persist db) => Job -> Bool -> (Nid, Msgid) -> SchedT db m ()
 schedJob_ job True (nid, msgid) = do
   assignJob <- asks sAssignJob
   liftIO . void $ assignJob nid msgid job
@@ -515,7 +515,7 @@ failJob jh = do
 
   where (fn, jn) = unHandle jh
 
-retryJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+retryJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 retryJob job = do
   p <- asks sPersist
   liftIO $ P.insert p Pending fn jn job
