@@ -176,7 +176,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
-  sMaxBatchSize   <- newTVarIO 10
+  sMaxBatchSize   <- newTVarIO 500
   sKeepalive      <- newTVarIO 300
   sExpiration     <- newTVarIO 300
   sCleanup        <- toIO sC
