@@ -5,7 +5,6 @@ module Periodic.Server.SchedPool
   , newSchedPool
   , getHandleList
   , runSchedPool
-  , getCurrentSize
   , unspawn
   , spawn
   , close
@@ -19,6 +18,7 @@ import           Data.IOMap          (IOMap)
 import qualified Data.IOMap          as IOMap
 import qualified Data.IOMap.STM      as IOMapS
 import           Data.Int            (Int64)
+import           Data.Map.Strict     (filterWithKey)
 import           Metro.Utils         (getEpochTime)
 import           Periodic.Types      (Msgid, Nid)
 import           Periodic.Types.Job
@@ -59,7 +59,6 @@ data SchedPool = SchedPool
   , jobList     :: IOMap JobHandle (TVar SchedJob)
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
-  , currentSize :: TVar Int
   , onFree      :: STM ()
   , prepareWork :: FuncName -> STM [(Nid, Msgid)]
   , newState    :: LastState
@@ -79,7 +78,6 @@ newSchedPool maxPoolSize onFree prepareWork = do
   quickRunJob <- newTVarIO []
   waitingJob  <- newTVarIO []
   poolSize    <- newTVarIO 0
-  currentSize <- newTVarIO 0
   jobList     <- IOMap.empty
   newState    <- newTVarIO Nothing
   pure SchedPool {..}
@@ -106,7 +104,25 @@ findPoolerState SchedPool {..} job =
 
 
 getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
-getHandleList SchedPool {..} = IOMap.keys jobList
+getHandleList SchedPool {..} = atomically $ do
+  handles0 <- readTVar poolerList >>= go
+  handles1 <- readTVar quickRunJob
+  handles2 <- readTVar waitingJob
+  handles <- mapM toHandle $ handles0 ++ handles1 ++ handles2
+  IOMapS.modifyIOMap (filterWithKey (\k _ -> k `elem` handles)) jobList
+  pure handles
+  where go :: [SchedPooler] -> STM [TVar SchedJob]
+        go [] = pure []
+        go (x:xs) = do
+          state <- readTVar $ poolerState x
+          case stateJob state of
+            Nothing -> go xs
+            Just j -> do
+              ys <- go xs
+              pure $ j : ys
+
+        toHandle :: TVar SchedJob -> STM JobHandle
+        toHandle sJob = getHandle . schedJob <$> readTVar sJob
 
 
 getFreeState :: FreeStates -> STM (Maybe PoolerState)
@@ -243,7 +259,6 @@ finishPoolerState_ pool@SchedPool {..} state now = atomically $ do
                   { stateJob    = Nothing
                   , stateIsBusy = False
                   }
-                modifyTVar' currentSize (\x -> x - 1)
                 modifyTVar' freeStates (state:)
                 onFree
               (x:xs) -> do
@@ -316,7 +331,6 @@ spawn SchedPool {..} job = do
         case mFreeState of
           Just state -> do
             modifyTVar' state $ genPoolerState sJob
-            modifyTVar' currentSize (+1)
             trySwapLastState lastState state schedAt
           Nothing -> do
             size <- readTVar poolSize
@@ -337,11 +351,10 @@ spawn SchedPool {..} job = do
               writeTVar newState $ Just state
 
               modifyTVar' poolSize (+1)
-              modifyTVar' currentSize (+1)
               trySwapLastState lastState state schedAt
             else do
               lastSchedAt <- getLastStateSchedAt lastState
-              if lastSchedAt > schedAt then do
+              if lastSchedAt < 1000 || (lastSchedAt > now + 1 && lastSchedAt > schedAt) then do
                 mLastState <- readTVar lastState
                 case mLastState of
                   Nothing -> pure ()
@@ -378,10 +391,6 @@ spawn SchedPool {..} job = do
           | schedAt > now + 1 = registerDelay delayUS
           | otherwise         = newTVarIO True
           where delayUS = fromIntegral $ (schedAt - now) * 1000000
-
-
-getCurrentSize :: MonadIO m => SchedPool -> m Int
-getCurrentSize SchedPool {..} = readTVarIO currentSize
 
 
 close :: MonadIO m => SchedPool -> m ()
