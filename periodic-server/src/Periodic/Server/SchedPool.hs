@@ -13,7 +13,7 @@ module Periodic.Server.SchedPool
 
 import           Control.Monad       (forM_, forever, unless, when)
 import           Control.Monad.Cont  (callCC, lift, runContT)
-import           Control.Monad.ListM (dropWhileM, sortByM, takeWhileM)
+import           Control.Monad.ListM (takeWhileM)
 import           Data.IOMap          (IOMap)
 import qualified Data.IOMap          as IOMap
 import qualified Data.IOMap.STM      as IOMapS
@@ -236,7 +236,7 @@ finishPoolerState pool state = do
   finishPoolerState_ pool state now
 
 finishPoolerState_ :: MonadIO m => SchedPool -> PoolerState -> Int64 -> m ()
-finishPoolerState_ pool@SchedPool {..} state now = atomically $ do
+finishPoolerState_ SchedPool {..} state now = atomically $ do
   v <- readTVar state
   case stateJob v of
     Nothing -> pure ()
@@ -271,7 +271,7 @@ finishPoolerState_ pool@SchedPool {..} state now = atomically $ do
             writeTVar state v
               { stateJob = Just x
               }
-            dropWhileM compSchedAt wJobs >>= writeTVar waitingJob
+            writeTVar waitingJob $! drop (length jobs1) wJobs
 
 
       (x:xs) -> do
@@ -294,9 +294,8 @@ insertSchedJob :: TVar [TVar SchedJob] -> TVar SchedJob -> Int64 -> STM ()
 insertSchedJob h s schedAt = do
   sJobs <- readTVar h
   hJobs <- takeWhileM compSchedAt sJobs
-  tJobs <- dropWhileM compSchedAt sJobs
 
-  writeTVar h $! hJobs ++ [s] ++ tJobs
+  writeTVar h $! hJobs ++ [s] ++ drop (length hJobs) sJobs
 
   where compSchedAt :: TVar SchedJob -> STM Bool
         compSchedAt t = do
