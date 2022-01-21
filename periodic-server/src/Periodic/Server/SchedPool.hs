@@ -236,11 +236,6 @@ runSchedPool pool@SchedPool {..} work = do
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
 finishPoolerState SchedPool {..} state = atomically $ do
   v <- readTVar state
-  case stateJob v of
-    Nothing -> pure ()
-    Just jobT -> do
-      job <- schedJob <$> readTVar jobT
-      IOMapS.delete (getHandle job) jobList
 
   when (stateAlive v) $ do
     takeTMVar waitingLock
