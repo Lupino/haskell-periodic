@@ -436,7 +436,7 @@ adjustFuncStat fn = do
                                              , sSchedAt = schedAt
                                              })
 
-removeJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+removeJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 removeJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
   t0 <- liftIO getUnixTime
