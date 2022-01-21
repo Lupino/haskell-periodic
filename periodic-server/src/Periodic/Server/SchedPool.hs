@@ -296,6 +296,7 @@ spawn SchedPool {..} job = do
             size <- readTVar poolSize
             maxSize <- readTVar maxPoolSize
             when (maxSize < size) $ do
+              writeTVar poolSize maxSize
               poolers <- readTVar poolerList
               writeTVar poolerList $! drop (size - maxSize) poolers
               forM_ (take (size - maxSize) poolers) $ \p ->
