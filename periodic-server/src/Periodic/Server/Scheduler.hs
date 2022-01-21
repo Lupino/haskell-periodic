@@ -204,7 +204,7 @@ startSchedT = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask_ sRevertInterval revertRunningQueue
-  runTask 10 runPollJob
+  runTask 1 runPollJob
   runTask 0 runChanJob
   runTask 100 purgeExpired
   runTask 60 revertLockedQueue
