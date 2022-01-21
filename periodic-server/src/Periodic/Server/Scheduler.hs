@@ -72,7 +72,7 @@ import           System.Log.Logger          (debugM, infoM)
 import           UnliftIO                   hiding (poll)
 import           UnliftIO.Concurrent        (threadDelay)
 
-data Action = PollJob
+data PollJob = PollJob
   deriving (Show, Eq)
 
 type Waiter = (Nid, Msgid)
@@ -123,7 +123,8 @@ data SchedEnv db = SchedEnv
     , sGrabQueue      :: GrabQueue
     -- sched state, when false sched is exited.
     , sAlive          :: TVar Bool
-    , sChanList       :: TVar (Maybe Action)
+    , sPollJob        :: TVar (Maybe PollJob)
+    , sChanList       :: TVar [Job]
     , sWaitList       :: WaitList
     , sLockList       :: LockList
     , sPersist        :: db
@@ -170,7 +171,8 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sLockList       <- IOMap.empty
   sLocker         <- L.new
   sAlive          <- newTVarIO True
-  sChanList       <- newTVarIO Nothing
+  sPollJob        <- newTVarIO Nothing
+  sChanList       <- newTVarIO []
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
@@ -181,7 +183,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
   sMaxPoolSize    <- newTVarIO 10
-  sSchedPool      <- newSchedPool sMaxPoolSize (writeTVar sChanList (Just PollJob)) $ \fn -> do
+  sSchedPool      <- newSchedPool sMaxPoolSize (writeTVar sPollJob (Just PollJob)) $ \fn -> do
     mFuncStat <- IOMapS.lookup fn sFuncStatList
     case mFuncStat of
       Nothing                  -> pure []
@@ -201,10 +203,11 @@ startSchedT = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask_ sRevertInterval revertRunningQueue
-  runTask 10 runChanJob
+  runTask 10 runPollJob
+  runTask 0 runChanJob
   runTask 100 purgeExpired
   runTask 60 revertLockedQueue
-  runTask 60 $ pushChanList PollJob
+  runTask 60 $ pushPollJob PollJob
   runTask 100 purgeEmptyLock
   runTask 0 $ runSchedPool sSchedPool schedJob_
 
@@ -271,13 +274,13 @@ runTask_ d m = void . async $ do
     if alive then lift m
              else exit ()
 
-runChanJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
-runChanJob = do
-  cl <- asks sChanList
+runPollJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+runPollJob = do
+  cl <- asks sPollJob
   al <- asks sAlive
-  mAction <- atomically $ do
-    mAction <- readTVar cl
-    case mAction of
+  mPollJob <- atomically $ do
+    mPollJob <- readTVar cl
+    case mPollJob of
       Nothing -> do
         st <- readTVar al
         if st then retrySTM
@@ -286,7 +289,7 @@ runChanJob = do
         writeTVar cl Nothing
         pure $ Just action
 
-  mapM_ (const pollJob) mAction
+  mapM_ (const pollJob) mPollJob
 
 pollJob :: (MonadIO m, Persist db) => SchedT db m ()
 pollJob = do
@@ -321,13 +324,36 @@ pollJob_ funcList handles next = do
   jobs <- liftIO $ P.getPendingJob p funcList next
             (maxBatchSize + length handles)
 
-  mapM_ reSchedJob $ filter (flip notElem handles . getHandle) jobs
+  mapM_ pushChanJob $ filter (flip notElem handles . getHandle) jobs
 
 
-pushChanList :: MonadIO m => Action -> SchedT db m ()
-pushChanList act = do
-  cl <- asks sChanList
+pushPollJob :: MonadIO m => PollJob -> SchedT db m ()
+pushPollJob act = do
+  cl <- asks sPollJob
   atomically $ writeTVar cl (Just act)
+
+
+pushChanJob :: MonadIO m => Job -> SchedT db m ()
+pushChanJob job = do
+  cl <- asks sChanList
+  atomically $ modifyTVar' cl (job:)
+
+runChanJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
+runChanJob = do
+  cl <- asks sChanList
+  al <- asks sAlive
+  jobs <- atomically $ do
+    jobs <- readTVar cl
+    case jobs of
+      [] -> do
+        st <- readTVar al
+        if st then retrySTM
+              else pure []
+      _ -> do
+        writeTVar cl []
+        pure jobs
+
+  mapM_ reSchedJob jobs
 
 
 runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
@@ -358,7 +384,7 @@ pushJob job = do
   unless isRunning $ do
     job' <- fixedSchedAt job
     liftIO $ P.insert p Pending fn jn job'
-    reSchedJob job'
+    pushChanJob job'
 
   getDuration t0 >>= runHook eventPushJob job
 
@@ -410,7 +436,7 @@ schedJob_ job False (nid, msgid) = do
   if r then pure ()
        else do
          liftIO $ P.insert persist Pending fn jn job
-         reSchedJob job
+         pushChanJob job
 
   where fn = getFuncName job
         jn = getName job
@@ -459,7 +485,7 @@ alterFunc n f = do
   SchedEnv{..} <- ask
   IOMap.alter f n sFuncStatList
   liftIO $ P.insertFuncName sPersist n
-  pushChanList PollJob
+  pushPollJob PollJob
 
 addFunc :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
 addFunc n = broadcastFunc n False
@@ -520,7 +546,7 @@ retryJob job = do
   p <- asks sPersist
   liftIO $ P.insert p Pending fn jn job
 
-  reSchedJob job
+  pushChanJob job
 
   where  fn = getFuncName job
          jn = getName job
@@ -679,7 +705,7 @@ releaseLock_ name jh = do
         Nothing  -> releaseLock_ name hh
         Just job -> do
           liftIO $ P.insert p Pending fn jn job
-          reSchedJob job
+          pushChanJob job
 
   where item = LockItem jh 0
 
