@@ -55,6 +55,7 @@ data SchedPool = SchedPool
   , lastState   :: LastState
   , freeStates  :: FreeStates
   , waitingJob  :: TVar [TVar SchedJob]
+  , maxWaitSize :: TVar Int
   , jobList     :: IOMap JobHandle (TVar SchedJob)
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
@@ -67,10 +68,11 @@ data SchedPool = SchedPool
 newSchedPool
   :: MonadIO m
   => TVar Int
+  -> TVar Int
   -> STM ()
   -> (FuncName -> STM [(Nid, Msgid)])
   -> m SchedPool
-newSchedPool maxPoolSize onFree prepareWork = do
+newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   poolerList  <- newTVarIO []
   lastState   <- newTVarIO Nothing
   freeStates  <- newTVarIO []
@@ -251,12 +253,13 @@ unspawn :: MonadIO m => SchedPool -> Job -> m ()
 unspawn pool job = findPoolerState pool job >>= mapM_ (finishPoolerState pool)
 
 
-insertSchedJob :: TVar [TVar SchedJob] -> TVar SchedJob -> Int64 -> STM ()
-insertSchedJob h s schedAt = do
+insertSchedJob :: TVar [TVar SchedJob] -> TVar Int -> TVar SchedJob -> Int64 -> STM ()
+insertSchedJob h mws s schedAt = do
   sJobs <- readTVar h
   hJobs <- takeWhileM compSchedAt sJobs
+  maxWait <- readTVar mws
 
-  writeTVar h $! hJobs ++ [s] ++ drop (length hJobs) sJobs
+  writeTVar h $! take maxWait $ hJobs ++ [s] ++ drop (length hJobs) sJobs
 
   where compSchedAt :: TVar SchedJob -> STM Bool
         compSchedAt t = do
@@ -323,8 +326,7 @@ spawn SchedPool {..} job = do
                     mJob <- stateJob <$> readTVar state
                     case mJob of
                       Nothing   -> pure ()
-                      Just oJob ->
-                        insertSchedJob waitingJob oJob schedAt
+                      Just oJob -> insertSchedJob waitingJob maxWaitSize oJob schedAt
 
                     modifyTVar' state $ genPoolerState sJob
 
@@ -333,7 +335,7 @@ spawn SchedPool {..} job = do
                       Nothing -> pure ()
                       Just pooler -> swapLastState lastState (poolerState pooler)
 
-              else insertSchedJob waitingJob sJob schedAt
+              else insertSchedJob waitingJob maxWaitSize sJob schedAt
 
 
   where schedAt = getSchedAt job

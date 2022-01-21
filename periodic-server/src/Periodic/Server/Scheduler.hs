@@ -183,7 +183,8 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
   sMaxPoolSize    <- newTVarIO 10
-  sSchedPool      <- newSchedPool sMaxPoolSize (writeTVar sPollJob (Just PollJob)) $ \fn -> do
+  sSchedPool      <- newSchedPool sMaxPoolSize sMaxBatchSize
+      (writeTVar sPollJob (Just PollJob)) $ \fn -> do
     mFuncStat <- IOMapS.lookup fn sFuncStatList
     case mFuncStat of
       Nothing                  -> pure []
@@ -297,9 +298,13 @@ pollJob = do
   unless (null funcList) $ do
     next <- getNextPoll
     handles <- Pool.getHandleList =<< asks sSchedPool
+    let size = length handles
     p <- asks sPersist
     count <- liftIO $ P.countPending p funcList next
-    when (count > length handles) $ pollJob_ funcList handles next
+    maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+    when (count > size && maxBatchSize > size) $
+      liftIO (P.getPendingJob p funcList next (maxBatchSize + size))
+       >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
 
 
 getNextPoll :: MonadIO m => m Int64
@@ -313,18 +318,6 @@ getAvaliableFuncList = do
   where foldFunc :: (FuncName, FuncStat) -> [FuncName] -> [FuncName]
         foldFunc (_, FuncStat{sWorker=0}) acc = acc
         foldFunc (fn, _) acc                  = fn:acc
-
-
-pollJob_
-  :: (MonadIO m, Persist db)
-  => [FuncName] -> [JobHandle] -> Int64 -> SchedT db m ()
-pollJob_ funcList handles next = do
-  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-  p <- asks sPersist
-  jobs <- liftIO $ P.getPendingJob p funcList next
-            (maxBatchSize + length handles)
-
-  mapM_ pushChanJob $ filter (flip notElem handles . getHandle) jobs
 
 
 pushPollJob :: MonadIO m => PollJob -> SchedT db m ()
