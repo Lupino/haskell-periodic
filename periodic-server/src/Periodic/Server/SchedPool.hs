@@ -13,13 +13,12 @@ module Periodic.Server.SchedPool
 
 import           Control.Monad       (forM_, forever, unless, when)
 import           Control.Monad.Cont  (callCC, lift, runContT)
-import           Control.Monad.ListM (dropWhileM, takeWhileM)
+import           Control.Monad.ListM (dropWhileM, sortByM, takeWhileM)
 import           Data.IOMap          (IOMap)
 import qualified Data.IOMap          as IOMap
 import qualified Data.IOMap.STM      as IOMapS
 import           Data.Int            (Int64)
 import           Data.Map.Strict     (filterWithKey)
-import qualified Metro.Lock          as L (Lock, new, with)
 import           Metro.Utils         (getEpochTime)
 import           Periodic.Types      (Msgid, Nid)
 import           Periodic.Types.Job
@@ -63,7 +62,6 @@ data SchedPool = SchedPool
   , onFree      :: STM ()
   , prepareWork :: FuncName -> STM [(Nid, Msgid)]
   , newState    :: LastState
-  , spawnLock   :: L.Lock
   }
 
 
@@ -82,7 +80,6 @@ newSchedPool maxPoolSize onFree prepareWork = do
   poolSize    <- newTVarIO 0
   jobList     <- IOMap.empty
   newState    <- newTVarIO Nothing
-  spawnLock   <- L.new
   pure SchedPool {..}
 
 
@@ -239,7 +236,7 @@ finishPoolerState pool state = do
   finishPoolerState_ pool state now
 
 finishPoolerState_ :: MonadIO m => SchedPool -> PoolerState -> Int64 -> m ()
-finishPoolerState_ SchedPool {..} state now = atomically $ do
+finishPoolerState_ pool@SchedPool {..} state now = atomically $ do
   v <- readTVar state
   case stateJob v of
     Nothing -> pure ()
@@ -307,10 +304,10 @@ insertSchedJob h s schedAt = do
           pure $ newSchedAt <= schedAt
 
 spawn
-  :: MonadUnliftIO m
+  :: MonadIO m
   => SchedPool
   -> Job -> m ()
-spawn SchedPool {..} job = L.with spawnLock $ do
+spawn SchedPool {..} job = do
   now <- getEpochTime
   delay <- getDelay now
   atomically $ do
