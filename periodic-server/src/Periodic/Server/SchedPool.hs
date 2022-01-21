@@ -241,7 +241,12 @@ finishPoolerState SchedPool {..} state = atomically $ do
     takeTMVar waitingLock
     jobs <- readTVar waitingJob
     case jobs of
-      [] -> onFree
+      [] -> do
+        writeTVar state v
+          { stateJob    = Nothing
+          , stateIsBusy = False
+          }
+        onFree
       (x:xs) -> do
         writeTVar waitingJob xs
         writeTVar state v
