@@ -210,7 +210,7 @@ startSchedT = do
   runTask 60 revertLockedQueue
   runTask 60 $ pushPollJob PollJob
   runTask 100 purgeEmptyLock
-  runTask 0 $ runSchedPool sSchedPool schedJob_
+  runTask 0 $ runSchedPool sSchedPool schedJob
 
   loadInt "revert-interval" sRevertInterval
   loadInt "timeout" sTaskTimeout
@@ -414,11 +414,8 @@ canRun_ stList fn = do
     Just _                   -> pure True
 
 
-schedJob_ :: (MonadIO m, Persist db) => Job -> Bool -> (Nid, Msgid) -> SchedT db m ()
-schedJob_ job True (nid, msgid) = do
-  assignJob <- asks sAssignJob
-  liftIO . void $ assignJob nid msgid job
-schedJob_ job False (nid, msgid) = do
+schedJob :: (MonadIO m, Persist db) => Job -> (Nid, Msgid) -> SchedT db m ()
+schedJob job (nid, msgid) = do
   assignJob <- asks sAssignJob
   assignJobTime <- asks sAssignJobTime
   persist <- asks sPersist

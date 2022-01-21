@@ -192,7 +192,7 @@ trySwapLastState ls newState schedAt = do
 startPoolerIO
   :: MonadUnliftIO m
   => SchedPool
-  -> (Job -> Bool -> (Nid, Msgid) -> m ())
+  -> (Job -> (Nid, Msgid) -> m ())
   -> PoolerState -> m (Async ())
 startPoolerIO pool@SchedPool {..} work state =
   async $ (`runContT` pure) $ callCC $ \exit -> forever $ do
@@ -208,7 +208,7 @@ startPoolerIO pool@SchedPool {..} work state =
             pure (schedJob job, agents)
           else retrySTM
 
-    mapM_ (lift . work job (length agents /= 1)) agents
+    mapM_ (lift . work job) agents
 
     finishPoolerState pool state
 
@@ -219,7 +219,7 @@ startPoolerIO pool@SchedPool {..} work state =
 runSchedPool
   :: MonadUnliftIO m
   => SchedPool
-  -> (Job -> Bool -> (Nid, Msgid) -> m ())
+  -> (Job -> (Nid, Msgid) -> m ())
   -> m ()
 runSchedPool pool@SchedPool {..} work = do
   state <- atomically $ do
