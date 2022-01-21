@@ -33,7 +33,6 @@ module Periodic.Server.Scheduler
   , keepalive
   , setConfigInt
   , getConfigInt
-  , prepareWait
   , canRun
   ) where
 
@@ -330,23 +329,24 @@ pushChanList act = do
   atomically $ writeTVar cl (Just act)
 
 
-runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
-runJob job = do
+runJob
+  :: (MonadIO m, Persist db)
+  => Job -> Nid -> Msgid -> SchedT db m ()
+runJob job wnid wmsgid = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
   SchedEnv{..} <- ask
+  prepareWait job wnid wmsgid
   mAgent <- atomically $ popAgentSTM sGrabQueue fn
   case mAgent of
-    Nothing -> pushJob job
+    Nothing -> Pool.spawn sSchedPool job
     Just (nid, msgid) -> do
-      liftIO $ P.insert sPersist Running fn jn job
       t <- liftIO getUnixTime
       IOMap.insert (getHandle job) t sAssignJobTime
       r <- liftIO $ sAssignJob nid msgid job
       if r then pure ()
-           else pushJob job
+           else Pool.spawn sSchedPool job
 
   where fn = getFuncName job
-        jn = getName job
 
 
 pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
@@ -444,12 +444,10 @@ removeJob job = do
   liftIO $ P.delete p fn jn
 
   asks sSchedPool >>= flip Pool.unspawn job
-  pushResult jh ""
   getDuration t0 >>= runHook eventRemoveJob job
 
   where jn = getName job
         fn = getFuncName job
-        jh = getHandle job
 
 dumpJob :: (MonadIO m, Persist db) => SchedT db m [Job]
 dumpJob = liftIO . P.dumpJob =<< asks sPersist
@@ -551,8 +549,9 @@ doneJob jh w = do
   p <- asks sPersist
   getJobDuration jh >>= runHook eventDoneJob jh
   releaseLock' jh
-  liftIO $ P.delete p fn jn
-  pushResult jh w
+  isWaiting <- existsWaitList jh
+  if isWaiting then liftIO $ P.delete p fn jn
+               else pushResult jh w
   where (fn, jn) = unHandle jh
 
 schedLaterJob
