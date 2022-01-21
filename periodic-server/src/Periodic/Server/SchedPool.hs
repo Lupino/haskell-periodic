@@ -210,7 +210,7 @@ startPoolerIO pool@SchedPool {..} work state =
 
     mapM_ (lift . work job (length agents == 1)) agents
 
-    finishPoolerState pool state
+    lift $ finishPoolerState pool state
 
     s <- readTVarIO state
     unless (stateAlive s) $ exit ()
@@ -233,8 +233,8 @@ runSchedPool pool@SchedPool {..} work = do
   io <- startPoolerIO pool work state
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
 
-finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
-finishPoolerState pool state = do
+finishPoolerState :: MonadUnliftIO m => SchedPool -> PoolerState -> m ()
+finishPoolerState pool state = L.with (spawnLock pool) $ do
   now <- getEpochTime
   finishPoolerState_ pool state now
 
@@ -289,7 +289,7 @@ finishPoolerState_ SchedPool {..} state now = atomically $ do
           pure $ j <= now
 
 
-unspawn :: MonadIO m => SchedPool -> Job -> m ()
+unspawn :: MonadUnliftIO m => SchedPool -> Job -> m ()
 unspawn pool job = findPoolerState pool job >>= mapM_ (finishPoolerState pool)
 
 
