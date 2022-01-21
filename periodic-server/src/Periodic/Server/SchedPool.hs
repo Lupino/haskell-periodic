@@ -56,6 +56,7 @@ data SchedPool = SchedPool
   , freeStates  :: FreeStates
   , waitingJob  :: TVar [TVar SchedJob]
   , maxWaitSize :: TVar Int
+  , waitingLock :: TMVar ()
   , jobList     :: IOMap JobHandle (TVar SchedJob)
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
@@ -77,6 +78,7 @@ newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   lastState   <- newTVarIO Nothing
   freeStates  <- newTVarIO []
   waitingJob  <- newTVarIO []
+  waitingLock <- newTMVarIO ()
   poolSize    <- newTVarIO 0
   jobList     <- IOMap.empty
   newState    <- newTVarIO Nothing
@@ -105,10 +107,12 @@ findPoolerState SchedPool {..} job =
 
 getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
 getHandleList SchedPool {..} = atomically $ do
+  takeTMVar waitingLock
   handles0 <- readTVar poolerList >>= go
   handles1 <- readTVar waitingJob
   handles <- mapM toHandle $ handles0 ++ handles1
   IOMapS.modifyIOMap (filterWithKey (\k _ -> k `elem` handles)) jobList
+  putTMVar waitingLock ()
   pure handles
   where go :: [SchedPooler] -> STM [TVar SchedJob]
         go [] = pure []
@@ -239,6 +243,7 @@ finishPoolerState SchedPool {..} state = atomically $ do
       IOMapS.delete (getHandle job) jobList
 
   when (stateAlive v) $ do
+    takeTMVar waitingLock
     jobs <- readTVar waitingJob
     case jobs of
       [] -> onFree
@@ -247,19 +252,21 @@ finishPoolerState SchedPool {..} state = atomically $ do
         writeTVar state v
           { stateJob = Just x
           }
+    putTMVar waitingLock ()
 
 
 unspawn :: MonadIO m => SchedPool -> Job -> m ()
 unspawn pool job = findPoolerState pool job >>= mapM_ (finishPoolerState pool)
 
 
-insertSchedJob :: TVar [TVar SchedJob] -> TVar Int -> TVar SchedJob -> Int64 -> STM ()
-insertSchedJob h mws s schedAt = do
-  sJobs <- readTVar h
+insertSchedJob :: SchedPool -> TVar SchedJob -> Int64 -> STM ()
+insertSchedJob SchedPool {..} s schedAt = do
+  takeTMVar waitingLock
+  sJobs <- readTVar waitingJob
   hJobs <- takeWhileM compSchedAt sJobs
-  maxWait <- readTVar mws
-
-  writeTVar h $! take maxWait $ hJobs ++ [s] ++ drop (length hJobs) sJobs
+  maxWait <- readTVar maxWaitSize
+  writeTVar waitingJob $! take maxWait $ hJobs ++ [s] ++ drop (length hJobs) sJobs
+  putTMVar waitingLock ()
 
   where compSchedAt :: TVar SchedJob -> STM Bool
         compSchedAt t = do
@@ -270,7 +277,7 @@ spawn
   :: MonadIO m
   => SchedPool
   -> Job -> m ()
-spawn SchedPool {..} job = do
+spawn pool@SchedPool {..} job = do
   now <- getEpochTime
   delay <- getDelay now
   atomically $ do
@@ -326,7 +333,7 @@ spawn SchedPool {..} job = do
                     mJob <- stateJob <$> readTVar state
                     case mJob of
                       Nothing   -> pure ()
-                      Just oJob -> insertSchedJob waitingJob maxWaitSize oJob schedAt
+                      Just oJob -> insertSchedJob pool oJob schedAt
 
                     modifyTVar' state $ genPoolerState sJob
 
@@ -335,7 +342,7 @@ spawn SchedPool {..} job = do
                       Nothing -> pure ()
                       Just pooler -> swapLastState lastState (poolerState pooler)
 
-              else insertSchedJob waitingJob maxWaitSize sJob schedAt
+              else insertSchedJob pool sJob schedAt
 
 
   where schedAt = getSchedAt job
