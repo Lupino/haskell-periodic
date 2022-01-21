@@ -28,6 +28,7 @@ import           UnliftIO
 data SchedJob = SchedJob
   { schedJob   :: Job
   , schedDelay :: TVar Bool
+  , schedAlive :: Bool
   -- when true job is sched
   }
 
@@ -83,26 +84,6 @@ newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   jobList     <- IOMap.empty
   newState    <- newTVarIO Nothing
   pure SchedPool {..}
-
-
-findPoolerState :: MonadIO m => SchedPool -> Job -> m (Maybe PoolerState)
-findPoolerState SchedPool {..} job =
-  atomically $ readTVar poolerList >>= go
-  where go :: [SchedPooler] -> STM (Maybe PoolerState)
-        go [] = pure Nothing
-        go (x:xs) = do
-          state <- readTVar $ poolerState x
-          case stateJob state of
-            Nothing -> go xs
-            Just sjt -> do
-              sj <- readTVar sjt
-              if getHandle (schedJob sj) == jh then do
-                delay <- readTVar $ schedDelay sj
-                if delay then pure Nothing
-                         else pure $ Just $ poolerState x
-              else go xs
-
-        jh = getHandle job
 
 
 getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
@@ -202,11 +183,13 @@ startPoolerIO pool@SchedPool {..} work state =
         Nothing  -> retrySTM
         Just jobT -> do
           job <- readTVar jobT
-          canDo <- readTVar $ schedDelay job
-          if canDo then do
-            agents <- prepareWork $ getFuncName $ schedJob job
-            pure (schedJob job, agents)
-          else retrySTM
+          if schedAlive job then do
+            canDo <- readTVar $ schedDelay job
+            if canDo then do
+              agents <- prepareWork $ getFuncName $ schedJob job
+              pure (schedJob job, agents)
+            else retrySTM
+          else pure (schedJob job, [])
 
     mapM_ (lift . work job) agents
 
@@ -256,7 +239,14 @@ finishPoolerState SchedPool {..} state = atomically $ do
 
 
 unspawn :: MonadIO m => SchedPool -> Job -> m ()
-unspawn pool job = findPoolerState pool job >>= mapM_ (finishPoolerState pool)
+unspawn SchedPool {..} job = atomically $ do
+  mSchedJob <- IOMapS.lookup jh jobList
+  case mSchedJob of
+    Nothing -> pure ()
+    Just sJob -> modifyTVar' sJob $ \v -> v
+      { schedAlive = False
+      }
+  where jh = getHandle job
 
 
 insertSchedJob :: SchedPool -> TVar SchedJob -> Int64 -> STM ()
@@ -295,6 +285,7 @@ spawn pool@SchedPool {..} job = do
         sJob <- newTVar SchedJob
           { schedJob   = job
           , schedDelay = delay
+          , schedAlive = True
           }
         IOMapS.insert jh sJob jobList
         mFreeState <- getFreeState freeStates
