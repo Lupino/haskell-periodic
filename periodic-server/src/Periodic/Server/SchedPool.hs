@@ -54,7 +54,6 @@ data SchedPool = SchedPool
   { poolerList  :: TVar [SchedPooler]
   , lastState   :: LastState
   , freeStates  :: FreeStates
-  , quickRunJob :: TVar [TVar SchedJob]
   , waitingJob  :: TVar [TVar SchedJob]
   , jobList     :: IOMap JobHandle (TVar SchedJob)
   , maxPoolSize :: TVar Int
@@ -75,7 +74,6 @@ newSchedPool maxPoolSize onFree prepareWork = do
   poolerList  <- newTVarIO []
   lastState   <- newTVarIO Nothing
   freeStates  <- newTVarIO []
-  quickRunJob <- newTVarIO []
   waitingJob  <- newTVarIO []
   poolSize    <- newTVarIO 0
   jobList     <- IOMap.empty
@@ -106,9 +104,8 @@ findPoolerState SchedPool {..} job =
 getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
 getHandleList SchedPool {..} = atomically $ do
   handles0 <- readTVar poolerList >>= go
-  handles1 <- readTVar quickRunJob
-  handles2 <- readTVar waitingJob
-  handles <- mapM toHandle $ handles0 ++ handles1 ++ handles2
+  handles1 <- readTVar waitingJob
+  handles <- mapM toHandle $ handles0 ++ handles1
   IOMapS.modifyIOMap (filterWithKey (\k _ -> k `elem` handles)) jobList
   pure handles
   where go :: [SchedPooler] -> STM [TVar SchedJob]
@@ -231,12 +228,7 @@ runSchedPool pool@SchedPool {..} work = do
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
 
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
-finishPoolerState pool state = do
-  now <- getEpochTime
-  finishPoolerState_ pool state now
-
-finishPoolerState_ :: MonadIO m => SchedPool -> PoolerState -> Int64 -> m ()
-finishPoolerState_ SchedPool {..} state now = atomically $ do
+finishPoolerState SchedPool {..} state = atomically $ do
   v <- readTVar state
   case stateJob v of
     Nothing -> pure ()
@@ -245,45 +237,14 @@ finishPoolerState_ SchedPool {..} state now = atomically $ do
       IOMapS.delete (getHandle job) jobList
 
   when (stateAlive v) $ do
-    jobs <- readTVar quickRunJob
+    jobs <- readTVar waitingJob
     case jobs of
-      [] -> do
-        wJobs <- readTVar waitingJob
-        jobs1 <- takeWhileM compSchedAt wJobs
-
-        case jobs1 of
-          [] ->
-            case wJobs of
-              [] -> do
-                writeTVar state v
-                  { stateJob    = Nothing
-                  , stateIsBusy = False
-                  }
-                modifyTVar' freeStates (state:)
-                onFree
-              (x:xs) -> do
-                writeTVar waitingJob xs
-                writeTVar state v
-                  { stateJob = Just x
-                  }
-          (x:xs) -> do
-            writeTVar quickRunJob xs
-            writeTVar state v
-              { stateJob = Just x
-              }
-            writeTVar waitingJob $! drop (length jobs1) wJobs
-
-
+      [] -> onFree
       (x:xs) -> do
-        writeTVar quickRunJob xs
+        writeTVar waitingJob xs
         writeTVar state v
           { stateJob = Just x
           }
-
-  where compSchedAt :: TVar SchedJob -> STM Bool
-        compSchedAt t = do
-          j <- getSchedAt . schedJob <$> readTVar t
-          pure $ j <= now
 
 
 unspawn :: MonadIO m => SchedPool -> Job -> m ()
@@ -371,11 +332,7 @@ spawn SchedPool {..} job = do
                       Nothing -> pure ()
                       Just pooler -> swapLastState lastState (poolerState pooler)
 
-              else
-                if schedAt <= now + 1 then
-                  insertSchedJob quickRunJob sJob schedAt
-                else
-                  insertSchedJob waitingJob sJob schedAt
+              else insertSchedJob waitingJob sJob schedAt
 
 
   where schedAt = getSchedAt job
