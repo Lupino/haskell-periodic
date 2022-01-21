@@ -48,7 +48,8 @@ handleClientSessionT (CC.RunJob job) = do
   c <- lift . canRun $ getFuncName job
   if c then do
     (!nid, !msgid) <- ident <$> getSessionEnv1
-    lift $ runJob job nid msgid
+    lift $ prepareWait job nid msgid
+    lift $ runJob job
   else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
