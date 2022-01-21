@@ -208,7 +208,7 @@ startPoolerIO pool@SchedPool {..} work state =
             pure (schedJob job, agents)
           else retrySTM
 
-    mapM_ (lift . work job (length agents == 1)) agents
+    mapM_ (lift . work job (length agents /= 1)) agents
 
     finishPoolerState pool state
 
