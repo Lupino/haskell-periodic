@@ -17,6 +17,7 @@ import           Prelude            hiding (foldr, lookup)
 data State = Pending
     | Running
     | Locked
+    deriving (Show, Eq)
 
 class (Exception (PersistException db)) => Persist db where
   data PersistConfig db

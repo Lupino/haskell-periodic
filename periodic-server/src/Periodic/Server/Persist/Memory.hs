@@ -17,26 +17,26 @@ import qualified Data.IOMap              as IOMap
 import qualified Data.IOMap.STM          as IOMapS
 import           Data.Int                (Int64)
 import           Data.List               (sortOn)
-import           Data.Map.Strict         (Map)
-import qualified Data.Map.Strict         as HM
-import           Data.Maybe              (fromMaybe)
+import           Data.Maybe              (catMaybes)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
                                           State (..))
 import qualified Periodic.Server.Persist as Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
-                                          getSchedAt)
+                                          getFuncName, getSchedAt)
 import           System.Log.Logger       (infoM)
-import           UnliftIO                (Exception, STM, SomeException,
-                                          Typeable, atomically)
+import           UnliftIO                (Exception, STM, SomeException, TVar,
+                                          Typeable, atomically, modifyTVar',
+                                          newTVar, readTVar)
 
-type JobMap = IOMap FuncName (Map JobName Job)
-type FuncNameList = IOMap FuncName ()
+data MemoryJob = MemoryJob
+  { state  :: State
+  , memJob :: Job
+  }
 
-data Memory = Memory
-  { pending :: JobMap
-  , running :: JobMap
-  , locked  :: JobMap
-  , funcs   :: FuncNameList
+type JobMap = IOMap FuncName (IOMap JobName (TVar MemoryJob))
+
+newtype Memory = Memory
+  { jobList :: JobMap
   }
 
 instance Persist Memory where
@@ -45,10 +45,7 @@ instance Persist Memory where
 
   newPersist _ = do
     infoM "Periodic.Server.Persist.Memory" "Memory connected"
-    pending <- IOMap.empty
-    running <- IOMap.empty
-    locked  <- IOMap.empty
-    funcs   <- IOMap.empty
+    jobList  <- IOMap.empty
     return Memory {..}
 
   getOne         = doGetOne
@@ -73,126 +70,171 @@ useMemory :: PersistConfig Memory
 useMemory = UseMemory
 
 
-getJobMap :: Memory -> State -> JobMap
-getJobMap m Pending = pending m
-getJobMap m Running = running m
-getJobMap m Locked  = locked m
+getJobMap :: Memory -> FuncName -> STM (Maybe (IOMap JobName (TVar MemoryJob)))
+getJobMap m = flip IOMapS.lookup (jobList m)
 
-getJobMap1 :: Memory -> State -> FuncName -> IO (Maybe (Map JobName Job))
-getJobMap1 m s = flip IOMap.lookup (getJobMap m s)
+getMemJob :: Memory -> FuncName -> JobName -> STM (Maybe (TVar MemoryJob))
+getMemJob m f j = do
+  mJobMap <- getJobMap m f
+  case mJobMap of
+    Nothing     -> pure Nothing
+    Just jobMap -> IOMapS.lookup j jobMap
 
 doGetOne :: Memory -> State -> FuncName -> JobName -> IO (Maybe Job)
-doGetOne m s f j = maybe Nothing (HM.lookup j) <$> getJobMap1 m s f
-
-deleteJobSTM0 :: JobMap -> FuncName -> JobName -> STM ()
-deleteJobSTM0 m f j = do
-  mhm <- IOMapS.lookup f m
-  case mhm of
-    Nothing -> return ()
-    Just hm -> IOMapS.insert f (HM.delete j hm) m
-
-
-deleteJobSTM :: Memory -> FuncName -> JobName -> STM ()
-deleteJobSTM m f j = do
-  deleteJobSTM0 (pending m) f j
-  deleteJobSTM0 (running m) f j
-  deleteJobSTM0 (locked m) f j
-
-
-insertJobSTM :: Memory -> State -> FuncName -> JobName -> Job -> STM ()
-insertJobSTM m s f j v = do
-  hm <- fromMaybe HM.empty <$> IOMapS.lookup f (getJobMap m s)
-  IOMapS.insert f (HM.insert j v hm) (getJobMap m s)
+doGetOne m s f j = atomically $ do
+  mMemJobT <- getMemJob m f j
+  case mMemJobT of
+    Nothing -> pure Nothing
+    Just memJobT -> do
+      mj <- readTVar memJobT
+      if state mj == s then pure . Just $ memJob mj
+                       else pure Nothing
 
 
 doInsert :: Memory -> State -> FuncName -> JobName -> Job -> IO ()
 doInsert m s f j v = atomically $ do
-  deleteJobSTM m f j
-  insertJobSTM m s f j v
+  mJobMap <- getJobMap m f
+  case mJobMap of
+    Nothing     -> do
+      memJobT <- newTVar MemoryJob
+        { memJob = v
+        , state = s
+        }
+      jobMap <- IOMapS.fromList [(j, memJobT)]
+      IOMapS.insert f jobMap (jobList m)
+    Just jobMap -> do
+      mMemJobT <- IOMapS.lookup j jobMap
+      case mMemJobT of
+        Nothing -> do
+          memJobT <- newTVar MemoryJob
+            { memJob = v
+            , state = s
+            }
+          IOMapS.insert j memJobT jobMap
+        Just memJobT ->
+          modifyTVar' memJobT $ \vv -> vv
+            { memJob = v
+            , state = s
+            }
 
 doDelete :: Memory -> FuncName -> JobName -> IO ()
-doDelete m f j = atomically $ deleteJobSTM m f j
+doDelete m f j = atomically $ do
+  mJobMap <- getJobMap m f
+  case mJobMap of
+    Nothing     -> pure ()
+    Just jobMap -> IOMapS.delete j jobMap
 
 doSize :: Memory -> State -> FuncName -> IO Int64
-doSize m s f = fromIntegral . maybe 0 HM.size <$> getJobMap1 m s f
+doSize m s f = atomically $ do
+  mJobMap <- getJobMap m f
+  case mJobMap of
+    Nothing     -> pure 0
+    Just jobMap -> sum <$> (mapM mapFunc =<< IOMapS.elems jobMap)
+
+  where mapFunc :: TVar MemoryJob -> STM Int64
+        mapFunc memJobT = do
+          mJob <- readTVar memJobT
+          if state mJob == s then pure 1
+                             else pure 0
+
+mapMemoryJob :: Memory -> (TVar MemoryJob -> STM (Maybe a)) -> STM [a]
+mapMemoryJob m f = do
+  memoryJobList <- mapM IOMapS.elems =<< IOMapS.elems (jobList m)
+  catMaybes <$> mapM f (concat memoryJobList)
+
+
+genMapFunc_ :: (Job -> a) -> (MemoryJob -> Bool) -> TVar MemoryJob -> STM (Maybe a)
+genMapFunc_ g f h = do
+  mj <- readTVar h
+  if f mj then pure . Just . g $ memJob mj
+          else pure Nothing
+
+
+genMapFunc :: (MemoryJob -> Bool) -> TVar MemoryJob -> STM (Maybe Job)
+genMapFunc = genMapFunc_ id
 
 doGetRunningJob :: Memory -> Int64 -> IO [Job]
-doGetRunningJob m ts =
-  filter ((< ts) . getSchedAt)
-    <$> IOMap.foldrWithKey foldFunc [] (getJobMap m Running)
-  where foldFunc :: FuncName -> Map JobName Job -> [Job] -> [Job]
-        foldFunc _ h acc0 = HM.foldr (:) acc0 h
+doGetRunningJob m ts = atomically $ mapMemoryJob m $ genMapFunc comp
+  where comp :: MemoryJob -> Bool
+        comp mj | state mj == Running = getSchedAt (memJob mj) < ts
+                | otherwise = False
+
 
 takeMin :: Int -> [Job] -> [Job]
 takeMin c = take c . sortOn getSchedAt
 
+comparePending :: [FuncName] -> Int64 -> MemoryJob -> Bool
+comparePending fns ts mj
+  | isPending && isElem && canSched = True
+  | otherwise = False
+
+  where job = memJob mj
+        fn = getFuncName job
+        schedAt = getSchedAt job
+        isPending = state mj == Pending
+        isElem = fn `elem` fns
+        canSched = ts <= 0 || (schedAt < ts)
+
 doGetPendingJob :: Memory -> [FuncName] -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fns ts c =
-  takeMin c <$> IOMap.foldrWithKey foldFunc [] (pending m)
-
-  where foldFunc :: FuncName -> Map JobName Job -> [Job] -> [Job]
-        foldFunc fn h acc0 | fn `elem` fns = HM.foldr foldFunc1 acc0 h
-                           | otherwise = acc0
-
-        foldFunc1 :: Job -> [Job] -> [Job]
-        foldFunc1 job acc0 | getSchedAt job < ts = job : acc0
-                           | otherwise = acc0
+  atomically $ takeMin c <$> mapMemoryJob m (genMapFunc (comparePending fns ts))
 
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
-doGetLockedJob m fn c = takeMin c . maybe [] HM.elems <$> getJobMap1 m Locked fn
+doGetLockedJob m fn c = atomically $ do
+  mJobMap <- getJobMap m fn
+  case mJobMap of
+    Nothing -> pure []
+    Just jobMap ->
+      takeMin c . catMaybes <$> (mapM (genMapFunc comp) =<< IOMapS.elems jobMap)
+
+  where comp :: MemoryJob -> Bool
+        comp mj | state mj == Locked = True
+                | otherwise = False
 
 doCountPending :: Memory -> [FuncName] -> Int64 -> IO Int
 doCountPending m fns ts =
-  IOMap.foldrWithKey foldFunc 0 (pending m)
-
-  where foldFunc :: FuncName -> Map JobName Job -> Int -> Int
-        foldFunc fn h acc | fn `elem` fns = HM.foldr foldFunc1 acc h
-                          | otherwise = acc
-
-        foldFunc1 :: Job -> Int -> Int
-        foldFunc1 job acc | getSchedAt job < ts = acc + 1
-                          | otherwise = acc
-
+  atomically $ sum <$> mapMemoryJob m (genMapFunc_ f (comparePending fns ts))
+  where f :: Job -> Int
+        f _ = 1
 
 doDumpJob :: Memory -> IO [Job]
-doDumpJob m = do
-  hm1 <- IOMap.elems (pending m)
-  hm2 <- IOMap.elems (running m)
-  hm3 <- IOMap.elems (locked m)
-  return $ HM.elems . HM.unions $ concat [hm1, hm2, hm3]
+doDumpJob m = atomically $ mapMemoryJob m (genMapFunc $ const True)
 
 
 doInsertFuncName :: Memory -> FuncName -> IO ()
-doInsertFuncName m fn = IOMap.insert fn () $ funcs m
+doInsertFuncName m fn = atomically $ do
+  mJobMap <- getJobMap m fn
+  case mJobMap of
+    Nothing -> do
+      jobMap <- IOMapS.empty
+      IOMapS.insert fn jobMap (jobList m)
+    Just _ -> pure ()
 
 
 doRemoveFuncName :: Memory -> FuncName -> IO ()
-doRemoveFuncName m fn = atomically $ do
-  IOMapS.delete fn $ funcs m
-  IOMapS.delete fn $ pending m
-  IOMapS.delete fn $ running m
-  IOMapS.delete fn $ locked m
+doRemoveFuncName m fn =
+  atomically $ IOMapS.delete fn $ jobList m
 
 doFuncList :: Memory -> IO [FuncName]
-doFuncList = IOMap.keys . funcs
+doFuncList = IOMap.keys . jobList
 
 safeMinimum :: [Int64] -> Int64
 safeMinimum [] = 0
 safeMinimum xs = minimum xs
 
 doMinSchedAt :: Memory -> FuncName -> IO Int64
-doMinSchedAt m fn =
-  maybe 0 (safeMinimum . map getSchedAt . HM.elems) <$> getJobMap1 m Pending fn
+doMinSchedAt m fn = atomically $ do
+  mJobMap <- getJobMap m fn
+  case mJobMap of
+    Nothing -> pure 0
+    Just jobMap ->
+      safeMinimum <$> (mapM mapFunc =<< IOMapS.elems jobMap)
 
-
-jobMapSize :: JobMap -> IO Int64
-jobMapSize hm = fromIntegral . sum . map HM.size <$> IOMap.elems hm
+  where mapFunc :: TVar MemoryJob -> STM Int64
+        mapFunc h = getSchedAt . memJob <$> readTVar h
 
 
 memorySize :: Memory -> IO Int64
 memorySize Memory {..} = do
-  s0 <- jobMapSize pending
-  s1 <- jobMapSize running
-  s2 <- jobMapSize locked
-
-  return $ s0 + s1 + s2
+  sizes <- mapM IOMap.size =<< IOMap.elems jobList
+  pure . fromIntegral $ sum sizes
