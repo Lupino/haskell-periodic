@@ -50,7 +50,7 @@ import qualified Data.IOMap.STM             as IOMapS
 import           Data.Int                   (Int64)
 import qualified Data.List                  as L (delete)
 import qualified Data.Map.Strict            as Map (filter, map)
-import           Data.Maybe                 (fromJust, fromMaybe, isJust)
+import           Data.Maybe                 (fromMaybe, isJust)
 import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
                                              diffUnixTime, getUnixTime)
 import           Foreign.C.Types            (CTime (..))
@@ -187,15 +187,15 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
       (writeTVar sPollJob (Just PollJob)) $ \fn -> do
     mFuncStat <- IOMapS.lookup fn sFuncStatList
     case mFuncStat of
-      Nothing                  -> pure []
-      Just FuncStat{sWorker=0} -> pure []
+      Nothing                  -> pure $ Just []
+      Just FuncStat{sWorker=0} -> pure $ Just []
       Just st -> do
-        if sBroadcast st then popAgentListSTM sGrabQueue fn
+        if sBroadcast st then Just <$> popAgentListSTM sGrabQueue fn
         else do
           mAgent <- popAgentSTM sGrabQueue fn
           case mAgent of
-            Nothing    -> retrySTM
-            Just agent -> pure [agent]
+            Nothing    -> pure Nothing
+            Just agent -> pure $ Just [agent]
 
   pure SchedEnv{..}
 
@@ -210,7 +210,7 @@ startSchedT = do
   runTask 60 revertLockedQueue
   runTask 60 $ pushPollJob PollJob
   runTask 100 purgeEmptyLock
-  runTask 0 $ runSchedPool sSchedPool schedJob
+  runTask 0 $ runSchedPool sSchedPool schedJob $ retryLater 10
 
   loadInt "revert-interval" sRevertInterval
   loadInt "timeout" sTaskTimeout
@@ -524,20 +524,16 @@ failJob jh = do
     doneJob jh ""
   else do
     p <- asks sPersist
-    job <- liftIO $ P.getOne p Running fn jn
-    when (isJust job) $ do
-      nextSchedAt <- getEpochTime
-      retryJob $ setSchedAt nextSchedAt $ fromJust job
+    mJob <- liftIO $ P.getOne p Running fn jn
+    mapM_ (retryLater 1) mJob
 
   where (fn, jn) = unHandle jh
 
-retryJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
-retryJob job = do
+retryLater :: (MonadIO m, Persist db) => Int64 -> Job -> SchedT db m ()
+retryLater later job = do
+  nextSchedAt <- (later +) <$> getEpochTime
   p <- asks sPersist
-  liftIO $ P.insert p Pending fn jn job
-
-  pushChanJob job
-
+  liftIO $ P.insert p Pending fn jn $ setSchedAt nextSchedAt job
   where  fn = getFuncName job
          jn = getName job
 
@@ -582,14 +578,9 @@ schedLaterJob jh later step = do
     doneJob jh ""
   else do
     p <- asks sPersist
-    job <- liftIO $ P.getOne p Running fn jn
-    when (isJust job) $ do
-      let job' = fromJust job
-
-      nextSchedAt <- (later +) <$> getEpochTime
-
-      getJobDuration jh >>= runHook eventSchedLaterJob jh
-      retryJob $ setCount (getCount job' + step) $ setSchedAt nextSchedAt job'
+    mJob <- liftIO $ P.getOne p Running fn jn
+    mapM_ (\job -> retryLater later $ setCount (getCount job + step) job) mJob
+    getJobDuration jh >>= runHook eventSchedLaterJob jh
 
   where (fn, jn) = unHandle jh
 

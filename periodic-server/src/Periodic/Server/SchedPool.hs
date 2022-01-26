@@ -62,7 +62,7 @@ data SchedPool = SchedPool
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
   , onFree      :: STM ()
-  , prepareWork :: FuncName -> STM [(Nid, Msgid)]
+  , prepareWork :: FuncName -> STM (Maybe [(Nid, Msgid)])
   , newState    :: LastState
   }
 
@@ -72,7 +72,7 @@ newSchedPool
   => TVar Int
   -> TVar Int
   -> STM ()
-  -> (FuncName -> STM [(Nid, Msgid)])
+  -> (FuncName -> STM (Maybe [(Nid, Msgid)]))
   -> m SchedPool
 newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   poolerList  <- newTVarIO []
@@ -174,10 +174,11 @@ startPoolerIO
   :: MonadUnliftIO m
   => SchedPool
   -> (Job -> (Nid, Msgid) -> m ())
+  -> (Job -> m ())
   -> PoolerState -> m (Async ())
-startPoolerIO pool@SchedPool {..} work state =
+startPoolerIO pool@SchedPool {..} work workLater state =
   async $ (`runContT` pure) $ callCC $ \exit -> forever $ do
-    (job, agents) <- atomically $ do
+    (job, mAgents) <- atomically $ do
       v <- readTVar state
       case stateJob v of
         Nothing  -> retrySTM
@@ -186,12 +187,14 @@ startPoolerIO pool@SchedPool {..} work state =
           if schedAlive job then do
             canDo <- readTVar $ schedDelay job
             if canDo then do
-              agents <- prepareWork $ getFuncName $ schedJob job
-              pure (schedJob job, agents)
+              mAgents <- prepareWork $ getFuncName $ schedJob job
+              pure (schedJob job, mAgents)
             else retrySTM
-          else pure (schedJob job, [])
+          else pure (schedJob job, Just [])
 
-    mapM_ (lift . work job) agents
+    case mAgents of
+      Nothing     -> lift $ workLater job
+      Just agents -> mapM_ (lift . work job) agents
 
     finishPoolerState pool state
 
@@ -203,8 +206,9 @@ runSchedPool
   :: MonadUnliftIO m
   => SchedPool
   -> (Job -> (Nid, Msgid) -> m ())
+  -> (Job -> m ())
   -> m ()
-runSchedPool pool@SchedPool {..} work = do
+runSchedPool pool@SchedPool {..} work workLater = do
   state <- atomically $ do
     mState <- readTVar newState
     case mState of
@@ -213,7 +217,7 @@ runSchedPool pool@SchedPool {..} work = do
         writeTVar newState Nothing
         pure state
 
-  io <- startPoolerIO pool work state
+  io <- startPoolerIO pool work workLater state
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
 
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
