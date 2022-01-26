@@ -28,8 +28,8 @@ import           UnliftIO
 data SchedJob = SchedJob
   { schedJob   :: Job
   , schedDelay :: TVar Bool
-  , schedAlive :: Bool
   -- when true job is sched
+  , schedAlive :: Bool
   }
 
 
@@ -193,13 +193,29 @@ startPoolerIO pool@SchedPool {..} work workLater state =
           else pure (schedJob job, Just [])
 
     case mAgents of
-      Nothing     -> lift $ workLater job
+      Nothing     -> do
+        delay <- registerDelay delayUS
+        mAgents1 <- atomically $ do
+          mAgents1 <- prepareWork $ getFuncName job
+          case mAgents1 of
+            Nothing -> do
+              tout <- readTVar delay
+              if tout then pure Nothing
+                      else retrySTM
+            Just _ -> pure mAgents1
+
+        case mAgents1 of
+          Nothing     -> lift $ workLater job
+          Just agents -> mapM_ (lift . work job) agents
+
       Just agents -> mapM_ (lift . work job) agents
 
     finishPoolerState pool state
 
     s <- readTVarIO state
     unless (stateAlive s) $ exit ()
+
+    where delayUS = 5000000 -- 5 seconds
 
 
 runSchedPool
