@@ -194,19 +194,22 @@ startPoolerIO pool@SchedPool {..} work workLater state =
 
     case mAgents of
       Nothing     -> do
-        delay <- registerDelay delayUS
-        mAgents1 <- atomically $ do
-          mAgents1 <- prepareWork $ getFuncName job
-          case mAgents1 of
-            Nothing -> do
-              tout <- readTVar delay
-              if tout then pure Nothing
-                      else retrySTM
-            Just _ -> pure mAgents1
+        now <- getEpochTime
+        if getSchedAt job < now - 5 then lift $ workLater job
+        else do
+          delay <- registerDelay delayUS
+          mAgents1 <- atomically $ do
+            mAgents1 <- prepareWork $ getFuncName job
+            case mAgents1 of
+              Nothing -> do
+                tout <- readTVar delay
+                if tout then pure Nothing
+                        else retrySTM
+              Just _ -> pure mAgents1
 
-        case mAgents1 of
-          Nothing     -> lift $ workLater job
-          Just agents -> mapM_ (lift . work job) agents
+          case mAgents1 of
+            Nothing     -> lift $ workLater job
+            Just agents -> mapM_ (lift . work job) agents
 
       Just agents -> mapM_ (lift . work job) agents
 
