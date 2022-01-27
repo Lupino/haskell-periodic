@@ -124,7 +124,7 @@ data SchedEnv db = SchedEnv
     -- sched state, when false sched is exited.
     , sAlive          :: TVar Bool
     , sPollJob        :: TVar (Maybe PollJob)
-    , sChanList       :: TVar [Job]
+    , sChanList       :: TQueue Job
     , sWaitList       :: WaitList
     , sLockList       :: LockList
     , sPersist        :: db
@@ -172,7 +172,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sLocker         <- L.new
   sAlive          <- newTVarIO True
   sPollJob        <- newTVarIO Nothing
-  sChanList       <- newTVarIO []
+  sChanList       <- newTQueueIO
   sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
@@ -329,24 +329,13 @@ pushPollJob act = do
 pushChanJob :: MonadIO m => Job -> SchedT db m ()
 pushChanJob job = do
   cl <- asks sChanList
-  atomically $ modifyTVar' cl (job:)
+  atomically $ writeTQueue cl job
 
 runChanJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 runChanJob = do
   cl <- asks sChanList
-  al <- asks sAlive
-  jobs <- atomically $ do
-    jobs <- readTVar cl
-    case jobs of
-      [] -> do
-        st <- readTVar al
-        if st then retrySTM
-              else pure []
-      _ -> do
-        writeTVar cl []
-        pure jobs
-
-  mapM_ reSchedJob jobs
+  job <- atomically $ readTQueue cl
+  reSchedJob job
 
 
 runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
