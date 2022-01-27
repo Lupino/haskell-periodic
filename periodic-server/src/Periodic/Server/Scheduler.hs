@@ -529,13 +529,10 @@ failJob jh = do
 
   where (fn, jn) = unHandle jh
 
-retryLater :: (MonadIO m, Persist db) => Int64 -> Job -> SchedT db m ()
+retryLater :: MonadIO m => Int64 -> Job -> SchedT db m ()
 retryLater later job = do
   nextSchedAt <- (later +) <$> getEpochTime
-  p <- asks sPersist
-  liftIO $ P.insert p Pending fn jn $ setSchedAt nextSchedAt job
-  where  fn = getFuncName job
-         jn = getName job
+  pushJob $ setSchedAt nextSchedAt job
 
 getJobDuration
   :: (MonadIO m, Persist db)
