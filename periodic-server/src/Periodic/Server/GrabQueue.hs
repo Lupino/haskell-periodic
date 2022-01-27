@@ -8,15 +8,16 @@ module Periodic.Server.GrabQueue
   ) where
 
 
-import           Data.Foldable  (toList)
-import           Data.IOMap     (IOMap)
-import qualified Data.IOMap     as IOMap
-import qualified Data.IOMap.STM as IOMapS
-import           Data.List      (delete)
-import           Data.Maybe     (catMaybes)
-import           Periodic.Types (FuncName, Msgid, Nid)
-import           UnliftIO       (MonadIO, STM, TVar, atomically, newTVarIO,
-                                 readTVar, retrySTM, writeTVar)
+import           Control.Monad      (forever, when)
+import           Control.Monad.Cont (callCC, lift, runContT)
+import           Data.IOMap         (IOMap)
+import qualified Data.IOMap         as IOMap
+import qualified Data.IOMap.STM     as IOMapS
+import           Data.Maybe         (catMaybes)
+import           Periodic.Types     (FuncName, Msgid, Nid)
+import           UnliftIO           (MonadIO, STM, TQueue, TVar, atomically,
+                                     newTQueueIO, readTQueue, readTVar,
+                                     unGetTQueue, writeTQueue, writeTVar)
 
 data GrabItem = GrabItem
   { msgidList :: TVar [Msgid]
@@ -24,17 +25,16 @@ data GrabItem = GrabItem
   }
 
 
-data GrabQueue = GrabQueue (TVar [Nid]) (IOMap Nid GrabItem)
+data GrabQueue = GrabQueue (TQueue Nid) (IOMap Nid GrabItem)
 
 newGrabQueue :: MonadIO m => m GrabQueue
 newGrabQueue = do
-  nidList <- newTVarIO []
+  nidList <- newTQueueIO
   GrabQueue nidList <$> IOMap.empty
 
 pushAgent :: MonadIO m => GrabQueue -> TVar [FuncName] -> Nid -> TVar [Msgid] -> m ()
 pushAgent (GrabQueue s q) fl nid ml = atomically $ do
-  nl <- readTVar s
-  writeTVar s $! nid : nl
+  writeTQueue s nid
   IOMapS.insert nid (GrabItem ml fl) q
 
 findMsgid :: GrabQueue -> FuncName -> Nid -> STM (Maybe (Nid, Msgid))
@@ -56,26 +56,34 @@ findMsgid (GrabQueue _ q) fn nid = do
 
 popAgentSTM :: GrabQueue -> FuncName -> STM (Maybe (Nid, Msgid))
 popAgentSTM gq@(GrabQueue s _) fn = do
-  readTVar s
-    >>= go []
-  where go :: [Nid] -> [Nid] -> STM (Maybe (Nid, Msgid))
-        go _ [] = pure Nothing
-        go ys (x:xs) = do
-          r <- findMsgid gq fn x
-          case r of
-            Nothing -> go (ys ++ [x]) xs
-            Just (nid, msgid) -> do
-              writeTVar s $! xs ++ ys ++ [x]
-              pure $ Just (nid, msgid)
+  first <- readTQueue s
+  writeTQueue s first
+  (`runContT` pure) $ callCC $ \exit -> forever $ do
+    nid <- lift $ readTQueue s
+    r <- lift $ findMsgid gq fn nid
+    case r of
+      Nothing -> do
+        lift $ writeTQueue s nid
+        when (nid == first) $ exit Nothing
+      Just (_, msgid) -> do
+        lift $ unGetTQueue s nid
+        exit $ Just (nid, msgid)
 
 
 popAgentListSTM :: GrabQueue -> FuncName -> STM [(Nid, Msgid)]
-popAgentListSTM gq@(GrabQueue s _) fn = do
-  seqV <- toList <$> readTVar s
+popAgentListSTM gq@(GrabQueue _ s) fn = do
+  seqV <- IOMapS.keys s
   catMaybes <$> mapM (findMsgid gq fn) seqV
 
 dropAgentList :: MonadIO m => GrabQueue -> Nid -> m ()
 dropAgentList (GrabQueue s q) nid = atomically $ do
   IOMapS.delete nid q
-  nids <- readTVar s
-  writeTVar s $! delete nid nids
+  first <- readTQueue s
+  writeTQueue s first
+  (`runContT` pure) $ callCC $ \exit -> forever $ do
+    nid0 <- lift $ readTQueue s
+
+    if nid0 == nid then exit ()
+                   else lift $ writeTQueue s nid0
+
+    when (nid0 == first) $ exit ()
