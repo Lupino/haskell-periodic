@@ -38,9 +38,8 @@ module Periodic.Server.Scheduler
   ) where
 
 import           Control.Monad              (forever, unless, void, when)
-import           Control.Monad.Cont         (callCC, runContT)
 import           Control.Monad.Reader.Class (MonadReader (ask), asks)
-import           Control.Monad.Trans.Class  (MonadTrans, lift)
+import           Control.Monad.Trans.Class  (MonadTrans)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
 import           Data.ByteString            (ByteString)
 import           Data.Foldable              (forM_)
@@ -122,7 +121,6 @@ data SchedEnv db = SchedEnv
     , sLocker         :: L.Lock
     , sGrabQueue      :: GrabQueue
     -- sched state, when false sched is exited.
-    , sAlive          :: TVar Bool
     , sPollJob        :: TVar (Maybe PollJob)
     , sChanList       :: TQueue Job
     , sWaitList       :: WaitList
@@ -135,6 +133,7 @@ data SchedEnv db = SchedEnv
     , sMaxPoolSize    :: TVar Int
     , sSchedPool      :: SchedPool
     , sPushList       :: TQueue Job
+    , sTaskList       :: TVar [Async ()]
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -171,7 +170,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
   sLocker         <- L.new
-  sAlive          <- newTVarIO True
   sPollJob        <- newTVarIO Nothing
   sChanList       <- newTQueueIO
   sRevertInterval <- newTVarIO 300
@@ -199,6 +197,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
             Just agent -> pure $ Just [agent]
 
   sPushList <- newTQueueIO
+  sTaskList <- newTVarIO []
   pure SchedEnv{..}
 
 startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -269,14 +268,14 @@ runTask :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m ()
 runTask d m = flip runTask_ m =<< newTVarIO d
 
 runTask_ :: (MonadUnliftIO m) => TVar Int -> SchedT db m () -> SchedT db m ()
-runTask_ d m = void . async $ do
-  SchedEnv{..} <- ask
-  (`runContT` pure) $ callCC $ \exit -> forever $ do
+runTask_ d m = do
+  io <- async $ forever $ do
     interval <- readTVarIO d
     when (interval > 0) $ threadDelay $ interval * 1000 * 1000
-    alive <- readTVarIO sAlive
-    if alive then lift m
-             else exit ()
+    m
+
+  taskList <- asks sTaskList
+  atomically $ modifyTVar' taskList (io:)
 
 runPollJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 runPollJob = do
@@ -786,11 +785,8 @@ shutdown = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler shutdown"
   SchedEnv{..} <- ask
   Pool.close sSchedPool
-  alive <- atomically $ do
-    t <- readTVar sAlive
-    writeTVar sAlive False
-    return t
-  when alive . void . async $ liftIO sCleanup
+  readTVarIO sTaskList >>= mapM_ cancel
+  liftIO sCleanup
 
 prepareWait :: MonadIO m => Job -> Nid -> Msgid -> SchedT db m ()
 prepareWait job nid msgid = do
