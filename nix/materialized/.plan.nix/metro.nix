@@ -53,6 +53,7 @@
           "Metro/Node"
           "Metro/Server"
           "Metro/Session"
+          "Metro/SessionPool"
           "Metro/TP/BS"
           "Metro/TP/Debug"
           "Metro/Utils"

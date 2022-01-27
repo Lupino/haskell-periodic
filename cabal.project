@@ -14,14 +14,14 @@ package postgresql-libpq
 source-repository-package
     type: git
     location: https://github.com/Lupino/metro.git
-    tag: 4cb2fb25a40ec731b4c0eecd82c5066fabbccaac
+    tag: 7f2756a5229f0663aef417d698e3c400032cb842
     subdir: .
             map-io
             metro-socket
             metro-transport-tls
             metro-transport-websockets
             metro-transport-xor
-    --sha256: 101j8lcbs417dhnk3rhscmdalrd8js6035bh136zgqfclyx5iqfc
+    --sha256: 2IFprzPeZqtZQQk88I6aaVV40BWb8WUFserukCUUxEg=
 
 source-repository-package
     type: git

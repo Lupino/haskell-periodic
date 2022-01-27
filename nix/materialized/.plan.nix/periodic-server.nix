@@ -11,7 +11,7 @@
     flags = {};
     package = {
       specVersion = "1.10";
-      identifier = { name = "periodic-server"; version = "1.1.7.3"; };
+      identifier = { name = "periodic-server"; version = "1.1.8.0"; };
       license = "BSD-3-Clause";
       copyright = "MIT";
       maintainer = "lmjubuntu@gmail.com";
@@ -55,10 +55,12 @@
           (hsPkgs."metro-socket" or (errorHandler.buildDepError "metro-socket"))
           (hsPkgs."psql-utils" or (errorHandler.buildDepError "psql-utils"))
           (hsPkgs."unix-time" or (errorHandler.buildDepError "unix-time"))
+          (hsPkgs."monadlist" or (errorHandler.buildDepError "monadlist"))
           ];
         buildable = true;
         modules = [
           "Periodic/Server/Scheduler"
+          "Periodic/Server/SchedPool"
           "Periodic/Server/GrabQueue"
           "Periodic/Server/FuncStat"
           "Periodic/Server/Persist"

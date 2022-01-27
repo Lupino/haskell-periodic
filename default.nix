@@ -26,9 +26,9 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2021-09-08T00:00:00Z";
-    index-sha256 = "aebd783ca0dc3afa9db213ea75fd43db49d8587fbced19565043d973527b9828";
-    plan-sha256 = if compiler-nix-name == "ghc8107" then "0acz3i1ayla8azawz0m7qfrr3lhg9dxvnf3x2qjpxak1cddglyk0" else null;
+    index-state = "2022-01-20T00:00:00Z";
+    index-sha256 = "eb9af899f414b3417bd8f94df40df863056273196d2d44c7ac033cf9c4523511";
+    plan-sha256 = if compiler-nix-name == "ghc8107" then "16xms4rrpmdm2b3kxi71pa5h29i12zb0p2z4damjdy798ddxr4cm" else null;
     materialized = if compiler-nix-name == "ghc8107" then ./nix/materialized else null;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
