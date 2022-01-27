@@ -228,10 +228,10 @@ doMinSchedAt m fn = atomically $ do
   case mJobMap of
     Nothing -> pure 0
     Just jobMap ->
-      safeMinimum <$> (mapM mapFunc =<< IOMapS.elems jobMap)
+      safeMinimum . catMaybes <$> (mapM (genMapFunc_ getSchedAt comp) =<< IOMapS.elems jobMap)
 
-  where mapFunc :: TVar MemoryJob -> STM Int64
-        mapFunc h = getSchedAt . memJob <$> readTVar h
+  where comp :: MemoryJob -> Bool
+        comp mj = Pending == state mj
 
 
 memorySize :: Memory -> IO Int64
