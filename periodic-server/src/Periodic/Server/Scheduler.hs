@@ -134,6 +134,7 @@ data SchedEnv db = SchedEnv
     , sAssignJobTime  :: IOMap JobHandle UnixTime
     , sMaxPoolSize    :: TVar Int
     , sSchedPool      :: SchedPool
+    , sPushList       :: TQueue Job
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -197,6 +198,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
             Nothing    -> pure Nothing
             Just agent -> pure $ Just [agent]
 
+  sPushList <- newTQueueIO
   pure SchedEnv{..}
 
 startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -206,6 +208,7 @@ startSchedT = do
   runTask_ sRevertInterval revertRunningQueue
   runTask 1 runPollJob
   runTask 0 runChanJob
+  runTask 0 runPushJob
   runTask 100 purgeExpired
   runTask 60 revertLockedQueue
   runTask 60 $ pushPollJob PollJob
@@ -357,8 +360,19 @@ runJob job = do
         jn = getName job
 
 
-pushJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+pushJob :: MonadIO m => Job -> SchedT db m ()
 pushJob job = do
+  pl <- asks sPushList
+  atomically $ writeTQueue pl job
+
+
+runPushJob :: (MonadIO m, Persist db) => SchedT db m ()
+runPushJob = do
+  pl <- asks sPushList
+  job <- atomically $ readTQueue pl
+  let fn = getFuncName job
+      jn = getName job
+
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   t0 <- liftIO getUnixTime
   p <- asks sPersist
@@ -369,9 +383,6 @@ pushJob job = do
     pushChanJob job'
 
   getDuration t0 >>= runHook eventPushJob job
-
-  where fn = getFuncName job
-        jn = getName job
 
 
 fixedSchedAt :: MonadIO m => Job -> SchedT db m Job
