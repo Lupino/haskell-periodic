@@ -124,18 +124,22 @@ doDelete m f j = atomically $ do
     Nothing     -> pure ()
     Just jobMap -> IOMapS.delete j jobMap
 
-doSize :: Memory -> State -> FuncName -> IO Int64
-doSize m s f = atomically $ do
-  mJobMap <- getJobMap m f
-  case mJobMap of
-    Nothing     -> pure 0
-    Just jobMap -> sum <$> (mapM mapFunc =<< IOMapS.elems jobMap)
 
-  where mapFunc :: TVar MemoryJob -> STM Int64
-        mapFunc memJobT = do
-          mJob <- readTVar memJobT
-          if state mJob == s then pure 1
-                             else pure 0
+doSize :: Memory -> State -> FuncName -> IO Int64
+doSize m s f =
+  atomically $ sum <$> mapJobMap m f (genMapFunc_ (const 1) (is s))
+
+
+is :: State -> MemoryJob -> Bool
+is s mj = state mj == s
+
+
+mapJobMap :: Memory -> FuncName -> (TVar MemoryJob -> STM (Maybe a)) -> STM [a]
+mapJobMap m fn mapFunc = do
+  mJobMap <- getJobMap m fn
+  case mJobMap of
+    Nothing     -> pure []
+    Just jobMap -> catMaybes <$> (mapM mapFunc =<< IOMapS.elems jobMap)
 
 mapMemoryJob :: Memory -> (TVar MemoryJob -> STM (Maybe a)) -> STM [a]
 mapMemoryJob m f = do
@@ -180,22 +184,12 @@ doGetPendingJob m fns ts c =
   atomically $ takeMin c <$> mapMemoryJob m (genMapFunc (comparePending fns ts))
 
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
-doGetLockedJob m fn c = atomically $ do
-  mJobMap <- getJobMap m fn
-  case mJobMap of
-    Nothing -> pure []
-    Just jobMap ->
-      takeMin c . catMaybes <$> (mapM (genMapFunc comp) =<< IOMapS.elems jobMap)
-
-  where comp :: MemoryJob -> Bool
-        comp mj | state mj == Locked = True
-                | otherwise = False
+doGetLockedJob m fn c =
+  atomically $ takeMin c <$> mapJobMap m fn (genMapFunc (is Locked))
 
 doCountPending :: Memory -> [FuncName] -> Int64 -> IO Int
 doCountPending m fns ts =
-  atomically $ sum <$> mapMemoryJob m (genMapFunc_ f (comparePending fns ts))
-  where f :: Job -> Int
-        f _ = 1
+  atomically $ sum <$> mapMemoryJob m (genMapFunc_ (const 1) (comparePending fns ts))
 
 doDumpJob :: Memory -> IO [Job]
 doDumpJob m = atomically $ mapMemoryJob m (genMapFunc $ const True)
@@ -223,16 +217,8 @@ safeMinimum [] = 0
 safeMinimum xs = minimum xs
 
 doMinSchedAt :: Memory -> FuncName -> IO Int64
-doMinSchedAt m fn = atomically $ do
-  mJobMap <- getJobMap m fn
-  case mJobMap of
-    Nothing -> pure 0
-    Just jobMap ->
-      safeMinimum . catMaybes <$> (mapM (genMapFunc_ getSchedAt comp) =<< IOMapS.elems jobMap)
-
-  where comp :: MemoryJob -> Bool
-        comp mj = Pending == state mj
-
+doMinSchedAt m fn =
+  atomically $ safeMinimum <$> mapJobMap m fn (genMapFunc_ getSchedAt (is Pending))
 
 memorySize :: Memory -> IO Int64
 memorySize Memory {..} = do
