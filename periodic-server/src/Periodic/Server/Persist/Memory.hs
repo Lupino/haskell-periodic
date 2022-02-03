@@ -33,10 +33,11 @@ data PureJob = PureJob
   , pureJob   :: Job
   }
 
-type JobMap = IOMap FuncName (IOMap JobName (TVar MemoryJob))
+
+type JobMap = IOMap JobName (TVar PureJob)
 
 newtype Memory = Memory
-  { jobList :: JobMap
+  { jobList :: IOMap FuncName JobMap
   }
 
 instance Persist Memory where
@@ -70,7 +71,7 @@ useMemory :: PersistConfig Memory
 useMemory = UseMemory
 
 
-getJobMap :: Memory -> FuncName -> STM (Maybe (IOMap JobName (TVar MemoryJob)))
+getJobMap :: Memory -> FuncName -> STM (Maybe JobMap)
 getJobMap m = flip IOMapS.lookup (jobList m)
 
 getPureJob :: Memory -> FuncName -> JobName -> STM (Maybe (TVar PureJob))
