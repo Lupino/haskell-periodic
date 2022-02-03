@@ -406,7 +406,7 @@ schedJob job (nid, msgid) = do
   persist <- asks sPersist
   liftIO $ P.updateState persist Running fn jn
   t <- liftIO getUnixTime
-  IOMap.insert (getHandle job) t assignJobTime
+  IOMap.insert jh t assignJobTime
   r <- liftIO $ assignJob nid msgid job
   if r then pure ()
        else do
@@ -416,6 +416,7 @@ schedJob job (nid, msgid) = do
 
   where fn = getFuncName job
         jn = getName job
+        jh = getHandle job
 
 
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
