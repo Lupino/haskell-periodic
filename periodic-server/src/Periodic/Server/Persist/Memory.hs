@@ -28,9 +28,9 @@ import           UnliftIO                (Exception, STM, SomeException, TVar,
                                           Typeable, atomically, modifyTVar',
                                           newTVar, readTVar)
 
-data MemoryJob = MemoryJob
-  { state  :: State
-  , memJob :: Job
+data PureJob = PureJob
+  { pureState :: State
+  , pureJob   :: Job
   }
 
 type JobMap = IOMap FuncName (IOMap JobName (TVar MemoryJob))
@@ -73,8 +73,8 @@ useMemory = UseMemory
 getJobMap :: Memory -> FuncName -> STM (Maybe (IOMap JobName (TVar MemoryJob)))
 getJobMap m = flip IOMapS.lookup (jobList m)
 
-getMemJob :: Memory -> FuncName -> JobName -> STM (Maybe (TVar MemoryJob))
-getMemJob m f j = do
+getPureJob :: Memory -> FuncName -> JobName -> STM (Maybe (TVar PureJob))
+getPureJob m f j = do
   mJobMap <- getJobMap m f
   case mJobMap of
     Nothing     -> pure Nothing
@@ -82,13 +82,13 @@ getMemJob m f j = do
 
 doGetOne :: Memory -> State -> FuncName -> JobName -> IO (Maybe Job)
 doGetOne m s f j = atomically $ do
-  mMemJobT <- getMemJob m f j
-  case mMemJobT of
+  mPureJobT <- getPureJob m f j
+  case mPureJobT of
     Nothing -> pure Nothing
-    Just memJobT -> do
-      mj <- readTVar memJobT
-      if state mj == s then pure . Just $ memJob mj
-                       else pure Nothing
+    Just pureJobT -> do
+      pj <- readTVar pureJobT
+      if is s pj then pure . Just $ pureJob pj
+                 else pure Nothing
 
 
 doInsert :: Memory -> State -> FuncName -> JobName -> Job -> IO ()
@@ -96,25 +96,25 @@ doInsert m s f j v = atomically $ do
   mJobMap <- getJobMap m f
   case mJobMap of
     Nothing     -> do
-      memJobT <- newTVar MemoryJob
-        { memJob = v
-        , state = s
+      pureJobT <- newTVar PureJob
+        { pureJob = v
+        , pureState = s
         }
-      jobMap <- IOMapS.fromList [(j, memJobT)]
+      jobMap <- IOMapS.fromList [(j, pureJobT)]
       IOMapS.insert f jobMap (jobList m)
     Just jobMap -> do
-      mMemJobT <- IOMapS.lookup j jobMap
-      case mMemJobT of
+      mPureJobT <- IOMapS.lookup j jobMap
+      case mPureJobT of
         Nothing -> do
-          memJobT <- newTVar MemoryJob
-            { memJob = v
-            , state = s
+          pureJobT <- newTVar PureJob
+            { pureJob = v
+            , pureState = s
             }
-          IOMapS.insert j memJobT jobMap
-        Just memJobT ->
-          modifyTVar' memJobT $ \vv -> vv
-            { memJob = v
-            , state = s
+          IOMapS.insert j pureJobT jobMap
+        Just pureJobT ->
+          modifyTVar' pureJobT $ \vv -> vv
+            { pureJob = v
+            , pureState = s
             }
 
 doDelete :: Memory -> FuncName -> JobName -> IO ()
@@ -130,58 +130,58 @@ doSize m s f =
   atomically $ sum <$> mapJobMap m f (genMapFunc_ (const 1) (is s))
 
 
-is :: State -> MemoryJob -> Bool
-is s mj = state mj == s
+is :: State -> PureJob -> Bool
+is s pj = pureState pj == s
 
 
-mapJobMap :: Memory -> FuncName -> (TVar MemoryJob -> STM (Maybe a)) -> STM [a]
+mapJobMap :: Memory -> FuncName -> (TVar PureJob -> STM (Maybe a)) -> STM [a]
 mapJobMap m fn mapFunc = do
   mJobMap <- getJobMap m fn
   case mJobMap of
     Nothing     -> pure []
     Just jobMap -> catMaybes <$> (mapM mapFunc =<< IOMapS.elems jobMap)
 
-mapMemoryJob :: Memory -> (TVar MemoryJob -> STM (Maybe a)) -> STM [a]
-mapMemoryJob m f = do
+mapPureJob :: Memory -> (TVar PureJob -> STM (Maybe a)) -> STM [a]
+mapPureJob m f = do
   memoryJobList <- mapM IOMapS.elems =<< IOMapS.elems (jobList m)
   catMaybes <$> mapM f (concat memoryJobList)
 
 
-genMapFunc_ :: (Job -> a) -> (MemoryJob -> Bool) -> TVar MemoryJob -> STM (Maybe a)
+genMapFunc_ :: (Job -> a) -> (PureJob -> Bool) -> TVar PureJob -> STM (Maybe a)
 genMapFunc_ g f h = do
-  mj <- readTVar h
-  if f mj then pure . Just . g $ memJob mj
+  pj <- readTVar h
+  if f pj then pure . Just . g $ pureJob pj
           else pure Nothing
 
 
-genMapFunc :: (MemoryJob -> Bool) -> TVar MemoryJob -> STM (Maybe Job)
+genMapFunc :: (PureJob -> Bool) -> TVar PureJob -> STM (Maybe Job)
 genMapFunc = genMapFunc_ id
 
 doGetRunningJob :: Memory -> Int64 -> IO [Job]
-doGetRunningJob m ts = atomically $ mapMemoryJob m $ genMapFunc comp
-  where comp :: MemoryJob -> Bool
-        comp mj | state mj == Running = getSchedAt (memJob mj) < ts
-                | otherwise = False
+doGetRunningJob m ts = atomically $ mapPureJob m $ genMapFunc comp
+  where comp :: PureJob -> Bool
+        comp pj | is Running pj = getSchedAt (pureJob pj) < ts
+                | otherwise     = False
 
 
 takeMin :: Int -> [Job] -> [Job]
 takeMin c = take c . sortOn getSchedAt
 
-comparePending :: [FuncName] -> Int64 -> MemoryJob -> Bool
-comparePending fns ts mj
+comparePending :: [FuncName] -> Int64 -> PureJob -> Bool
+comparePending fns ts pj
   | isPending && isElem && canSched = True
   | otherwise = False
 
-  where job = memJob mj
+  where job = pureJob pj
         fn = getFuncName job
         schedAt = getSchedAt job
-        isPending = state mj == Pending
+        isPending = is Pending pj
         isElem = fn `elem` fns
         canSched = ts <= 0 || (schedAt < ts)
 
 doGetPendingJob :: Memory -> [FuncName] -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fns ts c =
-  atomically $ takeMin c <$> mapMemoryJob m (genMapFunc (comparePending fns ts))
+  atomically $ takeMin c <$> mapPureJob m (genMapFunc (comparePending fns ts))
 
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
 doGetLockedJob m fn c =
@@ -189,10 +189,10 @@ doGetLockedJob m fn c =
 
 doCountPending :: Memory -> [FuncName] -> Int64 -> IO Int
 doCountPending m fns ts =
-  atomically $ sum <$> mapMemoryJob m (genMapFunc_ (const 1) (comparePending fns ts))
+  atomically $ sum <$> mapPureJob m (genMapFunc_ (const 1) (comparePending fns ts))
 
 doDumpJob :: Memory -> IO [Job]
-doDumpJob m = atomically $ mapMemoryJob m (genMapFunc $ const True)
+doDumpJob m = atomically $ mapPureJob m (genMapFunc $ const True)
 
 
 doInsertFuncName :: Memory -> FuncName -> IO ()
