@@ -404,13 +404,14 @@ schedJob job (nid, msgid) = do
   assignJob <- asks sAssignJob
   assignJobTime <- asks sAssignJobTime
   persist <- asks sPersist
-  liftIO $ P.insert persist Running fn jn job
+  liftIO $ P.updateState persist Running fn jn
   t <- liftIO getUnixTime
   IOMap.insert (getHandle job) t assignJobTime
   r <- liftIO $ assignJob nid msgid job
   if r then pure ()
        else do
-         liftIO $ P.insert persist Pending fn jn job
+         liftIO $ P.updateState persist Pending fn jn
+         IOMap.delete jh assignJobTime
          pushChanJob job
 
   where fn = getFuncName job
@@ -587,7 +588,7 @@ acquireLock_ name count jh = do
     j <- liftIO $ P.getOne p Running fn jn
     case j of
       Nothing -> pure True
-      Just job -> do
+      Just _ -> do
         now <- getEpochTime
         let item = LockItem jh now
         r <- atomically $ do
@@ -618,7 +619,7 @@ acquireLock_ name count jh = do
                     } lockList
                   pure False
 
-        unless r $ liftIO $ P.insert p Locked fn jn job
+        unless r $ liftIO $ P.updateState p Locked fn jn
         return r
 
   where (fn, jn) = unHandle jh
@@ -667,7 +668,7 @@ releaseLock_ name jh = do
       case j of
         Nothing  -> releaseLock_ name hh
         Just job -> do
-          liftIO $ P.insert p Pending fn jn job
+          liftIO $ P.updateState p Pending fn jn
           pushChanJob job
 
   where item = LockItem jh 0

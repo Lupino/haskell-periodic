@@ -25,6 +25,7 @@ class (Exception (PersistException db)) => Persist db where
   newPersist     :: PersistConfig db -> IO db
   getOne         :: db -> State -> FuncName -> JobName -> IO (Maybe Job)
   insert         :: db -> State -> FuncName -> JobName -> Job -> IO ()
+  updateState    :: db -> State -> FuncName -> JobName -> IO ()
   delete         :: db -> FuncName -> JobName -> IO ()
   size           :: db -> State -> FuncName -> IO Int64
   getRunningJob  :: db -> Int64 -> IO [Job]

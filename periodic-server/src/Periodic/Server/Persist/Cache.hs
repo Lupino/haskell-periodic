@@ -37,6 +37,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
 
    getOne           = doGetOne
    insert           = doInsert
+   updateState      = doUpdateState
    delete           = doDelete
    size             = doSize
    getRunningJob    = doGetRunningJob
@@ -75,6 +76,11 @@ doInsert Cache{..} s f j v = do
         doInsert0 db0 db1 = do
           insert db0 s f j v
           delete db1 f j
+
+doUpdateState :: Persist db => Cache db -> State -> FuncName -> JobName -> IO ()
+doUpdateState Cache{..} s f j = do
+  updateState backend s f j
+  updateState memory s f j
 
 doDelete :: Persist db => Cache db -> FuncName -> JobName -> IO ()
 doDelete m f j = do

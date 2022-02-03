@@ -85,6 +85,7 @@ instance Persist PSQL where
 
   getOne         db st fn    = runDB  db . doGetOne st fn
   insert         db st fn jn = runDB_ db . doInsert st fn jn
+  updateState    db st fn    = runDB_ db . doUpdateState st fn
   delete         db fn       = runDB_ db . doDelete fn
   size           db st       = runDB  db . doSize st
   getRunningJob  db          = runDB  db . doGetRunningJob
@@ -158,6 +159,10 @@ doInsert state fn jn job = do
     ["value", "state", "sched_at"]
     []
     (fn, jn, job, state, getSchedAt job)
+
+doUpdateState :: State -> FuncName -> JobName -> DB.PSQL Int64
+doUpdateState state fn jn =
+  update jobs ["state"] "func=? AND name=?" (state, fn, jn)
 
 doInsertFuncName :: FuncName -> DB.PSQL Int64
 doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only fn)

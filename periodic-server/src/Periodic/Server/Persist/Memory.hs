@@ -51,6 +51,7 @@ instance Persist Memory where
 
   getOne         = doGetOne
   insert         = doInsert
+  updateState    = doUpdateState
   delete         = doDelete
   size           = doSize
   getRunningJob  = doGetRunningJob
@@ -116,6 +117,21 @@ doInsert m s f j v = atomically $ do
           modifyTVar' pureJobT $ \vv -> vv
             { pureJob = v
             , pureState = s
+            }
+
+
+doUpdateState :: Memory -> State -> FuncName -> JobName -> IO ()
+doUpdateState m s f j = atomically $ do
+  mJobMap <- getJobMap m f
+  case mJobMap of
+    Nothing     -> pure ()
+    Just jobMap -> do
+      mPureJobT <- IOMapS.lookup j jobMap
+      case mPureJobT of
+        Nothing -> pure ()
+        Just pureJobT ->
+          modifyTVar' pureJobT $ \vv -> vv
+            { pureState = s
             }
 
 doDelete :: Memory -> FuncName -> JobName -> IO ()

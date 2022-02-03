@@ -58,6 +58,7 @@ instance Persist SQLite where
 
   getOne         (SQLite db) = doGetOne db
   insert         (SQLite db) = doInsert db
+  updateState    (SQLite db) = doUpdateState db
   delete         (SQLite db) = doDelete db
   size           (SQLite db) = doSize db
   getRunningJob  (SQLite db) = doGetRunningJob db
@@ -131,6 +132,10 @@ doInsert db state fn jn job = do
     void $ bindInt64 stmt 5 $ getSchedAt job
   doInsertFuncName db fn
   where sql = Utf8 "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?)"
+
+doUpdateState :: Database -> State -> FuncName -> JobName -> IO ()
+doUpdateState db state fn jn = execStmt db sql $ bindFnAndJn fn jn
+  where sql = Utf8 $ "UPDATE jobs set state=" <> stateName state <> " WHERE func=? AND name=?"
 
 doInsertFuncName :: Database -> FuncName -> IO ()
 doInsertFuncName db = execFN db sql
