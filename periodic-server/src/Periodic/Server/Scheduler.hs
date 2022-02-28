@@ -327,7 +327,7 @@ runJob job = do
   case mAgent of
     Nothing -> pushJob job
     Just (nid, msgid) -> do
-      liftIO $ P.insert sPersist Running fn jn job
+      liftIO $ P.insert sPersist Running job
       t <- liftIO getUnixTime
       IOMap.insert (getHandle job) t sAssignJobTime
       r <- liftIO $ sAssignJob nid msgid job
@@ -335,7 +335,6 @@ runJob job = do
            else pushJob job
 
   where fn = getFuncName job
-        jn = getName job
 
 
 pushJob :: MonadIO m => Job -> SchedT db m ()
@@ -357,7 +356,7 @@ runPushJob = do
   isRunning <- liftIO $ isJust <$> P.getOne p Running fn jn
   unless isRunning $ do
     job' <- fixedSchedAt job
-    liftIO $ P.insert p Pending fn jn job'
+    liftIO $ P.insert p Pending job'
     pushChanJob job'
 
   getDuration t0 >>= runHook eventPushJob job
@@ -513,9 +512,7 @@ retryLater :: (MonadIO m, Persist db) => Int64 -> Job -> SchedT db m ()
 retryLater later job = do
   nextSchedAt <- (later +) <$> getEpochTime
   p <- asks sPersist
-  liftIO $ P.insert p Pending fn jn $ setSchedAt nextSchedAt job
-  where fn = getFuncName job
-        jn = getName job
+  liftIO $ P.insert p Pending $ setSchedAt nextSchedAt job
 
 getJobDuration
   :: (MonadIO m, Persist db)

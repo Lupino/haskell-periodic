@@ -31,7 +31,7 @@ import           Periodic.Server.Persist (Persist (PersistConfig, PersistExcepti
                                           State (..))
 import qualified Periodic.Server.Persist as Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
-                                          getSchedAt)
+                                          getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (infoM)
 import           UnliftIO                (Exception, SomeException, Typeable)
@@ -83,22 +83,22 @@ instance Persist PSQL where
       void allPending
     return $ PSQL pool
 
-  getOne         db st fn    = runDB  db . doGetOne st fn
-  insert         db st fn jn = runDB_ db . doInsert st fn jn
-  updateState    db st fn    = runDB_ db . doUpdateState st fn
-  delete         db fn       = runDB_ db . doDelete fn
-  size           db st       = runDB  db . doSize st
-  getRunningJob  db          = runDB  db . doGetRunningJob
-  getPendingJob  db fns ts   = runDB  db . doGetPendingJob fns ts
-  getLockedJob   db fn       = runDB  db . doGetLockedJob fn
-  dumpJob        db          = runDB  db   doDumpJob
-  configSet      db name     = runDB_ db . doConfigSet name
-  configGet      db          = runDB  db . doConfigGet
-  insertFuncName db          = runDB_ db . doInsertFuncName
-  removeFuncName db          = runDB  db . doRemoveFuncName
-  funcList       db          = runDB  db   doFuncList
-  minSchedAt     db          = runDB  db . doMinSchedAt Pending
-  countPending   db ts       = runDB  db . doCountPending ts
+  getOne         db st fn  = runDB  db . doGetOne st fn
+  insert         db st     = runDB_ db . doInsert st
+  updateState    db st fn  = runDB_ db . doUpdateState st fn
+  delete         db fn     = runDB_ db . doDelete fn
+  size           db st     = runDB  db . doSize st
+  getRunningJob  db        = runDB  db . doGetRunningJob
+  getPendingJob  db fns ts = runDB  db . doGetPendingJob fns ts
+  getLockedJob   db fn     = runDB  db . doGetLockedJob fn
+  dumpJob        db        = runDB  db   doDumpJob
+  configSet      db name   = runDB_ db . doConfigSet name
+  configGet      db        = runDB  db . doConfigGet
+  insertFuncName db        = runDB_ db . doInsertFuncName
+  removeFuncName db        = runDB  db . doRemoveFuncName
+  funcList       db        = runDB  db   doFuncList
+  minSchedAt     db        = runDB  db . doMinSchedAt Pending
+  countPending   db ts     = runDB  db . doCountPending ts
 
 instance Exception (PersistException PSQL)
 
@@ -151,14 +151,16 @@ doGetOne state fn jn = do
   selectOneOnly jobs "value" "func=? AND name=? AND state=?"
     (fn, jn, state)
 
-doInsert :: State -> FuncName -> JobName -> Job -> DB.PSQL Int64
-doInsert state fn jn job = do
+doInsert :: State -> Job -> DB.PSQL Int64
+doInsert state job = do
   void $ doInsertFuncName fn
   insertOrUpdate jobs
     ["func", "name"]
     ["value", "state", "sched_at"]
     []
     (fn, jn, job, state, getSchedAt job)
+  where fn = getFuncName job
+        jn = getName     job
 
 doUpdateState :: State -> FuncName -> JobName -> DB.PSQL Int64
 doUpdateState state fn jn =

@@ -21,7 +21,7 @@ import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
 import           Periodic.Server.Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
-                                          getSchedAt)
+                                          getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (infoM)
 import           UnliftIO                (Exception, Typeable, throwIO)
@@ -123,8 +123,8 @@ doGetOne db state fn jn =
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
 
-doInsert :: Database -> State -> FuncName -> JobName -> Job -> IO ()
-doInsert db state fn jn job = do
+doInsert :: Database -> State -> Job -> IO ()
+doInsert db state job = do
   execStmt db sql $ \stmt -> do
     bindFnAndJn fn jn stmt
     void $ bindBlob  stmt 3 $ toBytes job
@@ -132,6 +132,8 @@ doInsert db state fn jn job = do
     void $ bindInt64 stmt 5 $ getSchedAt job
   doInsertFuncName db fn
   where sql = Utf8 "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?)"
+        fn = getFuncName job
+        jn = getName     job
 
 doUpdateState :: Database -> State -> FuncName -> JobName -> IO ()
 doUpdateState db state fn jn = execStmt db sql $ bindFnAndJn fn jn

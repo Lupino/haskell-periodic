@@ -13,6 +13,7 @@ import           Metro.Utils                    (getEpochTime)
 import           Periodic.Server.Persist        (Persist (..), State (..))
 import           Periodic.Server.Persist.Memory (Memory, memorySize, useMemory)
 import           Periodic.Types.Job             (FuncName, Job, JobName,
+                                                 getFuncName, getName,
                                                  getSchedAt)
 import           Prelude                        hiding (foldr, lookup)
 import           System.Log.Logger              (infoM)
@@ -64,8 +65,8 @@ doGetOne m s f j = do
     Just v  -> return $ Just v
     Nothing -> getOne (backend m) s f j
 
-doInsert :: Persist db => Cache db -> State -> FuncName -> JobName -> Job -> IO ()
-doInsert Cache{..} s f j v = do
+doInsert :: Persist db => Cache db -> State -> Job -> IO ()
+doInsert Cache{..} s v = do
   now <- getEpochTime
   memSize <- memorySize memory
   if getSchedAt v > now + 60 || memSize > maxSize
@@ -74,8 +75,11 @@ doInsert Cache{..} s f j v = do
 
   where doInsert0 :: (Persist db0, Persist db1) => db0 -> db1 -> IO ()
         doInsert0 db0 db1 = do
-          insert db0 s f j v
+          insert db0 s v
           delete db1 f j
+
+        f = getFuncName v
+        j = getName     v
 
 doUpdateState :: Persist db => Cache db -> State -> FuncName -> JobName -> IO ()
 doUpdateState Cache{..} s f j = do

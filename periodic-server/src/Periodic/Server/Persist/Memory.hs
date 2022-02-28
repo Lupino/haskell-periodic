@@ -22,7 +22,7 @@ import           Periodic.Server.Persist (Persist (PersistConfig, PersistExcepti
                                           State (..))
 import qualified Periodic.Server.Persist as Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
-                                          getFuncName, getSchedAt)
+                                          getFuncName, getName, getSchedAt)
 import           System.Log.Logger       (infoM)
 import           UnliftIO                (Exception, STM, SomeException, TVar,
                                           Typeable, atomically, modifyTVar',
@@ -93,8 +93,8 @@ doGetOne m s f j = atomically $ do
                  else pure Nothing
 
 
-doInsert :: Memory -> State -> FuncName -> JobName -> Job -> IO ()
-doInsert m s f j v = atomically $ do
+doInsert :: Memory -> State -> Job -> IO ()
+doInsert m s v = atomically $ do
   mJobMap <- getJobMap m f
   case mJobMap of
     Nothing     -> do
@@ -118,6 +118,8 @@ doInsert m s f j v = atomically $ do
             { pureJob = v
             , pureState = s
             }
+  where f = getFuncName v
+        j = getName     v
 
 
 doUpdateState :: Memory -> State -> FuncName -> JobName -> IO ()
