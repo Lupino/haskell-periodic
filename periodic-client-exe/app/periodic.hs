@@ -186,7 +186,6 @@ printConfigKeyList :: IO ()
 printConfigKeyList = do
   putStrLn ""
   putStrLn "Available keys:"
-  putStrLn "  revert-interval - revert process queue loop every time interval"
   putStrLn "  timeout         - job process timeout"
   putStrLn "  lock-timeout    - lock timeout"
   putStrLn "  keepalive       - client keepalive"

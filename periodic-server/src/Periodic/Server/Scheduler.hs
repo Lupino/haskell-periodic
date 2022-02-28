@@ -101,36 +101,34 @@ type LockList = IOMap LockName LockInfo
 
 
 data SchedEnv db = SchedEnv
-    -- revert process queue loop every time interval
-    { sRevertInterval :: TVar Int
     -- the task do timeout
-    , sTaskTimeout    :: TVar Int
+    { sTaskTimeout   :: TVar Int
     -- lock timeout
-    , sLockTimeout    :: TVar Int
+    , sLockTimeout   :: TVar Int
     -- max poll batch size
-    , sMaxBatchSize   :: TVar Int
+    , sMaxBatchSize  :: TVar Int
     -- client or worker keepalive
-    , sKeepalive      :: TVar Int
+    , sKeepalive     :: TVar Int
     -- run job cache expiration
-    , sExpiration     :: TVar Int
-    , sCleanup        :: IO ()
-    , sFuncStatList   :: FuncStatList
-    , sLocker         :: L.Lock
-    , sGrabQueue      :: GrabQueue
+    , sExpiration    :: TVar Int
+    , sCleanup       :: IO ()
+    , sFuncStatList  :: FuncStatList
+    , sLocker        :: L.Lock
+    , sGrabQueue     :: GrabQueue
     -- sched state, when false sched is exited.
-    , sPollJob        :: TMVar ()
-    , sChanList       :: TQueue Job
-    , sWaitList       :: WaitList
-    , sLockList       :: LockList
-    , sPersist        :: db
-    , sAssignJob      :: Nid -> Msgid -> Job -> IO Bool
-    , sPushData       :: Nid -> Msgid -> ByteString -> IO ()
-    , sHook           :: Hook
-    , sAssignJobTime  :: IOMap JobHandle UnixTime
-    , sMaxPoolSize    :: TVar Int
-    , sSchedPool      :: SchedPool
-    , sPushList       :: TQueue Job
-    , sTaskList       :: TVar [Async ()]
+    , sPollJob       :: TMVar ()
+    , sChanList      :: TQueue Job
+    , sWaitList      :: WaitList
+    , sLockList      :: LockList
+    , sPersist       :: db
+    , sAssignJob     :: Nid -> Msgid -> Job -> IO Bool
+    , sPushData      :: Nid -> Msgid -> ByteString -> IO ()
+    , sHook          :: Hook
+    , sAssignJobTime :: IOMap JobHandle UnixTime
+    , sMaxPoolSize   :: TVar Int
+    , sSchedPool     :: SchedPool
+    , sPushList      :: TQueue Job
+    , sTaskList      :: TVar [Async ()]
     }
 
 newtype SchedT db m a = SchedT {unSchedT :: ReaderT (SchedEnv db) m a}
@@ -169,7 +167,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sLocker         <- L.new
   sPollJob        <- newEmptyTMVarIO
   sChanList       <- newTQueueIO
-  sRevertInterval <- newTVarIO 300
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
   sMaxBatchSize   <- newTVarIO 500
@@ -201,17 +198,16 @@ startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 startSchedT = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
-  runTask_ sRevertInterval revertRunningQueue
-  runTask 1 runPollJob
-  runTask 0 runChanJob
-  runTask 0 runPushJob
+  runTask 100 revertRunningQueue
+  runTask 1   runPollJob
+  runTask 0   runChanJob
+  runTask 0   runPushJob
   runTask 100 purgeExpired
-  runTask 60 revertLockedQueue
-  runTask 60 pushPollJob
+  runTask 60  revertLockedQueue
+  runTask 60  pushPollJob
   runTask 100 purgeEmptyLock
   runTask 0 $ runSchedPool sSchedPool schedJob $ retryLater 10
 
-  loadInt "revert-interval" sRevertInterval
   loadInt "timeout" sTaskTimeout
   loadInt "lock-timeout" sLockTimeout
   loadInt "keepalive" sKeepalive
@@ -236,43 +232,40 @@ setConfigInt :: (MonadIO m, Persist db) => String -> Int -> SchedT db m ()
 setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
-    "revert-interval" -> saveInt "revert-interval" val sRevertInterval
-    "timeout"         -> saveInt "timeout" val sTaskTimeout
-    "lock-timeout"    -> saveInt "lock-timeout" val sLockTimeout
-    "keepalive"       -> saveInt "keepalive" val sKeepalive
-    "max-batch-size"  -> saveInt "max-batch-size" val sMaxBatchSize
-    "max-pool-size"   -> saveInt "max-pool-size" val sMaxPoolSize
-    "expiration"      -> saveInt "expiration" val sExpiration
-    _                 -> pure ()
+    "timeout"        -> saveInt "timeout" val sTaskTimeout
+    "lock-timeout"   -> saveInt "lock-timeout" val sLockTimeout
+    "keepalive"      -> saveInt "keepalive" val sKeepalive
+    "max-batch-size" -> saveInt "max-batch-size" val sMaxBatchSize
+    "max-pool-size"  -> saveInt "max-pool-size" val sMaxPoolSize
+    "expiration"     -> saveInt "expiration" val sExpiration
+    _                -> pure ()
 
 getConfigInt :: (MonadIO m, Persist db) => String -> SchedT db m Int
 getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
-    "revert-interval" -> readTVarIO sRevertInterval
-    "timeout"         -> readTVarIO sTaskTimeout
-    "lock-timeout"    -> readTVarIO sLockTimeout
-    "keepalive"       -> readTVarIO sKeepalive
-    "max-batch-size"  -> readTVarIO sMaxBatchSize
-    "max-pool-size"   -> readTVarIO sMaxPoolSize
-    "expiration"      -> readTVarIO sExpiration
-    _                 -> pure 0
+    "timeout"        -> readTVarIO sTaskTimeout
+    "lock-timeout"   -> readTVarIO sLockTimeout
+    "keepalive"      -> readTVarIO sKeepalive
+    "max-batch-size" -> readTVarIO sMaxBatchSize
+    "max-pool-size"  -> readTVarIO sMaxPoolSize
+    "expiration"     -> readTVarIO sExpiration
+    _                -> pure 0
 
 keepalive :: Monad m => SchedT db m (TVar Int)
 keepalive = asks sKeepalive
 
 runTask :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m ()
-runTask d m = flip runTask_ m =<< newTVarIO d
-
-runTask_ :: (MonadUnliftIO m) => TVar Int -> SchedT db m () -> SchedT db m ()
-runTask_ d m = do
+runTask delay m = do
   io <- async $ forever $ do
-    interval <- readTVarIO d
-    when (interval > 0) $ threadDelay $ interval * 1000 * 1000
+    when (delayUS > 0) $ threadDelay delayUS
     m
 
   taskList <- asks sTaskList
   atomically $ modifyTVar' taskList (io:)
+
+  where delayUS = delay * 1000 * 1000
+
 
 runPollJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 runPollJob = do
