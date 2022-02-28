@@ -516,10 +516,13 @@ failJob jh = do
 
   where (fn, jn) = unHandle jh
 
-retryLater :: MonadIO m => Int64 -> Job -> SchedT db m ()
+retryLater :: (MonadIO m, Persist db) => Int64 -> Job -> SchedT db m ()
 retryLater later job = do
   nextSchedAt <- (later +) <$> getEpochTime
-  pushJob $ setSchedAt nextSchedAt job
+  p <- asks sPersist
+  liftIO $ P.insert p Pending fn jn $ setSchedAt nextSchedAt job
+  where fn = getFuncName job
+        jn = getName job
 
 getJobDuration
   :: (MonadIO m, Persist db)
@@ -723,13 +726,12 @@ revertRunningQueue = do
   now <- getEpochTime
   tout <- fmap fromIntegral . readTVarIO =<< asks sTaskTimeout
   p <- asks sPersist
-  handles <- liftIO $ filter (check now tout) <$> P.getRunningJob p (now - tout)
-  mapM_ (failJob . getHandle) handles
+  jobs <- liftIO $ filter (check now tout) <$> P.getRunningJob p (now - tout)
+  mapM_ (failJob . getHandle) jobs
 
   where check :: Int64 -> Int64 -> Job -> Bool
-        check now t0 job
-          | getTimeout job > 0 = getSchedAt job + fromIntegral (getTimeout job) < now
-          | otherwise = getSchedAt job + fromIntegral t0 < now
+        check now t0 job = getSchedAt job + tout < now
+          where tout = max t0 . fromIntegral $ getTimeout job
 
 revertLockedQueue :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 revertLockedQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks sPersist
