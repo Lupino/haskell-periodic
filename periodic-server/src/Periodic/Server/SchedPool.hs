@@ -63,7 +63,7 @@ data SchedPool = SchedPool
   , poolSize    :: TVar Int
   , onFree      :: STM ()
   , prepareWork :: FuncName -> STM (Maybe [(Nid, Msgid)])
-  , newState    :: LastState
+  , stateQueue  :: TQueue PoolerState
   }
 
 
@@ -82,7 +82,7 @@ newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   waitingLock <- newTMVarIO ()
   poolSize    <- newTVarIO 0
   jobList     <- IOMap.empty
-  newState    <- newTVarIO Nothing
+  stateQueue  <- newTQueueIO
   pure SchedPool {..}
 
 
@@ -164,10 +164,10 @@ swapLastState ls = writeTVar ls . Just
 
 
 trySwapLastState :: LastState -> PoolerState -> Int64 -> STM ()
-trySwapLastState ls newState schedAt = do
+trySwapLastState ls ps schedAt = do
   lastSchedAt <- getLastStateSchedAt ls
   when (lastSchedAt < schedAt) $
-    swapLastState ls newState
+    swapLastState ls ps
 
 
 startPoolerIO
@@ -228,13 +228,7 @@ runSchedPool
   -> (Job -> m ())
   -> m ()
 runSchedPool pool@SchedPool {..} work workLater = do
-  state <- atomically $ do
-    mState <- readTVar newState
-    case mState of
-      Nothing    -> retrySTM
-      Just state -> do
-        writeTVar newState Nothing
-        pure state
+  state <- atomically $ readTQueue stateQueue
 
   io <- startPoolerIO pool work workLater state
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
@@ -333,7 +327,7 @@ spawn pool@SchedPool {..} job = do
                 , stateAlive  = True
                 }
 
-              writeTVar newState $ Just state
+              writeTQueue stateQueue state
 
               modifyTVar' poolSize (+1)
               trySwapLastState lastState state schedAt
