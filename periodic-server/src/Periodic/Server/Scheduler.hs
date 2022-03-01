@@ -54,6 +54,7 @@ import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
                                              diffUnixTime, getUnixTime)
 import           Foreign.C.Types            (CTime (..))
 import qualified Metro.Lock                 as L (Lock, new, with)
+import           Metro.SessionPool          (PoolSize (..))
 import           Metro.Utils                (getEpochTime)
 import           Periodic.Server.FuncStat
 import           Periodic.Server.GrabQueue
@@ -159,8 +160,9 @@ initSchedEnv
   -> (Nid -> Msgid -> Job -> IO Bool)
   -> (Nid -> Msgid -> ByteString -> IO ())
   -> Hook
+  -> PoolSize
   -> m (SchedEnv db)
-initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
+initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolSize) = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
@@ -175,7 +177,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook = do
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
-  sMaxPoolSize    <- newTVarIO 10
   sSchedPool      <- newSchedPool sMaxPoolSize sMaxBatchSize
       (void $ tryPutTMVar sPollJob ()) $ \fn -> do
     mFuncStat <- IOMapS.lookup fn sFuncStatList
