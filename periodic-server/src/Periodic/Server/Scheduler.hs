@@ -324,16 +324,27 @@ runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
 runJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
   SchedEnv{..} <- ask
-  mAgent <- atomically $ popAgentSTM sGrabQueue fn
+  tout <- fromIntegral <$> readTVarIO sTaskTimeout
+  delay <- registerDelay (getJobTimeout tout job)
+  mAgent <- atomically $ do
+    mAgent <- popAgentSTM sGrabQueue fn
+    case mAgent of
+      Nothing    -> do
+        isTimeout <- readTVar delay
+        if isTimeout then pure Nothing
+                     else retrySTM
+      _ -> pure mAgent
+
+  liftIO $ P.insert sPersist Running job
+  t <- liftIO getUnixTime
+  IOMap.insert (getHandle job) t sAssignJobTime
+
   case mAgent of
-    Nothing -> pushJob job
+    Nothing -> doneJob_ (getHandle job) "failed"
     Just (nid, msgid) -> do
-      liftIO $ P.insert sPersist Running job
-      t <- liftIO getUnixTime
-      IOMap.insert (getHandle job) t sAssignJobTime
       r <- liftIO $ sAssignJob nid msgid job
       if r then pure ()
-           else pushJob job
+           else doneJob_ (getHandle job) "failed"
 
   where fn = getFuncName job
 
@@ -501,7 +512,7 @@ failJob jh = do
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
-    doneJob jh ""
+    doneJob_ jh "failed"
   else do
     p <- asks sPersist
     mJob <- liftIO $ P.getOne p Running fn jn
@@ -533,17 +544,24 @@ getDuration t0 = do
     UnixDiffTime (CTime s) u -> pure $ fromIntegral s + fromIntegral u / 1000000
 
 
+doneJob_
+  :: (MonadIO m, Persist db)
+  => JobHandle -> ByteString -> SchedT db m ()
+doneJob_ jh w = do
+  liftIO $ debugM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
+  p <- asks sPersist
+  getJobDuration jh >>= runHook eventDoneJob jh
+  liftIO $ P.delete p fn jn
+  pushResult jh w
+  where (fn, jn) = unHandle jh
+
+
 doneJob
   :: (MonadUnliftIO m, Persist db)
   => JobHandle -> ByteString -> SchedT db m ()
 doneJob jh w = do
-  liftIO $ debugM "Periodic.Server.Scheduler" ("doneJob: " ++ show jh)
-  p <- asks sPersist
-  getJobDuration jh >>= runHook eventDoneJob jh
+  doneJob_ jh w
   releaseLock' jh
-  liftIO $ P.delete p fn jn
-  pushResult jh w
-  where (fn, jn) = unHandle jh
 
 schedLaterJob
   :: (MonadUnliftIO m, Persist db)
@@ -553,7 +571,7 @@ schedLaterJob jh later step = do
   releaseLock' jh
   isWaiting <- existsWaitList jh
   if isWaiting then do
-    doneJob jh ""
+    doneJob_ jh "failed"
   else do
     p <- asks sPersist
     mJob <- liftIO $ P.getOne p Running fn jn
@@ -721,8 +739,13 @@ revertRunningQueue = do
   mapM_ (failJob . getHandle) jobs
 
   where check :: Int64 -> Int64 -> Job -> Bool
-        check now t0 job = getSchedAt job + tout < now
-          where tout = max t0 . fromIntegral $ getTimeout job
+        check now t0 job = getSchedAt job + fromIntegral tout < now
+          where tout = getJobTimeout (fromIntegral t0) job
+
+getJobTimeout :: Int -> Job -> Int
+getJobTimeout t0 job
+  | getTimeout job > 0 = getTimeout job
+  | otherwise          = t0
 
 revertLockedQueue :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 revertLockedQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks sPersist
