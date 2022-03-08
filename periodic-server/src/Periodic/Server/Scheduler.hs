@@ -127,7 +127,7 @@ data SchedEnv db = SchedEnv
     , sHook          :: Hook
     , sAssignJobTime :: IOMap JobHandle UnixTime
     , sMaxPoolSize   :: TVar Int
-    , sSchedPool     :: SchedPool
+    , sSchedPoolList :: IOMap FuncName SchedPool
     , sPushList      :: TQueue Job
     , sTaskList      :: TVar [Async ()]
     }
@@ -177,19 +177,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
-  sSchedPool      <- newSchedPool sMaxPoolSize sMaxBatchSize
-      (void $ tryPutTMVar sPollJob ()) $ \fn -> do
-    mFuncStat <- IOMapS.lookup fn sFuncStatList
-    case mFuncStat of
-      Nothing                  -> pure []
-      Just FuncStat{sWorker=0} -> pure []
-      Just st -> do
-        if sBroadcast st then popAgentListSTM sGrabQueue fn
-        else do
-          mAgent <- popAgentSTM sGrabQueue fn
-          case mAgent of
-            Nothing    -> retrySTM
-            Just agent -> pure [agent]
+  sSchedPoolList  <- IOMap.empty
 
   sPushList <- newTQueueIO
   sTaskList <- newTVarIO []
@@ -207,7 +195,6 @@ startSchedT = do
   runTask 60  revertLockedQueue
   runTask 60  pushPollJob
   runTask 100 purgeEmptyLock
-  runTask 0 $ runSchedPool sSchedPool schedJob
 
   loadInt "timeout" sTaskTimeout
   loadInt "lock-timeout" sLockTimeout
@@ -277,16 +264,21 @@ runPollJob = do
 pollJob :: (MonadIO m, Persist db) => SchedT db m ()
 pollJob = do
   funcList <- getAvaliableFuncList
-  unless (null funcList) $ do
-    next <- getNextPoll
-    handles <- Pool.getHandleList =<< asks sSchedPool
-    let size = length handles
-    p <- asks sPersist
-    count <- liftIO $ P.countPending p funcList next
-    maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-    when (count > size && maxBatchSize > size) $
-      liftIO (P.getPendingJob p funcList next (maxBatchSize + size))
-       >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
+  next <- getNextPoll
+  poolList <- asks sSchedPoolList
+  forM_ funcList $ \fn -> do
+    mPool <- IOMap.lookup fn poolList
+    case mPool of
+      Nothing -> pure ()
+      Just pool -> do
+        handles <- Pool.getHandleList pool
+        let size = length handles
+        p <- asks sPersist
+        count <- liftIO $ P.countPending p [fn] next
+        maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+        when (count > size && maxBatchSize > size) $
+          liftIO (P.getPendingJob p [fn] next (maxBatchSize + size))
+           >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
 
 
 getNextPoll :: MonadIO m => m Int64
@@ -381,14 +373,38 @@ fixedSchedAt job = do
     return $ setSchedAt now job
   else return job
 
-reSchedJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+reSchedJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 reSchedJob job = do
   next <- getNextPoll
   when (getSchedAt job < next) $ do
     r <- canRun $ getFuncName job
     when r $ do
-      pool <- asks sSchedPool
+      SchedEnv{..} <- ask
+      mPool <- IOMap.lookup fn sSchedPoolList
+      pool <- case mPool of
+        Nothing -> do
+          pool <- newSchedPool sMaxPoolSize sMaxBatchSize
+            (void $ tryPutTMVar sPollJob ()) $ \fn1 -> do
+            mFuncStat <- IOMapS.lookup fn1 sFuncStatList
+            case mFuncStat of
+              Nothing                  -> pure []
+              Just FuncStat{sWorker=0} -> pure []
+              Just st -> do
+                if sBroadcast st then popAgentListSTM sGrabQueue fn1
+                else do
+                  mAgent <- popAgentSTM sGrabQueue fn1
+                  case mAgent of
+                    Nothing    -> retrySTM
+                    Just agent -> pure [agent]
+
+          runTask 0 $ runSchedPool pool schedJob
+          IOMap.insert fn pool sSchedPoolList
+          pure pool
+        Just pool -> pure pool
+
       Pool.spawn pool job
+
+  where fn = getFuncName job
 
 
 canRun :: MonadIO m => FuncName -> SchedT db m Bool
@@ -450,7 +466,8 @@ removeJob job = do
   p <- asks sPersist
   liftIO $ P.delete p fn jn
 
-  asks sSchedPool >>= flip Pool.unspawn job
+  asks sSchedPoolList >>= IOMap.lookup fn >>= mapM_ (`Pool.unspawn` job)
+
   pushResult jh ""
   getDuration t0 >>= runHook eventRemoveJob job
 
@@ -788,7 +805,7 @@ shutdown :: (MonadUnliftIO m) => SchedT db m ()
 shutdown = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler shutdown"
   SchedEnv{..} <- ask
-  Pool.close sSchedPool
+  IOMap.elems sSchedPoolList >>= mapM_ Pool.close
   readTVarIO sTaskList >>= mapM_ cancel
   liftIO sCleanup
 
