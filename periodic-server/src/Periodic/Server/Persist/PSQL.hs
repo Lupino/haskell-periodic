@@ -16,7 +16,6 @@ import           Data.ByteString.Base64  (decode, encode)
 import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
 import           Data.Int                (Int64)
-import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..))
 import           Database.PSQL.Types     (FromField (..), Only (..), PSQLPool,
@@ -24,8 +23,8 @@ import           Database.PSQL.Types     (FromField (..), Only (..), PSQLPool,
                                           asc, count, createPSQLPool,
                                           createTable, delete, insertOrUpdate,
                                           none, runPSQLPool, selectOneOnly,
-                                          selectOnly, selectOnly_, toRow,
-                                          update, withTransaction)
+                                          selectOnly, selectOnly_, update,
+                                          withTransaction)
 import qualified Database.PSQL.Types     as DB (PSQL)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
                                           State (..))
@@ -83,22 +82,22 @@ instance Persist PSQL where
       void allPending
     return $ PSQL pool
 
-  getOne         db st fn  = runDB  db . doGetOne st fn
-  insert         db st     = runDB_ db . doInsert st
-  updateState    db st fn  = runDB_ db . doUpdateState st fn
-  delete         db fn     = runDB_ db . doDelete fn
-  size           db st     = runDB  db . doSize st
-  getRunningJob  db        = runDB  db . doGetRunningJob
-  getPendingJob  db fns ts = runDB  db . doGetPendingJob fns ts
-  getLockedJob   db fn     = runDB  db . doGetLockedJob fn
-  dumpJob        db        = runDB  db   doDumpJob
-  configSet      db name   = runDB_ db . doConfigSet name
-  configGet      db        = runDB  db . doConfigGet
-  insertFuncName db        = runDB_ db . doInsertFuncName
-  removeFuncName db        = runDB  db . doRemoveFuncName
-  funcList       db        = runDB  db   doFuncList
-  minSchedAt     db        = runDB  db . doMinSchedAt Pending
-  countPending   db ts     = runDB  db . doCountPending ts
+  getOne         db st fn = runDB  db . doGetOne st fn
+  insert         db st    = runDB_ db . doInsert st
+  updateState    db st fn = runDB_ db . doUpdateState st fn
+  delete         db fn    = runDB_ db . doDelete fn
+  size           db st    = runDB  db . doSize st
+  getRunningJob  db       = runDB  db . doGetRunningJob
+  getPendingJob  db fn ts = runDB  db . doGetPendingJob fn ts
+  getLockedJob   db fn    = runDB  db . doGetLockedJob fn
+  dumpJob        db       = runDB  db   doDumpJob
+  configSet      db name  = runDB_ db . doConfigSet name
+  configGet      db       = runDB  db . doConfigGet
+  insertFuncName db       = runDB_ db . doInsertFuncName
+  removeFuncName db       = runDB  db . doRemoveFuncName
+  funcList       db       = runDB  db   doFuncList
+  minSchedAt     db       = runDB  db . doMinSchedAt Pending
+  countPending   db ts    = runDB  db . doCountPending ts
 
 instance Exception (PersistException PSQL)
 
@@ -173,25 +172,20 @@ doGetRunningJob :: Int64 -> DB.PSQL [Job]
 doGetRunningJob ts =
   selectOnly jobs "value" "sched_at < ?" (Only ts) 0 1000 (asc "sched_at")
 
-doGetPendingJob :: [FuncName] -> Int64 -> Int -> DB.PSQL [Job]
-doGetPendingJob fns ts c =
-  selectOnly jobs "value" ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
-      (toRow fns ++ toRow (Pending, ts)) 0 (Size $ fromIntegral c) (asc "sched_at")
-
-  where fnsv = intercalate ", " $ replicate (length fns) "?"
+doGetPendingJob :: FuncName -> Int64 -> Int -> DB.PSQL [Job]
+doGetPendingJob fn ts c =
+  selectOnly jobs "value" "func =? AND state=? AND sched_at < ?"
+      (fn, Pending, ts) 0 (Size $ fromIntegral c) (asc "sched_at")
 
 doGetLockedJob :: FuncName -> Int -> DB.PSQL [Job]
 doGetLockedJob fn c = do
   selectOnly jobs "value" "func=? AND state=?"
     (fn, Locked) 0 (Size $ fromIntegral c) (asc "sched_at")
 
-doCountPending :: [FuncName] -> Int64 -> DB.PSQL Int
-doCountPending fns ts =
-  fromIntegral <$> count jobs ("func in (" ++ fnsv ++ ") AND state=? AND sched_at < ?")
-      (toRow fns ++ toRow (Pending, ts))
-
-  where fnsv = intercalate ", " $ replicate (length fns) "?"
-
+doCountPending :: FuncName -> Int64 -> DB.PSQL Int
+doCountPending fn ts =
+  fromIntegral <$> count jobs "func =? AND state=? AND sched_at < ?"
+      (fn, Pending, ts)
 
 doDumpJob :: DB.PSQL [Job]
 doDumpJob = selectOnly_ jobs "value" 0 10000 none

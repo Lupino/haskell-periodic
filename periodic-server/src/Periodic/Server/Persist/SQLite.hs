@@ -15,7 +15,6 @@ import qualified Data.ByteString.Char8   as B (pack)
 import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Byteable           (toBytes)
 import           Data.Int                (Int64)
-import           Data.List               (intercalate)
 import           Data.Maybe              (listToMaybe)
 import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
@@ -147,12 +146,11 @@ doGetRunningJob :: Database -> Int64 -> IO [Job]
 doGetRunningJob db ts = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
   where sql = Utf8 $ "SELECT value FROM jobs WHERE sched_at<" `append` B.pack (show ts)
 
-doGetPendingJob :: Database -> [FuncName] -> Int64 -> Int -> IO [Job]
-doGetPendingJob db fns ts c =
-  doFoldr_ db sql (bindFNS 1 fns) (mkFoldFunc (:)) []
-  where fnsv = B.pack $ intercalate ", " $ replicate (length fns) "?"
-        sql = Utf8 $ "SELECT value FROM jobs WHERE"
-                   <> " func in (" <> fnsv <> ")  AND state="
+doGetPendingJob :: Database -> FuncName -> Int64 -> Int -> IO [Job]
+doGetPendingJob db fn ts c =
+  doFoldr_ db sql (`bindFN` fn) (mkFoldFunc (:)) []
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE"
+                   <> " func =? AND state="
                    <> stateName Pending
                    <> " AND sched_at<"
                    <> B.pack (show ts)
@@ -164,12 +162,11 @@ doGetLockedJob db fn limit = doFoldr_ db sql (`bindFN` fn) (mkFoldFunc (:)) []
                    <> stateName Locked
                    <> " ORDER BY sched_at ASC LIMIT " <> B.pack (show limit)
 
-doCountPending :: Database -> [FuncName] -> Int64 -> IO Int
-doCountPending db fns ts =
-  fromIntegral <$> queryStmt db sql (bindFNS 1 fns) stepInt64
-  where fnsv = B.pack $ intercalate ", " $ replicate (length fns) "?"
-        sql = Utf8 $ "SELECT count(*) FROM jobs WHERE"
-                   <> " func in (" <> fnsv <> ")  AND state="
+doCountPending :: Database -> FuncName -> Int64 -> IO Int
+doCountPending db fn ts =
+  fromIntegral <$> queryStmt db sql (`bindFN` fn) stepInt64
+  where sql = Utf8 $ "SELECT count(*) FROM jobs WHERE"
+                   <> " func=?  AND state="
                    <> stateName Pending
                    <> " AND sched_at<"
                    <> B.pack (show ts)

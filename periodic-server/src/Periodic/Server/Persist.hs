@@ -29,7 +29,7 @@ class (Exception (PersistException db)) => Persist db where
   delete         :: db -> FuncName -> JobName -> IO ()
   size           :: db -> State -> FuncName -> IO Int64
   getRunningJob  :: db -> Int64 -> IO [Job]
-  getPendingJob  :: db -> [FuncName] -> Int64 -> Int -> IO [Job]
+  getPendingJob  :: db -> FuncName -> Int64 -> Int -> IO [Job]
   getLockedJob   :: db -> FuncName -> Int -> IO [Job]
   dumpJob        :: db -> IO [Job]
   configGet      :: db -> String -> IO (Maybe Int)
@@ -38,4 +38,4 @@ class (Exception (PersistException db)) => Persist db where
   removeFuncName :: db -> FuncName -> IO ()
   funcList       :: db -> IO [FuncName]
   minSchedAt     :: db -> FuncName -> IO Int64
-  countPending   :: db -> [FuncName] -> Int64 -> IO Int
+  countPending   :: db -> FuncName -> Int64 -> IO Int
