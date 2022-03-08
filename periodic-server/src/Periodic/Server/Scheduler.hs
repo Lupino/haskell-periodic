@@ -181,15 +181,15 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
       (void $ tryPutTMVar sPollJob ()) $ \fn -> do
     mFuncStat <- IOMapS.lookup fn sFuncStatList
     case mFuncStat of
-      Nothing                  -> pure $ Just []
-      Just FuncStat{sWorker=0} -> pure $ Just []
+      Nothing                  -> pure []
+      Just FuncStat{sWorker=0} -> pure []
       Just st -> do
-        if sBroadcast st then Just <$> popAgentListSTM sGrabQueue fn
+        if sBroadcast st then popAgentListSTM sGrabQueue fn
         else do
           mAgent <- popAgentSTM sGrabQueue fn
           case mAgent of
-            Nothing    -> pure Nothing
-            Just agent -> pure $ Just [agent]
+            Nothing    -> retrySTM
+            Just agent -> pure [agent]
 
   sPushList <- newTQueueIO
   sTaskList <- newTVarIO []
@@ -207,7 +207,7 @@ startSchedT = do
   runTask 60  revertLockedQueue
   runTask 60  pushPollJob
   runTask 100 purgeEmptyLock
-  runTask 0 $ runSchedPool sSchedPool schedJob $ retryLater 10
+  runTask 0 $ runSchedPool sSchedPool schedJob
 
   loadInt "timeout" sTaskTimeout
   loadInt "lock-timeout" sLockTimeout

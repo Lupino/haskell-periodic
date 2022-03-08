@@ -62,7 +62,7 @@ data SchedPool = SchedPool
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
   , onFree      :: STM ()
-  , prepareWork :: FuncName -> STM (Maybe [(Nid, Msgid)])
+  , prepareWork :: FuncName -> STM [(Nid, Msgid)]
   , stateQueue  :: TQueue PoolerState
   }
 
@@ -72,7 +72,7 @@ newSchedPool
   => TVar Int
   -> TVar Int
   -> STM ()
-  -> (FuncName -> STM (Maybe [(Nid, Msgid)]))
+  -> (FuncName -> STM [(Nid, Msgid)])
   -> m SchedPool
 newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   poolerList  <- newTVarIO []
@@ -174,11 +174,10 @@ startPoolerIO
   :: MonadUnliftIO m
   => SchedPool
   -> (Job -> (Nid, Msgid) -> m ())
-  -> (Job -> m ())
   -> PoolerState -> m (Async ())
-startPoolerIO pool@SchedPool {..} work workLater state =
+startPoolerIO pool@SchedPool {..} work state =
   async $ (`runContT` pure) $ callCC $ \exit -> forever $ do
-    (job, mAgents) <- atomically $ do
+    (job, agents) <- atomically $ do
       v <- readTVar state
       case stateJob v of
         Nothing  -> retrySTM
@@ -187,50 +186,28 @@ startPoolerIO pool@SchedPool {..} work workLater state =
           if schedAlive job then do
             canDo <- readTVar $ schedDelay job
             if canDo then do
-              mAgents <- prepareWork $ getFuncName $ schedJob job
-              pure (schedJob job, mAgents)
+              agents <- prepareWork $ getFuncName $ schedJob job
+              pure (schedJob job, agents)
             else retrySTM
-          else pure (schedJob job, Just [])
+          else pure (schedJob job, [])
 
-    case mAgents of
-      Nothing     -> do
-        now <- getEpochTime
-        if getSchedAt job < now - 5 then lift $ workLater job
-        else do
-          delay <- registerDelay delayUS
-          mAgents1 <- atomically $ do
-            mAgents1 <- prepareWork $ getFuncName job
-            case mAgents1 of
-              Nothing -> do
-                tout <- readTVar delay
-                if tout then pure Nothing
-                        else retrySTM
-              Just _ -> pure mAgents1
-
-          case mAgents1 of
-            Nothing     -> lift $ workLater job
-            Just agents -> mapM_ (lift . work job) agents
-
-      Just agents -> mapM_ (lift . work job) agents
+    mapM_ (lift . work job) agents
 
     finishPoolerState pool state
 
     s <- readTVarIO state
     unless (stateAlive s) $ exit ()
 
-    where delayUS = 5000000 -- 5 seconds
-
 
 runSchedPool
   :: MonadUnliftIO m
   => SchedPool
   -> (Job -> (Nid, Msgid) -> m ())
-  -> (Job -> m ())
   -> m ()
-runSchedPool pool@SchedPool {..} work workLater = do
+runSchedPool pool@SchedPool {..} work = do
   state <- atomically $ readTQueue stateQueue
 
-  io <- startPoolerIO pool work workLater state
+  io <- startPoolerIO pool work state
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
 
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
