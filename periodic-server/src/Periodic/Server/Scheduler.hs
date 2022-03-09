@@ -384,15 +384,15 @@ reSchedJob job = do
       pool <- case mPool of
         Nothing -> do
           pool <- newSchedPool sMaxPoolSize sMaxBatchSize
-            (void $ tryPutTMVar sPollJob ()) $ \fn1 -> do
-            mFuncStat <- IOMapS.lookup fn1 sFuncStatList
+            (void $ tryPutTMVar sPollJob ()) $ do
+            mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []
               Just FuncStat{sWorker=0} -> pure []
               Just st -> do
-                if sBroadcast st then popAgentListSTM sGrabQueue fn1
+                if sBroadcast st then popAgentListSTM sGrabQueue fn
                 else do
-                  mAgent <- popAgentSTM sGrabQueue fn1
+                  mAgent <- popAgentSTM sGrabQueue fn
                   case mAgent of
                     Nothing    -> retrySTM
                     Just agent -> pure [agent]

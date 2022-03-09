@@ -62,7 +62,7 @@ data SchedPool = SchedPool
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
   , onFree      :: STM ()
-  , prepareWork :: FuncName -> STM [(Nid, Msgid)]
+  , prepareWork :: STM [(Nid, Msgid)]
   , stateQueue  :: TQueue PoolerState
   }
 
@@ -72,7 +72,7 @@ newSchedPool
   => TVar Int
   -> TVar Int
   -> STM ()
-  -> (FuncName -> STM [(Nid, Msgid)])
+  -> STM [(Nid, Msgid)]
   -> m SchedPool
 newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   poolerList  <- newTVarIO []
@@ -186,7 +186,7 @@ startPoolerIO pool@SchedPool {..} work state =
           if schedAlive job then do
             canDo <- readTVar $ schedDelay job
             if canDo then do
-              agents <- prepareWork $ getFuncName $ schedJob job
+              agents <- prepareWork
               pure (schedJob job, agents)
             else retrySTM
           else pure (schedJob job, [])
