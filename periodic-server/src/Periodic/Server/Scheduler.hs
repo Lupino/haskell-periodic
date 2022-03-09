@@ -37,7 +37,7 @@ module Periodic.Server.Scheduler
   , canRun
   ) where
 
-import           Control.Monad              (forever, unless, void, when)
+import           Control.Monad              (forever, unless, when)
 import           Control.Monad.Reader.Class (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class  (MonadTrans)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
@@ -47,7 +47,7 @@ import           Data.IOMap                 (IOMap)
 import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
 import           Data.Int                   (Int64)
-import qualified Data.List                  as L (delete)
+import qualified Data.List                  as L (delete, nub)
 import qualified Data.Map.Strict            as Map (filter, map)
 import           Data.Maybe                 (fromMaybe, isJust)
 import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
@@ -117,7 +117,7 @@ data SchedEnv db = SchedEnv
     , sLocker        :: L.Lock
     , sGrabQueue     :: GrabQueue
     -- sched state, when false sched is exited.
-    , sPollJob       :: TMVar ()
+    , sPollJob       :: TVar [FuncName]
     , sChanList      :: TQueue Job
     , sWaitList      :: WaitList
     , sLockList      :: LockList
@@ -167,7 +167,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
   sLocker         <- L.new
-  sPollJob        <- newEmptyTMVarIO
+  sPollJob        <- newTVarIO []
   sChanList       <- newTQueueIO
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
@@ -258,27 +258,32 @@ runTask delay m = do
 runPollJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
 runPollJob = do
   cl <- asks sPollJob
-  atomically $ takeTMVar cl
-  pollJob
+  fns <- atomically $ do
+    fns <- readTVar cl
+    case fns of
+      [] -> retrySTM
+      _  -> do
+        writeTVar cl []
+        pure $ L.nub fns
 
-pollJob :: (MonadIO m, Persist db) => SchedT db m ()
-pollJob = do
-  funcList <- getAvaliableFuncList
+  mapM_ pollJob fns
+
+pollJob :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
+pollJob fn = do
   next <- getNextPoll
   poolList <- asks sSchedPoolList
-  forM_ funcList $ \fn -> do
-    mPool <- IOMap.lookup fn poolList
-    case mPool of
-      Nothing -> pure ()
-      Just pool -> do
-        handles <- Pool.getHandleList pool
-        let size = length handles
-        p <- asks sPersist
-        count <- liftIO $ P.countPending p fn next
-        maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
-        when (count > size && maxBatchSize > size) $
-          liftIO (P.getPendingJob p fn next (maxBatchSize + size))
-           >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
+  mPool <- IOMap.lookup fn poolList
+  case mPool of
+    Nothing -> pure ()
+    Just pool -> do
+      handles <- Pool.getHandleList pool
+      let size = length handles
+      p <- asks sPersist
+      count <- liftIO $ P.countPending p fn next
+      maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+      when (count > size && maxBatchSize > size) $
+        liftIO (P.getPendingJob p fn next (maxBatchSize + size))
+         >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
 
 
 getNextPoll :: MonadIO m => m Int64
@@ -297,7 +302,8 @@ getAvaliableFuncList = do
 pushPollJob :: MonadIO m => SchedT db m ()
 pushPollJob = do
   cl <- asks sPollJob
-  void $ atomically $ tryPutTMVar cl ()
+  funcList <- getAvaliableFuncList
+  atomically $ writeTVar cl funcList
 
 
 pushChanJob :: MonadIO m => Job -> SchedT db m ()
@@ -384,7 +390,7 @@ reSchedJob job = do
       pool <- case mPool of
         Nothing -> do
           pool <- newSchedPool sMaxPoolSize sMaxBatchSize
-            (void $ tryPutTMVar sPollJob ()) $ do
+            (modifyTVar' sPollJob (fn:)) $ do
             mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []
