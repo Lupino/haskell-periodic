@@ -139,9 +139,10 @@ printSubmitHelp :: IO ()
 printSubmitHelp = do
   putStrLn "periodic submit - Submit job"
   putStrLn ""
-  putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD|@FILE] [--later 0]"
+  putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD|@FILE] [--later 0] [--timeout 0]"
   printWorkloadHelp
   putStrLn "     --later    Sched job later"
+  putStrLn "     --timeout  Run job timeout"
   putStrLn ""
   exitSuccess
 
@@ -149,8 +150,9 @@ printRunHelp :: IO ()
 printRunHelp = do
   putStrLn "periodic run - Run job and output result"
   putStrLn ""
-  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE]"
+  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10]"
   printWorkloadHelp
+  putStrLn "     --timeout  Run job timeout"
   putStrLn ""
   exitSuccess
 
@@ -317,40 +319,47 @@ doSubmitJob :: Transport tp => [String] -> ClientT tp IO ()
 doSubmitJob []       = liftIO printSubmitHelp
 doSubmitJob [_]      = liftIO printSubmitHelp
 doSubmitJob (x:y:xs) = do
-  (wl, l) <- liftIO $ go (Nothing, Nothing) xs
-  void $ submitJob (fromString x) (fromString y) wl l
+  wl <- liftIO $ getWorkload xs
+  void $ submitJob (fromString x) (fromString y) wl l t
+  where l = getLater xs
+        t = getTimeout 0 xs
 
-  where go :: (Maybe Workload, Maybe Int64) -> [String] -> IO (Maybe Workload, Maybe Int64)
-        go v []                              = pure v
-        go (_, l0) ("-w":('@':f):ys)         = do
-          w <- B.readFile f
-          go (Just (Workload w), l0) ys
-        go (_, l0) ("--workload":('@':f):ys) = do
-          w <- B.readFile f
-          go (Just (Workload w), l0) ys
-        go (_, l0) ("-w":w:ys)               = go (Just (fromString w), l0) ys
-        go (_, l0) ("--workload":w:ys)       = go (Just (fromString w), l0) ys
-        go (w, _) ("--later":l0:ys)          = go (w, readMaybe l0) ys
-        go v (_:ys)                          = go v ys
+safeRead :: Read a => a -> String -> a
+safeRead def "" = def
+safeRead def s  = fromMaybe def $ readMaybe s
+
+getWorkload :: [String] -> IO Workload
+getWorkload argv =
+  case getFlag ["-w", "--workload"] argv of
+    ""      -> pure ""
+    ('@':f) -> Workload <$> B.readFile f
+    w       -> pure $ fromString w
+
+
+getTimeout :: Int -> [String] -> Int
+getTimeout def = safeRead def . getFlag ["--timeout"]
+
+getLater :: [String] -> Int64
+getLater = safeRead 0 . getFlag ["--later"]
+
+
+getFlag :: [String] -> [String] -> String
+getFlag _ []        = ""
+getFlag _ [_]       = ""
+getFlag ks (x:y:xs) = if x `elem` ks then y else getFlag ks (y:xs)
+
+getFile :: String -> IO Workload
+getFile fn = Workload <$> B.readFile fn
 
 doRunJob :: Transport tp => [String] -> ClientT tp IO ()
 doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
-doRunJob (x:y:xs) =
+doRunJob (x:y:xs) = do
+  w <- liftIO $ getWorkload xs
   liftIO . putR
-    =<< runJob (fromString x) (fromString y)
-    =<< liftIO (go xs)
+    =<< runJob (fromString x) (fromString y) w t
 
-  where go :: [String] -> IO (Maybe Workload)
-        go []                       = pure Nothing
-        go ("-w":('@':f):_)         = getFile f
-        go ("--workload":('@':f):_) = getFile f
-        go ("-w":w:_)               = pure $ Just (fromString w)
-        go ("--workload":w:_)       = pure $ Just (fromString w)
-        go (_:ys)                   = go ys
-
-        getFile :: String -> IO (Maybe Workload)
-        getFile fn = Just . Workload <$> B.readFile fn
+  where t = getTimeout 10 xs
 
         putR :: Maybe ByteString -> IO ()
         putR Nothing   = putStrLn "Error: run job failed"

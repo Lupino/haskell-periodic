@@ -46,10 +46,14 @@ submitJob_ j = getResult False isSuccess <$> request Nothing (packetREQ (SubmitJ
 
 submitJob
   :: (MonadUnliftIO m, Transport tp)
-  => FuncName -> JobName -> Maybe Workload -> Maybe Int64 -> BaseClientT u tp m Bool
-submitJob fn jn w later = do
-  schedAt <- (+fromMaybe 0 later) <$> getEpochTime
-  submitJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
+  => FuncName -> JobName -> Workload -> Int64 -> Int -> BaseClientT u tp m Bool
+submitJob fn jn w later tout = do
+  schedAt <- (+later) <$> getEpochTime
+  submitJob_
+    $ setTimeout tout
+    $ setSchedAt schedAt
+    $ setWorkload w
+    $ initJob fn jn
 
 runJob_ :: (MonadUnliftIO m, Transport tp) => Job -> BaseClientT u tp m (Maybe ByteString)
 runJob_ j =  getResult Nothing getData <$> request Nothing (packetREQ . RunJob $ setSchedAt 0 j)
@@ -59,10 +63,9 @@ runJob_ j =  getResult Nothing getData <$> request Nothing (packetREQ . RunJob $
 
 runJob
   :: (MonadUnliftIO m, Transport tp)
-  => FuncName -> JobName -> Maybe Workload -> BaseClientT u tp m (Maybe ByteString)
-runJob fn jn w = do
-  schedAt <- getEpochTime
-  runJob_ $ setSchedAt schedAt $ setWorkload (fromMaybe "" w) $ initJob fn jn
+  => FuncName -> JobName -> Workload -> Int -> BaseClientT u tp m (Maybe ByteString)
+runJob fn jn w tout = do
+  runJob_ $ setTimeout tout $ setWorkload w $ initJob fn jn
 
 checkHealth :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m ()
 checkHealth = do
