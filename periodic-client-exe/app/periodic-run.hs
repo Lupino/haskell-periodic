@@ -9,14 +9,11 @@ import           Control.Concurrent         (forkIO, killThread)
 import           Control.DeepSeq            (rnf)
 import           Control.Monad              (unless, void, when)
 import           Control.Monad.IO.Class     (liftIO)
-import qualified Data.ByteString.Char8      as B (ByteString, pack)
+import qualified Data.ByteString.Char8      as B (pack)
 import qualified Data.ByteString.Lazy       as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
 import           Data.List                  (isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
-import qualified Data.Text                  as T (unpack)
-import           Data.Text.Encoding         (decodeUtf8With)
-import           Data.Text.Encoding.Error   (ignore)
 import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
 import           Metro.Socket               (getHost, getService)
@@ -206,9 +203,6 @@ processWorker Options{..} cmd argv = do
       case out of
         Nothing -> workDone
         Just wl -> workDone_ $ LB.toStrict wl
-
-unpackBS :: B.ByteString -> String
-unpackBS = T.unpack . decodeUtf8With ignore
 
 -- | Fork a thread while doing something else, but kill it if there's an
 -- exception.
