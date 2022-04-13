@@ -62,5 +62,5 @@
       rev = "minimal";
       sha256 = "";
       };
-    postUnpack = "sourceRoot+=/metro-transport-tls; echo source root reset to \$sourceRoot";
+    postUnpack = "sourceRoot+=/metro-transport-tls; echo source root reset to $sourceRoot";
     }) // { cabal-generator = "hpack"; }

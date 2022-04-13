@@ -56,5 +56,5 @@
       rev = "minimal";
       sha256 = "";
       };
-    postUnpack = "sourceRoot+=/psql-utils; echo source root reset to \$sourceRoot";
+    postUnpack = "sourceRoot+=/psql-utils; echo source root reset to $sourceRoot";
     }

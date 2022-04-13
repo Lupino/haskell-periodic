@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc8107" }:
+{ compiler-nix-name ? "ghc922" }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -26,10 +26,10 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2022-01-20T00:00:00Z";
-    index-sha256 = "eb9af899f414b3417bd8f94df40df863056273196d2d44c7ac033cf9c4523511";
-    plan-sha256 = if compiler-nix-name == "ghc8107" then "16xms4rrpmdm2b3kxi71pa5h29i12zb0p2z4damjdy798ddxr4cm" else null;
-    materialized = if compiler-nix-name == "ghc8107" then ./nix/materialized else null;
+    index-state = "2022-04-12T00:00:00Z";
+    index-sha256 = "9bf96168377dff50dcfbe4f9dbc5787a5059541644dee07e4992e1b21abd0bb9";
+    plan-sha256 = if compiler-nix-name == "ghc922" then "178jq8kj89wbqbwymarkwr863zb634a0cb2gmd7bq6hs0fd28352" else null;
+    materialized = if compiler-nix-name == "ghc922" then ./nix/materialized else null;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
     modules = [(

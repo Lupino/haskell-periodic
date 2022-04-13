@@ -68,5 +68,5 @@
       rev = "minimal";
       sha256 = "";
       };
-    postUnpack = "sourceRoot+=/metro-socket; echo source root reset to \$sourceRoot";
+    postUnpack = "sourceRoot+=/metro-socket; echo source root reset to $sourceRoot";
     }) // { cabal-generator = "hpack"; }

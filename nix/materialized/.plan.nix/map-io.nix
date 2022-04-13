@@ -52,5 +52,5 @@
       rev = "minimal";
       sha256 = "";
       };
-    postUnpack = "sourceRoot+=/map-io; echo source root reset to \$sourceRoot";
+    postUnpack = "sourceRoot+=/map-io; echo source root reset to $sourceRoot";
     }) // { cabal-generator = "hpack"; }
