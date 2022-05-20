@@ -226,6 +226,7 @@ finishPoolerState SchedPool {..} state = atomically $ do
           { stateJob    = Nothing
           , stateIsBusy = False
           }
+        modifyTVar' freeStates (state:)
         onFree
       (x:xs) -> do
         writeTVar waitingJob xs
