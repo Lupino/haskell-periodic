@@ -399,7 +399,7 @@ reSchedJob job = do
       pool <- case mPool of
         Nothing -> do
           pool <- newSchedPool sMaxPoolSize sMaxBatchSize
-            (modifyTVar' sPollJob (fn:)) $ do
+            (modifyTVar' sPollJob (\fns -> L.nub $ fn:fns)) $ do
             mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []
