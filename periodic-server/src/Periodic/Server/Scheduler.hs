@@ -43,10 +43,10 @@ import           Control.Monad.Trans.Class  (MonadTrans)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
 import           Data.ByteString            (ByteString)
 import           Data.Foldable              (forM_)
+import           Data.Int                   (Int64)
 import           Data.IOMap                 (IOMap)
 import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
-import           Data.Int                   (Int64)
 import qualified Data.List                  as L (delete, nub)
 import qualified Data.Map.Strict            as Map (filter, map)
 import           Data.Maybe                 (fromMaybe, isJust)
@@ -62,8 +62,9 @@ import           Periodic.Server.Hook       hiding (runHook)
 import qualified Periodic.Server.Hook       as Hook
 import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
-import           Periodic.Server.SchedPool  (SchedPool, newSchedPool,
-                                             runSchedPool, getLastSchedAt)
+import           Periodic.Server.SchedPool  (SchedPool, getLastSchedAt,
+                                             newSchedPool, runPrepareWork,
+                                             runSchedPool)
 import qualified Periodic.Server.SchedPool  as Pool
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
@@ -399,7 +400,9 @@ reSchedJob job = do
       pool <- case mPool of
         Nothing -> do
           pool <- newSchedPool sMaxPoolSize sMaxBatchSize
-            (modifyTVar' sPollJob (\fns -> L.nub $ fn:fns)) $ do
+                $ modifyTVar' sPollJob $ L.nub . (fn:)
+
+          runTask 0 $ runPrepareWork pool $ do
             mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []

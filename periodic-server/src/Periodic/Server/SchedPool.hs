@@ -5,6 +5,7 @@ module Periodic.Server.SchedPool
   , newSchedPool
   , getHandleList
   , runSchedPool
+  , runPrepareWork
   , getLastSchedAt
   , unspawn
   , spawn
@@ -15,10 +16,10 @@ module Periodic.Server.SchedPool
 import           Control.Monad       (forM_, forever, unless, when)
 import           Control.Monad.Cont  (callCC, lift, runContT)
 import           Control.Monad.ListM (takeWhileM)
+import           Data.Int            (Int64)
 import           Data.IOMap          (IOMap)
 import qualified Data.IOMap          as IOMap
 import qualified Data.IOMap.STM      as IOMapS
-import           Data.Int            (Int64)
 import           Data.Map.Strict     (filterWithKey)
 import           Metro.Utils         (getEpochTime)
 import           Periodic.Types      (Msgid, Nid)
@@ -63,7 +64,7 @@ data SchedPool = SchedPool
   , maxPoolSize :: TVar Int
   , poolSize    :: TVar Int
   , onFree      :: STM ()
-  , prepareWork :: STM [(Nid, Msgid)]
+  , poolAgents  :: TMVar [(Nid, Msgid)]
   , stateQueue  :: TQueue PoolerState
   }
 
@@ -73,9 +74,8 @@ newSchedPool
   => TVar Int
   -> TVar Int
   -> STM ()
-  -> STM [(Nid, Msgid)]
   -> m SchedPool
-newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
+newSchedPool maxPoolSize maxWaitSize onFree = do
   poolerList  <- newTVarIO []
   lastState   <- newTVarIO Nothing
   freeStates  <- newTVarIO []
@@ -83,6 +83,7 @@ newSchedPool maxPoolSize maxWaitSize onFree prepareWork = do
   waitingLock <- newTMVarIO ()
   poolSize    <- newTVarIO 0
   jobList     <- IOMap.empty
+  poolAgents  <- newEmptyTMVarIO
   stateQueue  <- newTQueueIO
   pure SchedPool {..}
 
@@ -189,7 +190,7 @@ startPoolerIO pool@SchedPool {..} work state =
           if schedAlive job then do
             canDo <- readTVar $ schedDelay job
             if canDo then do
-              agents <- prepareWork
+              agents <- readTMVar poolAgents
               pure (schedJob job, agents)
             else retrySTM
           else pure (schedJob job, [])
@@ -212,6 +213,17 @@ runSchedPool pool@SchedPool {..} work = do
 
   io <- startPoolerIO pool work state
   atomically $ modifyTVar' poolerList (++[SchedPooler state io])
+
+
+runPrepareWork
+  :: MonadUnliftIO m
+  => SchedPool
+  -> STM [(Nid, Msgid)]
+  -> m ()
+runPrepareWork SchedPool {..} prepareWork = atomically $ do
+  agents <- prepareWork
+  putTMVar poolAgents agents
+
 
 finishPoolerState :: MonadIO m => SchedPool -> PoolerState -> m ()
 finishPoolerState SchedPool {..} state = atomically $ do
