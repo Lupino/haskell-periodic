@@ -5,6 +5,7 @@ module Periodic.Server.SchedPool
   , newSchedPool
   , getHandleList
   , runSchedPool
+  , getLastSchedAt
   , unspawn
   , spawn
   , close
@@ -158,6 +159,8 @@ getLastStateSchedAt ls = do
     Nothing    -> pure 0
     Just state -> getStateSchedAt state
 
+getLastSchedAt :: MonadIO m => SchedPool -> m Int64
+getLastSchedAt SchedPool{..} = atomically $ getLastStateSchedAt lastState
 
 swapLastState :: LastState -> PoolerState -> STM ()
 swapLastState ls = writeTVar ls . Just

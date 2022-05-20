@@ -63,7 +63,7 @@ import qualified Periodic.Server.Hook       as Hook
 import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
 import           Periodic.Server.SchedPool  (SchedPool, newSchedPool,
-                                             runSchedPool)
+                                             runSchedPool, getLastSchedAt)
 import qualified Periodic.Server.SchedPool  as Pool
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
@@ -365,7 +365,16 @@ runPushJob = do
   unless isRunning $ do
     job' <- fixedSchedAt job
     liftIO $ P.insert p Pending job'
-    pushChanJob job'
+    poolList <- asks sSchedPoolList
+    mPool <- IOMap.lookup fn poolList
+    case mPool of
+      Nothing -> pushChanJob job'
+      Just pool -> do
+        lastSchedAt <- getLastSchedAt pool
+        if lastSchedAt > 600 && getSchedAt job' > lastSchedAt + 600
+          then pure ()
+          else pushChanJob job'
+
 
   getDuration t0 >>= runHook eventPushJob job
 
