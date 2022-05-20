@@ -63,8 +63,7 @@ import qualified Periodic.Server.Hook       as Hook
 import           Periodic.Server.Persist    (Persist, State (..))
 import qualified Periodic.Server.Persist    as P
 import           Periodic.Server.SchedPool  (SchedPool, getLastSchedAt,
-                                             newSchedPool, runPrepareWork,
-                                             runSchedPool)
+                                             newSchedPool, runSchedPool)
 import qualified Periodic.Server.SchedPool  as Pool
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
@@ -399,10 +398,11 @@ reSchedJob job = do
       mPool <- IOMap.lookup fn sSchedPoolList
       pool <- case mPool of
         Nothing -> do
-          pool <- newSchedPool sMaxPoolSize sMaxBatchSize
-                $ modifyTVar' sPollJob $ L.nub . (fn:)
+          pool <- newSchedPool sMaxBatchSize
+                $ modifyTVar' sPollJob
+                $ L.nub . (fn:)
 
-          runTask 0 $ runPrepareWork pool $ do
+          runTask 0 $ runSchedPool pool schedJob $ do
             mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []
@@ -415,7 +415,6 @@ reSchedJob job = do
                     Nothing    -> retrySTM
                     Just agent -> pure [agent]
 
-          runTask 0 $ runSchedPool pool schedJob
           IOMap.insert fn pool sSchedPoolList
           pure pool
         Just pool -> pure pool
@@ -823,7 +822,6 @@ shutdown :: (MonadUnliftIO m) => SchedT db m ()
 shutdown = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler shutdown"
   SchedEnv{..} <- ask
-  IOMap.elems sSchedPoolList >>= mapM_ Pool.close
   readTVarIO sTaskList >>= mapM_ cancel
   liftIO sCleanup
 
