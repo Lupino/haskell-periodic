@@ -121,6 +121,8 @@ finishPoolerState SchedPool {..} = atomically $ do
     (x:xs) -> do
       r <- tryPutTMVar poolerState x
       when r $ writeTVar waitingJob xs
+      s <- (`div` 4) <$> readTVar maxWaitSize
+      when (length xs < s) onFree
   putTMVar waitingLock ()
 
 

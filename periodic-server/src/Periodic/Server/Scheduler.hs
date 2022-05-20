@@ -276,11 +276,10 @@ pollJob fn = do
   handles <- fromMaybe [] <$> mapM Pool.getHandleList mPool
 
   let size = length handles
-  maxPoolSize <- readTVarIO =<< asks sMaxPoolSize
-  when (maxPoolSize > size) $ do
+  maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
+  when (maxBatchSize `div` 4 > size) $ do
     p <- asks sPersist
     count <- liftIO $ P.countPending p fn next
-    maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
     when (count > size) $
       liftIO (P.getPendingJob p fn next (maxBatchSize + size))
        >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
