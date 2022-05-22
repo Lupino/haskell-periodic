@@ -440,18 +440,18 @@ adjustFuncStat fn = do
                                              })
 
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
-removeJob = removeJob_ . getHandle
+removeJob = removeJob_ "removed" . getHandle
 
-removeJob_ :: (MonadIO m, Persist db) => JobHandle -> SchedT db m ()
-removeJob_ jh = do
-  liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show jh)
+removeJob_ :: (MonadIO m, Persist db) => ByteString -> JobHandle -> SchedT db m ()
+removeJob_ reason jh = do
+  liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show jh ++ " " ++ show reason)
   t0 <- liftIO getUnixTime
   p <- asks sPersist
   liftIO $ P.delete p fn jn
 
   asks sSchedPoolList >>= IOMap.lookup fn >>= mapM_ (`Pool.unspawn` job)
 
-  pushResult jh ""
+  pushResult jh reason
   getDuration t0 >>= runHook eventRemoveJob job
 
   where (fn, jn) = unHandle jh
@@ -764,7 +764,7 @@ purgeExpired = do
   now <- getEpochTime
   wl <- asks sWaitList
   handles <- IOMap.foldrWithKey (foldFunc (check now)) [] wl
-  mapM_ removeJob_ handles
+  mapM_ (removeJob_ "expired") handles
 
   where foldFunc
           :: (WaitItem -> Bool)
