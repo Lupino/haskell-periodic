@@ -440,8 +440,11 @@ adjustFuncStat fn = do
                                              })
 
 removeJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
-removeJob job = do
-  liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show (getHandle job))
+removeJob = removeJob_ . getHandle
+
+removeJob_ :: (MonadIO m, Persist db) => JobHandle -> SchedT db m ()
+removeJob_ jh = do
+  liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show jh)
   t0 <- liftIO getUnixTime
   p <- asks sPersist
   liftIO $ P.delete p fn jn
@@ -451,9 +454,8 @@ removeJob job = do
   pushResult jh ""
   getDuration t0 >>= runHook eventRemoveJob job
 
-  where jn = getName job
-        fn = getFuncName job
-        jh = getHandle job
+  where (fn, jn) = unHandle jh
+        job = initJob fn jn
 
 dumpJob :: (MonadIO m, Persist db) => SchedT db m [Job]
 dumpJob = liftIO . P.dumpJob =<< asks sPersist
@@ -757,25 +759,18 @@ revertLockedQueue = mapM_ checkAndReleaseLock =<< liftIO . P.funcList =<< asks s
           mapM_ pushJob handles
 
 
-purgeExpired :: MonadIO m => SchedT db m ()
+purgeExpired :: (MonadIO m, Persist db) => SchedT db m ()
 purgeExpired = do
   now <- getEpochTime
   wl <- asks sWaitList
-  pushData <- asks sPushData
-  waiters <- atomically $ do
-    (ks, vs) <- IOMapS.foldrWithKey (foldFunc (check now)) ([],[]) wl
-    mapM_ (`IOMapS.delete` wl) ks
-    pure vs
-
-  liftIO $ forM_ waiters $ \(nid, msgid) -> pushData nid msgid ""
+  handles <- IOMap.foldrWithKey (foldFunc (check now)) [] wl
+  mapM_ removeJob_ handles
 
   where foldFunc
           :: (WaitItem -> Bool)
-          -> JobHandle -> WaitItem
-          -> ([JobHandle], [Waiter])
-          -> ([JobHandle], [Waiter])
-        foldFunc f jh v (acc0, acc1) | f v = (jh : acc0, itemWaiters v ++ acc1)
-                                     | otherwise = (acc0, acc1)
+          -> JobHandle -> WaitItem -> [JobHandle] -> [JobHandle]
+        foldFunc f jh v acc | f v       = jh : acc
+                            | otherwise = acc
 
         check :: Int64 -> WaitItem -> Bool
         check t0 item = itemExpiredAt item < t0
