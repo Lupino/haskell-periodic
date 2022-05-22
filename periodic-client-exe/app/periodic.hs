@@ -193,7 +193,6 @@ printConfigKeyList = do
   putStrLn "  keepalive       - client keepalive"
   putStrLn "  max-batch-size  - max poll batch size"
   putStrLn "  max-pool-size   - max sched pool size"
-  putStrLn "  expiration      - run job result cache expiration"
   putStrLn ""
   exitSuccess
 

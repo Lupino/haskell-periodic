@@ -75,8 +75,8 @@ import           UnliftIO.Concurrent        (threadDelay)
 type Waiter = (Nid, Msgid)
 
 data WaitItem = WaitItem
-    { itemTs      :: Int64
-    , itemWaiters :: [Waiter]
+    { itemExpiredAt :: Int64
+    , itemWaiters   :: [Waiter]
     }
 
 -- Cache runJob result
@@ -110,8 +110,6 @@ data SchedEnv db = SchedEnv
     , sMaxBatchSize  :: TVar Int
     -- client or worker keepalive
     , sKeepalive     :: TVar Int
-    -- run job cache expiration
-    , sExpiration    :: TVar Int
     , sCleanup       :: IO ()
     , sFuncStatList  :: FuncStatList
     , sLocker        :: L.Lock
@@ -173,7 +171,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sLockTimeout    <- newTVarIO 300
   sMaxBatchSize   <- newTVarIO 500
   sKeepalive      <- newTVarIO 300
-  sExpiration     <- newTVarIO 300
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
@@ -191,7 +188,7 @@ startSchedT = do
   runTask 1   runPollJob
   runTask 0   runChanJob
   runTask 0   runPushJob
-  runTask 100 purgeExpired
+  runTask 10  purgeExpired
   runTask 60  revertLockedQueue
   runTask 60  pushPollJob
   runTask 100 purgeEmptyLock
@@ -201,7 +198,6 @@ startSchedT = do
   loadInt "keepalive" sKeepalive
   loadInt "max-batch-size" sMaxBatchSize
   loadInt "max-pool-size" sMaxPoolSize
-  loadInt "expiration" sExpiration
 
 loadInt :: (MonadIO m, Persist db) => String -> TVar Int -> SchedT db m ()
 loadInt name ref = do
@@ -225,7 +221,6 @@ setConfigInt key val = do
     "keepalive"      -> saveInt "keepalive" val sKeepalive
     "max-batch-size" -> saveInt "max-batch-size" val sMaxBatchSize
     "max-pool-size"  -> saveInt "max-pool-size" val sMaxPoolSize
-    "expiration"     -> saveInt "expiration" val sExpiration
     _                -> pure ()
 
 getConfigInt :: (MonadIO m, Persist db) => String -> SchedT db m Int
@@ -237,7 +232,6 @@ getConfigInt key = do
     "keepalive"      -> readTVarIO sKeepalive
     "max-batch-size" -> readTVarIO sMaxBatchSize
     "max-pool-size"  -> readTVarIO sMaxPoolSize
-    "expiration"     -> readTVarIO sExpiration
     _                -> pure 0
 
 keepalive :: Monad m => SchedT db m (TVar Int)
@@ -322,7 +316,7 @@ runJob job = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
   SchedEnv{..} <- ask
   tout <- fromIntegral <$> readTVarIO sTaskTimeout
-  delay <- registerDelay (getJobTimeout tout job)
+  delay <- registerDelay (getJobTimeout job tout)
   mAgent <- atomically $ do
     mAgent <- popAgentSTM sGrabQueue fn
     case mAgent of
@@ -773,10 +767,10 @@ revertRunningQueue = do
 
   where check :: Int64 -> Int64 -> Job -> Bool
         check now t0 job = getSchedAt job + fromIntegral tout < now
-          where tout = getJobTimeout (fromIntegral t0) job
+          where tout = getJobTimeout job (fromIntegral t0)
 
-getJobTimeout :: Int -> Job -> Int
-getJobTimeout t0 job
+getJobTimeout :: Job -> Int -> Int
+getJobTimeout job t0
   | getTimeout job > 0 = getTimeout job
   | otherwise          = t0
 
@@ -798,9 +792,8 @@ purgeExpired = do
   now <- getEpochTime
   wl <- asks sWaitList
   pushData <- asks sPushData
-  ex <- fmap fromIntegral . readTVarIO =<< asks sExpiration
   waiters <- atomically $ do
-    (ks, vs) <- IOMapS.foldrWithKey (foldFunc (check (now - ex))) ([],[]) wl
+    (ks, vs) <- IOMapS.foldrWithKey (foldFunc (check now)) ([],[]) wl
     mapM_ (`IOMapS.delete` wl) ks
     pure vs
 
@@ -815,7 +808,7 @@ purgeExpired = do
                                      | otherwise = (acc0, acc1)
 
         check :: Int64 -> WaitItem -> Bool
-        check t0 item = itemTs item < t0
+        check t0 item = itemExpiredAt item < t0
 
 shutdown :: (MonadUnliftIO m) => SchedT db m ()
 shutdown = do
@@ -827,15 +820,21 @@ shutdown = do
 prepareWait :: MonadIO m => Job -> Nid -> Msgid -> SchedT db m ()
 prepareWait job nid msgid = do
   wl <- asks sWaitList
-  now <- getEpochTime
-  IOMap.alter (updateWL now) jh wl
+  expiredAt <- (+tout) <$> getEpochTime
+  IOMap.alter (updateWL expiredAt) jh wl
   where updateWL :: Int64 -> Maybe WaitItem -> Maybe WaitItem
-        updateWL now Nothing     = Just $ WaitItem {itemTs = now, itemWaiters = [waiter]}
-        updateWL now (Just item) = Just $ item {itemTs = now, itemWaiters = waiter:itemWaiters item}
+        updateWL expiredAt Nothing     = Just $ WaitItem
+          { itemExpiredAt = expiredAt
+          , itemWaiters   = [waiter]
+          }
+        updateWL expiredAt (Just item) = Just $ item
+          { itemExpiredAt = expiredAt
+          , itemWaiters   = waiter:itemWaiters item
+          }
 
-        jh = getHandle job
+        jh     = getHandle job
         waiter = (nid, msgid)
-
+        tout   = fromIntegral $ getJobTimeout job 60
 
 pushResult
   :: MonadIO m
