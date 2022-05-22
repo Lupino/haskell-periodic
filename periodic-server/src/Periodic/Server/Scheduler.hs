@@ -15,7 +15,6 @@ module Periodic.Server.Scheduler
   , SchedEnv
   , initSchedEnv
   , startSchedT
-  , runJob
   , pushJob
   , failJob
   , doneJob
@@ -309,35 +308,6 @@ runChanJob = do
   cl <- asks sChanList
   job <- atomically $ readTQueue cl
   reSchedJob job
-
-
-runJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
-runJob job = do
-  liftIO $ debugM "Periodic.Server.Scheduler" ("runJob: " ++ show (getHandle job))
-  SchedEnv{..} <- ask
-  tout <- fromIntegral <$> readTVarIO sTaskTimeout
-  delay <- registerDelay (getJobTimeout job tout)
-  mAgent <- atomically $ do
-    mAgent <- popAgentSTM sGrabQueue fn
-    case mAgent of
-      Nothing    -> do
-        isTimeout <- readTVar delay
-        if isTimeout then pure Nothing
-                     else retrySTM
-      _ -> pure mAgent
-
-  liftIO $ P.insert sPersist Running job
-  t <- liftIO getUnixTime
-  IOMap.insert (getHandle job) t sAssignJobTime
-
-  case mAgent of
-    Nothing -> doneJob_ (getHandle job) "failed"
-    Just (nid, msgid) -> do
-      r <- liftIO $ sAssignJob nid msgid job
-      if r then pure ()
-           else doneJob_ (getHandle job) "failed"
-
-  where fn = getFuncName job
 
 
 pushJob :: MonadIO m => Job -> SchedT db m ()

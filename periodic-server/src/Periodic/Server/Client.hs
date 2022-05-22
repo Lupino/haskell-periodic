@@ -14,9 +14,9 @@ module Periodic.Server.Client
 import           Control.Monad                (unless, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (encode)
+import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
-import           Data.Byteable                (toBytes)
 import           Data.List                    (delete)
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
@@ -49,7 +49,7 @@ handleClientSessionT (CC.RunJob job) = do
   if c then do
     (!nid, !msgid) <- ident <$> getSessionEnv1
     lift $ prepareWait job nid msgid
-    lift $ runJob job
+    lift $ pushJob job
   else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
