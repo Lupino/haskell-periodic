@@ -4,7 +4,7 @@ PKG ?= periodic-client-exe
 COMPILER = ghc922
 
 ifeq ($(PLATFORM),aarch64-multiplatform-musl)
-STRIP = aarch64-unknown-linux-musl-strip
+STRIP = aarch64-linux-gnu-strip
 else
 ifeq ($(PLATFORM),muslpi)
 STRIP = armv6l-unknown-linux-musleabihf-strip

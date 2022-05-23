@@ -26,9 +26,9 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2022-04-12T00:00:00Z";
-    index-sha256 = "9bf96168377dff50dcfbe4f9dbc5787a5059541644dee07e4992e1b21abd0bb9";
-    plan-sha256 = if compiler-nix-name == "ghc922" then "178jq8kj89wbqbwymarkwr863zb634a0cb2gmd7bq6hs0fd28352" else null;
+    index-state = "2022-05-20T00:00:00Z";
+    index-sha256 = "879cd7fdae1e99a1c1d21e6925ac8e715f52dc854f31a37bbbdce756615cbc55";
+    plan-sha256 = if compiler-nix-name == "ghc922" then "0pv2aqfkxr49avmvfawa483bzfc4bhacpp1r6ib2f35rh5kdqggj" else null;
     materialized = if compiler-nix-name == "ghc922" then ./nix/materialized else null;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
@@ -39,7 +39,7 @@ in pkgs.haskell-nix.cabalProject {
            "--ghc-option=-optl=-lcrypto"
            "--ghc-option=-optl=-lpgport"
            "--ghc-option=-optl=-lpgcommon"
-           "--ghc-option=-optl=-L${pkgs.pq.out}/lib"
+           "--ghc-option=-optl=-L${pkgs.postgresql.lib.out}/lib"
            "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
          ];
       })];

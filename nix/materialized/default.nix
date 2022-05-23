@@ -9,7 +9,7 @@
         "pretty".revision = (((hackage."pretty")."1.1.3.6").revisions).default;
         "regex-posix".revision = (((hackage."regex-posix")."0.96.0.1").revisions).default;
         "regex-posix".flags._regex-posix-clib = false;
-        "unordered-containers".revision = (((hackage."unordered-containers")."0.2.18.0").revisions).default;
+        "unordered-containers".revision = (((hackage."unordered-containers")."0.2.19.1").revisions).default;
         "unordered-containers".flags.debug = false;
         "integer-logarithms".revision = (((hackage."integer-logarithms")."1.0.3.1").revisions).default;
         "integer-logarithms".flags.check-bounds = false;
@@ -62,7 +62,7 @@
         "base-compat-batteries".revision = (((hackage."base-compat-batteries")."0.12.1").revisions).default;
         "Cabal".revision = (((hackage."Cabal")."3.6.3.0").revisions).default;
         "assoc".revision = (((hackage."assoc")."1.0.2").revisions).default;
-        "unliftio".revision = (((hackage."unliftio")."0.2.21.0").revisions).default;
+        "unliftio".revision = (((hackage."unliftio")."0.2.22.0").revisions).default;
         "data-fix".revision = (((hackage."data-fix")."0.3.2").revisions).default;
         "tls".revision = (((hackage."tls")."1.5.7").revisions).default;
         "tls".flags.network = true;
@@ -81,7 +81,7 @@
         "aeson".revision = (((hackage."aeson")."2.0.3.0").revisions).default;
         "aeson".flags.ordered-keymap = true;
         "aeson".flags.cffi = false;
-        "zlib".revision = (((hackage."zlib")."0.6.2.3").revisions).default;
+        "zlib".revision = (((hackage."zlib")."0.6.3.0").revisions).default;
         "zlib".flags.non-blocking-ffi = false;
         "zlib".flags.bundled-c-zlib = false;
         "zlib".flags.pkg-config = false;
@@ -117,7 +117,7 @@
         "semigroups".flags.hashable = true;
         "postgresql-libpq".revision = (((hackage."postgresql-libpq")."0.9.4.3").revisions).default;
         "postgresql-libpq".flags.use-pkg-config = true;
-        "resourcet".revision = (((hackage."resourcet")."1.2.4.3").revisions).default;
+        "resourcet".revision = (((hackage."resourcet")."1.2.5").revisions).default;
         "vault".revision = (((hackage."vault")."0.3.1.5").revisions).default;
         "vault".flags.useghc = true;
         "unix-compat".revision = (((hackage."unix-compat")."0.5.4").revisions).default;
@@ -145,7 +145,7 @@
         "nats".flags.binary = true;
         "nats".flags.hashable = true;
         "bsb-http-chunked".revision = (((hackage."bsb-http-chunked")."0.0.0.4").revisions).default;
-        "bifunctors".revision = (((hackage."bifunctors")."5.5.11").revisions).default;
+        "bifunctors".revision = (((hackage."bifunctors")."5.5.12").revisions).default;
         "bifunctors".flags.tagged = true;
         "bifunctors".flags.semigroups = true;
         "base".revision = (((hackage."base")."4.16.1.0").revisions).default;
@@ -154,7 +154,7 @@
         "async".flags.bench = false;
         "word8".revision = (((hackage."word8")."0.1.3").revisions).default;
         "cabal-doctest".revision = (((hackage."cabal-doctest")."1.0.9").revisions).default;
-        "random".revision = (((hackage."random")."1.2.1").revisions).default;
+        "random".revision = (((hackage."random")."1.2.1.1").revisions).default;
         "unix-time".revision = (((hackage."unix-time")."0.4.7").revisions).default;
         "wai".revision = (((hackage."wai")."3.2.3").revisions).default;
         "cookie".revision = (((hackage."cookie")."0.4.5").revisions).default;
@@ -212,9 +212,9 @@
         "witherable".revision = (((hackage."witherable")."0.4.2").revisions).default;
         "deepseq".revision = (((hackage."deepseq")."1.4.6.1").revisions).default;
         "unix".revision = (((hackage."unix")."2.7.2.2").revisions).default;
-        "ansi-terminal".revision = (((hackage."ansi-terminal")."0.11.1").revisions).default;
+        "ansi-terminal".revision = (((hackage."ansi-terminal")."0.11.3").revisions).default;
         "ansi-terminal".flags.example = false;
-        "wai-extra".revision = (((hackage."wai-extra")."3.1.8").revisions).default;
+        "wai-extra".revision = (((hackage."wai-extra")."3.1.12.1").revisions).default;
         "wai-extra".flags.build-example = false;
         "blaze-builder".revision = (((hackage."blaze-builder")."0.4.2.2").revisions).default;
         "warp".revision = (((hackage."warp")."3.3.20").revisions).default;

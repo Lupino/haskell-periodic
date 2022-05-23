@@ -1,5 +1,5 @@
 name:                periodic-server
-version:             1.1.8.0
+version:             1.1.9.0
 synopsis:            Periodic task system haskell server
 description:         Periodic task system haskell server and command peridoicd.
 homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-server#readme
