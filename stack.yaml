@@ -52,7 +52,7 @@ extra-package-dbs: []
 
 extra-deps:
 - git: https://github.com/Lupino/metro.git
-  commit: 2e8a036168da13f90dbf8fc3b59d95cf5315949d
+  commit: e07f2e1ee30cb3b8da66395d4e36f23e2361b43e
   subdirs:
   - .
   - map-io

@@ -44,8 +44,7 @@ import           Periodic.Types               (ClientType, Job, Msgid (..),
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           System.Entropy               (getEntropy)
 
-import           UnliftIO                     (MonadUnliftIO, atomically,
-                                               modifyTVar', newTVarIO,
+import           UnliftIO                     (MonadUnliftIO, newTVarIO,
                                                readTVarIO, tryAny)
 
 type ServerEnv serv =
@@ -66,8 +65,10 @@ doAssignJob sEnv nid msgid job = do
         Left _  -> return False
         Right _ -> do
           env1 <- runNodeT1 env0 env
-          atomically $ modifyTVar' (wJobQueue env1) (getHandle job :)
+          IOMap.delete jh (wJobQueue env1)
           return True
+
+  where jh = getHandle job
 
 doPushData :: Transport tp => ServerEnv serv tp -> Nid -> Msgid -> ByteString -> IO ()
 doPushData sEnv nid msgid w = do
@@ -97,7 +98,7 @@ startServer dbconfig mk config hook = do
     runConnT connEnv0 $ send (regPacketRES $ Data nid)
     let nidV = Nid $! runGet getWord32be $ fromStrict nid
     wFuncList  <- newTVarIO []
-    wJobQueue  <- newTVarIO []
+    wJobQueue  <- IOMap.empty
     wMsgidList <- newTVarIO []
     pushAgent grabQueue wFuncList nidV wMsgidList
     return $ Just (nidV, ClientConfig {..})
@@ -111,7 +112,7 @@ startServer dbconfig mk config hook = do
 
   setOnNodeLeave sEnv $ \nid ClientConfig {..} ->
     runSchedT schedEnv $ do
-      mapM_ failJob =<< readTVarIO wJobQueue
+      mapM_ failJob =<< IOMap.keys wJobQueue
       mapM_ removeFunc =<< readTVarIO wFuncList
       dropAgentList grabQueue nid
 

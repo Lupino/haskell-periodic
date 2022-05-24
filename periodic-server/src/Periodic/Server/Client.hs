@@ -17,6 +17,7 @@ import           Data.Binary                  (encode)
 import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
+import qualified Data.IOMap                   as IOMap
 import           Data.List                    (delete)
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
@@ -93,14 +94,14 @@ handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
        else writeTVar wMsgidList $! msgid : msgidList
 
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
+  IOMap.delete jh wJobQueue
   lift $ doneJob jh w
-  atomically $ modifyTVar' wJobQueue (delete jh)
 handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
+  IOMap.delete jh wJobQueue
   lift $ failJob jh
-  atomically $ modifyTVar' wJobQueue (delete jh)
 handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
+  IOMap.delete jh wJobQueue
   lift $ schedLaterJob jh l s
-  atomically $ modifyTVar' wJobQueue (delete jh)
 handleWorkerSessionT ClientConfig {..} WC.Sleep = send $ packetRES Noop
 handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
