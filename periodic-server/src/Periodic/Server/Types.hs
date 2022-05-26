@@ -10,6 +10,7 @@ module Periodic.Server.Types
 
 import           Data.Binary                  (Binary (..), getWord8)
 import           Data.Binary.Get              (lookAhead)
+import           Data.Int                     (Int64)
 import           Data.IOMap                   (IOMap)
 import           Metro.Class                  (RecvPacket (..))
 import           Periodic.Node                (SessionEnv1)
@@ -57,7 +58,7 @@ instance Binary Command where
 
 data ClientConfig = ClientConfig
   { wFuncList  :: TVar [FuncName]
-  , wJobQueue  :: IOMap JobHandle Bool
+  , wJobQueue  :: IOMap JobHandle Int64
   , wMsgidList :: TVar [Msgid]
   }
 

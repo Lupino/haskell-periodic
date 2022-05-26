@@ -402,12 +402,13 @@ canRun_ stList fn = do
 schedJob :: (MonadIO m, Persist db) => Job -> (Nid, Msgid) -> SchedT db m ()
 schedJob job (nid, msgid) = do
   assignJob <- asks sAssignJob
+  tout <- fmap (getJobTimeout job) . readTVarIO =<< asks sTaskTimeout
   assignJobTime <- asks sAssignJobTime
   persist <- asks sPersist
   liftIO $ P.updateState persist Running fn jn
   t <- liftIO getUnixTime
   IOMap.insert jh t assignJobTime
-  r <- liftIO $ assignJob nid msgid job
+  r <- liftIO $ assignJob nid msgid $ setTimeout tout job
   if r then pure ()
        else do
          liftIO $ P.updateState persist Pending fn jn
