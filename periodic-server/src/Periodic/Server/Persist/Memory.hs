@@ -12,10 +12,10 @@ module Periodic.Server.Persist.Memory
   ) where
 
 
+import           Data.Int                (Int64)
 import           Data.IOMap              (IOMap)
 import qualified Data.IOMap              as IOMap
 import qualified Data.IOMap.STM          as IOMapS
-import           Data.Int                (Int64)
 import           Data.List               (sortOn)
 import           Data.Maybe              (catMaybes)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
@@ -58,8 +58,8 @@ instance Persist Memory where
   getPendingJob  = doGetPendingJob
   getLockedJob   = doGetLockedJob
   dumpJob        = doDumpJob
-  configSet      = \_ _ _ -> return ()
-  configGet      = \_ _ -> return Nothing
+  configSet _ _ _= return ()
+  configGet _ _  = return Nothing
   insertFuncName = doInsertFuncName
   removeFuncName = doRemoveFuncName
   funcList       = doFuncList

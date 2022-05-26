@@ -18,7 +18,6 @@ module Periodic.Trans.BaseClient
 import           Control.Monad                (unless)
 import           Data.ByteString              (ByteString)
 import           Data.Int                     (Int64)
-import           Data.Maybe                   (fromMaybe)
 import           Metro.Class                  (Transport)
 import           Metro.Node                   (getEnv1, request, stopNodeT)
 import           Metro.Utils                  (getEpochTime)
