@@ -123,7 +123,9 @@ startServer dbconfig mk config hook = do
 
   setOnCheckNodeState sEnv $ \_ ClientConfig {..} -> do
     now <- getEpochTime
+    handles <- map fst . filter (\(_, t) -> t < now) <$> IOMap.toList wJobQueue
     IOMap.modifyIOMap (filterWithKey (\_ expiredAt -> expiredAt > now)) wJobQueue
+    runSchedT schedEnv $ mapM_ failJob handles
 
   runSchedT schedEnv $ do
     startSchedT
