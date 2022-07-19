@@ -126,6 +126,7 @@ data SchedEnv db = SchedEnv
     , sMaxPoolSize   :: TVar Int
     , sSchedPoolList :: IOMap FuncName SchedPool
     , sPushList      :: TQueue (TQueue Job)
+    , sSchedList     :: TQueue (TQueue (Job, Nid, Msgid))
     , sTaskList      :: TVar [Async ()]
     }
 
@@ -175,8 +176,9 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sAssignJobTime  <- IOMap.empty
   sSchedPoolList  <- IOMap.empty
 
-  sPushList <- newTQueueIO
-  sTaskList <- newTVarIO []
+  sPushList  <- newTQueueIO
+  sSchedList <- newTQueueIO
+  sTaskList  <- newTVarIO []
   pure SchedEnv{..}
 
 startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
@@ -191,6 +193,12 @@ startSchedT = do
     queue0 <- newTQueueIO
     atomically $ writeTQueue sPushList queue0
     runTask 0  $ runPushJob queue0
+
+  replicateM_ 2 $ do
+    queue1 <- newTQueueIO
+    atomically $ writeTQueue sSchedList queue1
+    runTask 0  $ runSchedJob queue1
+
   runTask 10  purgeExpired
   runTask 60  revertLockedQueue
   runTask 60  pushPollJob
@@ -370,7 +378,7 @@ reSchedJob job = do
                 $ modifyTVar' sPollJob
                 $ L.nub . (fn:)
 
-          runTask 0 $ runSchedPool pool schedJob $ do
+          runTask 0 $ runSchedPool pool pushSchedJob $ do
             mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []
@@ -404,8 +412,23 @@ canRun_ stList fn = do
     Just _                   -> pure True
 
 
-schedJob :: (MonadIO m, Persist db) => Job -> (Nid, Msgid) -> SchedT db m ()
-schedJob job (nid, msgid) = do
+pushSchedJob :: MonadIO m => Job -> (Nid, Msgid) -> SchedT db m ()
+pushSchedJob job (nid, msgid) = do
+  sl <- asks sSchedList
+  queue <- atomically $ readTQueue sl
+  atomically $ writeTQueue sl queue
+  atomically $ writeTQueue queue (job, nid, msgid)
+
+
+runSchedJob
+  :: (MonadIO m, Persist db)
+  => TQueue (Job, Nid, Msgid) -> SchedT db m ()
+runSchedJob sl = do
+  (job, nid, msgid) <- atomically $ readTQueue sl
+  schedJob job nid msgid
+
+schedJob :: (MonadIO m, Persist db) => Job -> Nid -> Msgid -> SchedT db m ()
+schedJob job nid msgid = do
   assignJob <- asks sAssignJob
   tout <- fmap (getJobTimeout job) . readTVarIO =<< asks sTaskTimeout
   assignJobTime <- asks sAssignJobTime
