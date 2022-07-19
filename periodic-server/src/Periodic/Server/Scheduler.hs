@@ -36,7 +36,7 @@ module Periodic.Server.Scheduler
   , canRun
   ) where
 
-import           Control.Monad              (forever, unless, when)
+import           Control.Monad              (forever, replicateM_, unless, when)
 import           Control.Monad.Reader.Class (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class  (MonadTrans)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
@@ -125,7 +125,7 @@ data SchedEnv db = SchedEnv
     , sAssignJobTime :: IOMap JobHandle UnixTime
     , sMaxPoolSize   :: TVar Int
     , sSchedPoolList :: IOMap FuncName SchedPool
-    , sPushList      :: TQueue Job
+    , sPushList      :: TQueue (TQueue Job)
     , sTaskList      :: TVar [Async ()]
     }
 
@@ -186,7 +186,11 @@ startSchedT = do
   runTask 100 revertRunningQueue
   runTask 1   runPollJob
   runTask 0   runChanJob
-  runTask 0   runPushJob
+
+  replicateM_ 5 $ do
+    queue0 <- newTQueueIO
+    atomically $ writeTQueue sPushList queue0
+    runTask 0  $ runPushJob queue0
   runTask 10  purgeExpired
   runTask 60  revertLockedQueue
   runTask 60  pushPollJob
@@ -313,12 +317,13 @@ runChanJob = do
 pushJob :: MonadIO m => Job -> SchedT db m ()
 pushJob job = do
   pl <- asks sPushList
-  atomically $ writeTQueue pl job
+  queue <- atomically $ readTQueue pl
+  atomically $ writeTQueue pl queue
+  atomically $ writeTQueue queue job
 
 
-runPushJob :: (MonadIO m, Persist db) => SchedT db m ()
-runPushJob = do
-  pl <- asks sPushList
+runPushJob :: (MonadIO m, Persist db) => TQueue Job -> SchedT db m ()
+runPushJob pl = do
   job <- atomically $ readTQueue pl
   let fn = getFuncName job
       jn = getName job

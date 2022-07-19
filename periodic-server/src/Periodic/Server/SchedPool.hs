@@ -193,9 +193,6 @@ spawn pool@SchedPool {..} job = do
 
   where schedAt = getSchedAt job
         jh = getHandle job
-        -- genPoolerState sJob state = state
-        --   { stateJob = Just sJob
-        --   }
 
         getDelay :: MonadIO m => Int64 -> m (TVar Bool)
         getDelay now
