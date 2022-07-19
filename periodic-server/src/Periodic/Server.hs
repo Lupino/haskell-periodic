@@ -94,8 +94,10 @@ startServer
   -> (TransportConfig (STP serv) -> TransportConfig tp)
   -> S.ServerConfig serv
   -> Hook
+  -> Int
+  -> Int
   -> m ()
-startServer dbconfig mk config hook = do
+startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
   grabQueue <- newGrabQueue
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv0 -> do
     (_ :: ClientType) <- getClientType <$> runConnT connEnv0 receive_
@@ -128,7 +130,7 @@ startServer dbconfig mk config hook = do
     runSchedT schedEnv $ mapM_ failJob handles
 
   runSchedT schedEnv $ do
-    startSchedT
+    startSchedT pushTaskSize schedTaskSize
     M.startServer sEnv handleSessionT
     shutdown
   where mapEnv :: ServerEnv serv tp -> ServerEnv serv tp

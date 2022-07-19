@@ -181,20 +181,22 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sTaskList  <- newTVarIO []
   pure SchedEnv{..}
 
-startSchedT :: (MonadUnliftIO m, Persist db) => SchedT db m ()
-startSchedT = do
+startSchedT
+  :: (MonadUnliftIO m, Persist db)
+  => Int -> Int -> SchedT db m ()
+startSchedT pushTaskSize schedTaskSize = do
   liftIO $ infoM "Periodic.Server.Scheduler" "Scheduler started"
   SchedEnv{..} <- ask
   runTask 100 revertRunningQueue
   runTask 1   runPollJob
   runTask 0   runChanJob
 
-  replicateM_ 5 $ do
+  replicateM_ pushTaskSize $ do
     queue0 <- newTQueueIO
     atomically $ writeTQueue sPushList queue0
     runTask 0  $ runPushJob queue0
 
-  replicateM_ 2 $ do
+  replicateM_ schedTaskSize $ do
     queue1 <- newTQueueIO
     atomically $ writeTQueue sSchedList queue1
     runTask 0  $ runSchedJob queue1
