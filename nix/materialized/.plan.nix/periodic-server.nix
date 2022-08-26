@@ -11,7 +11,7 @@
     flags = {};
     package = {
       specVersion = "1.10";
-      identifier = { name = "periodic-server"; version = "1.1.8.0"; };
+      identifier = { name = "periodic-server"; version = "1.1.9.0"; };
       license = "BSD-3-Clause";
       copyright = "MIT";
       maintainer = "lmjubuntu@gmail.com";
