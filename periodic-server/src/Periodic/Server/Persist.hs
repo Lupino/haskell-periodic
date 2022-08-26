@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
@@ -7,6 +8,7 @@
 module Periodic.Server.Persist
   ( Persist (..)
   , State (..)
+  , loopFetchData
   ) where
 
 import           Control.Exception  (Exception)
@@ -39,3 +41,14 @@ class (Exception (PersistException db)) => Persist db where
   funcList       :: db -> IO [FuncName]
   minSchedAt     :: db -> FuncName -> IO Int64
   countPending   :: db -> FuncName -> Int64 -> IO Int
+
+
+loopFetchData :: Int -> Int -> Int -> (Int -> IO [a]) -> IO [a]
+loopFetchData offset total batchSize doGetBatch
+  | offset > total = pure []
+  | otherwise = do
+  !batchJobList <- doGetBatch offset
+  if length batchJobList < batchSize then pure batchJobList
+  else do
+    !jobList <- loopFetchData (offset + batchSize) total batchSize doGetBatch
+    pure $! jobList ++ batchJobList

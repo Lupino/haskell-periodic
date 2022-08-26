@@ -11,23 +11,23 @@ module Periodic.Server.Persist.PSQL
 
 import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
+import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString)
 import           Data.ByteString.Base64  (decode, encode)
 import           Data.ByteString.Lazy    (fromStrict)
-import           Data.Byteable           (toBytes)
 import           Data.Int                (Int64)
 import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..))
-import           Database.PSQL.Types     (FromField (..), Only (..), PSQLPool,
-                                          Size (..), TableName, ToField (..),
-                                          asc, count, createPSQLPool,
-                                          createTable, delete, insertOrUpdate,
-                                          none, runPSQLPool, selectOneOnly,
-                                          selectOnly, selectOnly_, update,
-                                          withTransaction)
+import           Database.PSQL.Types     (From (..), FromField (..), Only (..),
+                                          PSQLPool, Size (..), TableName,
+                                          ToField (..), asc, count,
+                                          createPSQLPool, createTable, delete,
+                                          insertOrUpdate, none, runPSQLPool,
+                                          selectOneOnly, selectOnly,
+                                          selectOnly_, update, withTransaction)
 import qualified Database.PSQL.Types     as DB (PSQL)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
-                                          State (..))
+                                          State (..), loopFetchData)
 import qualified Periodic.Server.Persist as Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
@@ -88,7 +88,8 @@ instance Persist PSQL where
   delete         db fn    = runDB_ db . doDelete fn
   size           db st    = runDB  db . doSize st
   getRunningJob  db       = runDB  db . doGetRunningJob
-  getPendingJob  db fn ts = runDB  db . doGetPendingJob fn ts
+  getPendingJob  db f t c = loopFetchData 0 c 100 $ \offset ->
+                              runDB db (doGetPendingJob f t (fromIntegral offset) 100)
   getLockedJob   db fn    = runDB  db . doGetLockedJob fn
   dumpJob        db       = runDB  db   doDumpJob
   configSet      db name  = runDB_ db . doConfigSet name
@@ -172,10 +173,10 @@ doGetRunningJob :: Int64 -> DB.PSQL [Job]
 doGetRunningJob ts =
   selectOnly jobs "value" "sched_at < ?" (Only ts) 0 1000 (asc "sched_at")
 
-doGetPendingJob :: FuncName -> Int64 -> Int -> DB.PSQL [Job]
-doGetPendingJob fn ts c =
+doGetPendingJob :: FuncName -> Int64 -> From -> Size -> DB.PSQL [Job]
+doGetPendingJob fn ts f s =
   selectOnly jobs "value" "func =? AND state=? AND sched_at < ?"
-      (fn, Pending, ts) 0 (Size $ fromIntegral c) (asc "sched_at")
+      (fn, Pending, ts) f s (asc "sched_at")
 
 doGetLockedJob :: FuncName -> Int -> DB.PSQL [Job]
 doGetLockedJob fn c = do
