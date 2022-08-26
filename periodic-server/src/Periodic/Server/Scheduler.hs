@@ -257,9 +257,10 @@ runTask delay m = do
     when (delay > 0) $ do
       now <- fromIntegral <$> getEpochTime
       t <- readTVarIO timer
-      when (t + delay > now) $ do
-        atomically $ writeTVar timer now
-        threadDelay $ (delay + t - now) * scaleUS
+      when (t + delay > now) $ threadDelay $ (delay + t - now) * scaleUS
+
+      now1 <- fromIntegral <$> getEpochTime
+      atomically $ writeTVar timer now1
     m
 
   taskList <- asks sTaskList
