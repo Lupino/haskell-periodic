@@ -252,14 +252,20 @@ keepalive = asks sKeepalive
 
 runTask :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m ()
 runTask delay m = do
+  timer <- newTVarIO 0
   io <- async $ forever $ do
-    when (delayUS > 0) $ threadDelay delayUS
+    when (delay > 0) $ do
+      now <- fromIntegral <$> getEpochTime
+      t <- readTVarIO timer
+      when (t + delay > now) $ do
+        atomically $ writeTVar timer now
+        threadDelay $ (delay + t - now) * scaleUS
     m
 
   taskList <- asks sTaskList
   atomically $ modifyTVar' taskList (io:)
 
-  where delayUS = delay * 1000 * 1000
+  where scaleUS = 1000 * 1000
 
 
 runPollJob :: (MonadUnliftIO m, Persist db) => SchedT db m ()
