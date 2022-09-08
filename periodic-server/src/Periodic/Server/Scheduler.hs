@@ -421,12 +421,16 @@ canRun_ stList fn = do
     Just _                   -> pure True
 
 
-pushSchedJob :: MonadIO m => Job -> (Nid, Msgid) -> SchedT db m ()
+pushSchedJob :: (MonadIO m, Persist db) => Job -> (Nid, Msgid) -> SchedT db m ()
 pushSchedJob job (nid, msgid) = do
+  persist <- asks sPersist
+  liftIO $ P.updateState persist Running fn jn
   sl <- asks sSchedList
   queue <- atomically $ readTQueue sl
   atomically $ writeTQueue sl queue
   atomically $ writeTQueue queue (job, nid, msgid)
+  where fn = getFuncName job
+        jn = getName job
 
 
 runSchedJob
@@ -442,7 +446,6 @@ schedJob job nid msgid = do
   tout <- fmap (getJobTimeout job) . readTVarIO =<< asks sTaskTimeout
   assignJobTime <- asks sAssignJobTime
   persist <- asks sPersist
-  liftIO $ P.updateState persist Running fn jn
   t <- liftIO getUnixTime
   IOMap.insert jh t assignJobTime
   r <- liftIO $ assignJob nid msgid $ setTimeout tout job
