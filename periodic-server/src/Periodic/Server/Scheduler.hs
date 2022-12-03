@@ -67,7 +67,7 @@ import qualified Periodic.Server.SchedPool  as Pool
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
 import           Periodic.Types.Job
-import           System.Log.Logger          (debugM, infoM)
+import           System.Log.Logger          (debugM, infoM, errorM)
 import           UnliftIO                   hiding (poll)
 import           UnliftIO.Concurrent        (threadDelay)
 
@@ -261,7 +261,11 @@ runTask delay m = do
 
       now1 <- fromIntegral <$> getEpochTime
       atomically $ writeTVar timer now1
-    m
+    r <- try m
+    case r of
+      Right _ -> pure ()
+      Left (e :: SomeException) ->
+        liftIO $ errorM "Periodic.Server.Scheduler" $ "runTask error " ++ show e
 
   taskList <- asks sTaskList
   atomically $ modifyTVar' taskList (io:)
