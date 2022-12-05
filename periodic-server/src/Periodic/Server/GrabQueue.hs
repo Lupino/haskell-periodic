@@ -8,16 +8,16 @@ module Periodic.Server.GrabQueue
   ) where
 
 
-import           Control.Monad      (forever, when)
-import           Control.Monad.Cont (callCC, lift, runContT)
-import           Data.IOMap         (IOMap)
-import qualified Data.IOMap         as IOMap
-import qualified Data.IOMap.STM     as IOMapS
-import           Data.Maybe         (catMaybes)
-import           Periodic.Types     (FuncName, Msgid, Nid)
-import           UnliftIO           (MonadIO, STM, TQueue, TVar, atomically,
-                                     newTQueueIO, readTQueue, readTVar,
-                                     unGetTQueue, writeTQueue, writeTVar)
+import           Control.Monad  (when)
+import           Data.IOMap     (IOMap)
+import qualified Data.IOMap     as IOMap
+import qualified Data.IOMap.STM as IOMapS
+import           Data.Maybe     (catMaybes)
+import           Metro.Utils    (foreverExit, lift)
+import           Periodic.Types (FuncName, Msgid, Nid)
+import           UnliftIO       (MonadIO, STM, TQueue, TVar, atomically,
+                                 newTQueueIO, readTQueue, readTVar, unGetTQueue,
+                                 writeTQueue, writeTVar)
 
 data GrabItem = GrabItem
   { msgidList :: TVar [Msgid]
@@ -58,7 +58,7 @@ popAgentSTM :: GrabQueue -> FuncName -> STM (Maybe (Nid, Msgid))
 popAgentSTM gq@(GrabQueue s _) fn = do
   first <- readTQueue s
   writeTQueue s first
-  (`runContT` pure) $ callCC $ \exit -> forever $ do
+  foreverExit $ \exit -> do
     nid <- lift $ readTQueue s
     r <- lift $ findMsgid gq fn nid
     case r of
@@ -80,7 +80,7 @@ dropAgentList (GrabQueue s q) nid = atomically $ do
   IOMapS.delete nid q
   first <- readTQueue s
   writeTQueue s first
-  (`runContT` pure) $ callCC $ \exit -> forever $ do
+  foreverExit $ \exit -> do
     nid0 <- lift $ readTQueue s
 
     if nid0 == nid then exit ()
