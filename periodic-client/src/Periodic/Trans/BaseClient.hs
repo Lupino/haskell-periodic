@@ -13,16 +13,19 @@ module Periodic.Trans.BaseClient
   , runJob_
   , runJob
   , checkHealth
+
+  , successRequest
   ) where
 
 import           Control.Monad                (unless)
+import           Data.Binary                  (Binary)
 import           Data.ByteString              (ByteString)
 import           Data.Int                     (Int64)
 import           Metro.Class                  (Transport)
 import           Metro.Node                   (getEnv1, request, stopNodeT)
 import           Metro.Utils                  (getEpochTime)
 import           Periodic.Node
-import           Periodic.Types               (getResult, packetREQ)
+import           Periodic.Types               (Packet, getResult, packetREQ)
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
@@ -40,8 +43,13 @@ close = stopNodeT
 ping :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m Bool
 ping = getResult False isPong <$> request Nothing (packetREQ Ping)
 
+successRequest
+  :: (MonadUnliftIO m, Transport tp, Binary a)
+  => Packet a -> BaseClientT u tp m Bool
+successRequest pkt = getResult False isSuccess <$> request Nothing pkt
+
 submitJob_ :: (MonadUnliftIO m, Transport tp) => Job -> BaseClientT u tp m Bool
-submitJob_ j = getResult False isSuccess <$> request Nothing (packetREQ (SubmitJob j))
+submitJob_ j = successRequest (packetREQ (SubmitJob j))
 
 submitJob
   :: (MonadUnliftIO m, Transport tp)

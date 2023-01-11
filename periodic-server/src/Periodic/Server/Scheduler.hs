@@ -67,7 +67,7 @@ import qualified Periodic.Server.SchedPool  as Pool
 import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
 import           Periodic.Types.Job
-import           System.Log.Logger          (debugM, infoM, errorM)
+import           System.Log.Logger          (debugM, errorM, infoM)
 import           UnliftIO                   hiding (poll)
 import           UnliftIO.Concurrent        (threadDelay)
 

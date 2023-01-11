@@ -30,12 +30,12 @@ import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
 import           Data.Binary                  (Binary)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString.Lazy         (fromStrict)
+import           Data.Int                     (Int64)
 import           Data.IOMap                   (IOMap)
 import qualified Data.IOMap                   as Map (delete, empty,
                                                       foldrWithKey', insert,
                                                       lookup)
 import qualified Data.IOMap.STM               as MapS (modifyIOMap, toList)
-import           Data.Int                     (Int64)
 import qualified Data.Map.Strict              as RMap (empty)
 import           Metro.Class                  (RecvPacket (..), Transport,
                                                TransportConfig, getPacketId)
@@ -46,13 +46,13 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                nextSessionId, runSessionT_,
                                                setDefaultSessionTimeout1,
                                                setNodeMode, setSessionMode,
-                                               startNodeT_, withEnv,
-                                               withSessionT)
+                                               startNodeT_, withEnv)
 import           Metro.Session                (send)
 import           Metro.Utils                  (getEpochTime)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
-                                                     close, getClientEnv, ping)
+                                                     close, getClientEnv, ping,
+                                                     successRequest)
 import           Periodic.Trans.Job           (JobT, func_, name, workFail)
 import           Periodic.Types               (ClientType (TypeWorker), Msgid,
                                                Packet, getClientType, getResult,
@@ -166,33 +166,36 @@ ping = runJobT BT.ping
 
 addFunc
   :: (MonadUnliftIO m, Transport tp)
-  => FuncName -> JobT tp m () -> WorkerT tp m ()
+  => FuncName -> JobT tp m () -> WorkerT tp m Bool
 addFunc f j = do
-  runJobT $ withSessionT Nothing $ send (packetREQ $ CanDo f)
+  r <- runJobT $ BT.successRequest (packetREQ $ CanDo f)
   ref <- asks taskList
   Map.insert f j ref
+  pure r
 
 broadcast
   :: (MonadUnliftIO m, Transport tp)
-  => FuncName -> JobT tp m () -> WorkerT tp m ()
+  => FuncName -> JobT tp m () -> WorkerT tp m Bool
 broadcast f j = do
-  runJobT $ withSessionT Nothing $ send (packetREQ $ Broadcast f)
+  r <- runJobT $ BT.successRequest (packetREQ $ Broadcast f)
   ref <- asks taskList
   Map.insert f j ref
+  pure r
 
 removeFunc
   :: (MonadUnliftIO m, Transport tp)
-  => FuncName -> WorkerT tp m ()
+  => FuncName -> WorkerT tp m Bool
 removeFunc f = do
   tskList <- asks taskList
   runJobT $ removeFunc_ tskList f
 
 removeFunc_
   :: (MonadUnliftIO m, Transport tp)
-  => TaskList tp m -> FuncName -> JobT tp m ()
+  => TaskList tp m -> FuncName -> JobT tp m Bool
 removeFunc_ ref f = do
-  withSessionT Nothing $ send (packetREQ $ CantDo f)
+  r <- BT.successRequest (packetREQ $ CantDo f)
   Map.delete f ref
+  return r
 
 getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
@@ -247,8 +250,8 @@ processJob WorkerEnv{..} ((sid, _), job) = do
     task <- Map.lookup f taskList
     case task of
       Nothing -> do
-        removeFunc_ taskList f
-        workFail
+        void $ removeFunc_ taskList f
+        void $ workFail
       Just task' ->
         catchAny task' $ \e -> do
           n <- name
@@ -261,7 +264,7 @@ processJob WorkerEnv{..} ((sid, _), job) = do
                           , "\nError: "
                           , show e
                           ]
-          workFail
+          void $ workFail
 
   atomically $ do
     s <- readTVar tskSizeH

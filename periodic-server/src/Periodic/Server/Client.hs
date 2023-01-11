@@ -96,12 +96,15 @@ handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   IOMap.delete jh wJobQueue
   lift $ doneJob jh w
+  send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
   IOMap.delete jh wJobQueue
   lift $ failJob jh
+  send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
   IOMap.delete jh wJobQueue
   lift $ schedLaterJob jh l s
+  send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} WC.Sleep = send $ packetRES Noop
 handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
@@ -113,6 +116,7 @@ handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
          writeTVar wFuncList $! fn : funcList
          pure False
   unless has $ lift $ addFunc fn
+  send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList
@@ -122,6 +126,7 @@ handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
          pure True
        else pure False
   when has $ lift $ removeFunc fn
+  send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList
@@ -131,10 +136,13 @@ handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
          writeTVar wFuncList $! fn : funcList
          pure False
   unless has $ lift $ broadcastFunc fn True
+  send $ packetRES Success
 handleWorkerSessionT _ (WC.Acquire n c jh) = do
   r <- lift $ acquireLock n c jh
   send $ packetRES $ Acquired r
-handleWorkerSessionT _ (WC.Release n jh) = lift $ releaseLock n jh
+handleWorkerSessionT _ (WC.Release n jh) = do
+  lift $ releaseLock n jh
+  send $ packetRES Success
 
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)

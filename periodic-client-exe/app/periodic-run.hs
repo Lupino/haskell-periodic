@@ -146,11 +146,11 @@ main = do
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork opts@Options{..} func cmd argv = do
   let w = processWorker opts cmd argv
-  if notify then broadcast func w
+  if notify then void $ broadcast func w
   else
     case lockName of
-      Nothing -> addFunc func w
-      Just n  -> addFunc func $ withLock_ n lockCount w
+      Nothing -> void $ addFunc func w
+      Just n  -> void $ addFunc func $ withLock_ n lockCount w
   liftIO $ putStrLn "Worker started."
   work thread
 
@@ -198,11 +198,11 @@ processWorker Options{..} cmd argv = do
 
 
   case code of
-    ExitFailure _ -> workFail
+    ExitFailure _ -> void workFail
     ExitSuccess   ->
       case out of
-        Nothing -> workDone
-        Just wl -> workDone_ $ LB.toStrict wl
+        Nothing -> void workDone
+        Just wl -> void $ workDone_ $ LB.toStrict wl
 
 -- | Fork a thread while doing something else, but kill it if there's an
 -- exception.

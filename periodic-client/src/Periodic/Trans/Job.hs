@@ -24,16 +24,16 @@ module Periodic.Trans.Job
   , module Periodic.Trans.BaseClient
   ) where
 
-import           Control.Monad                (when)
+import           Control.Monad                (void, when)
 import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
 import           Data.Maybe                   (fromJust)
 import           Metro.Class                  (Transport)
-import           Metro.Node                   (env, request, withSessionT)
-import           Metro.Session                (send)
+import           Metro.Node                   (env, request)
 import           Periodic.Node
 import           Periodic.Trans.BaseClient    (BaseClientT, runJob, runJob_,
-                                               submitJob, submitJob_)
+                                               submitJob, submitJob_,
+                                               successRequest)
 import           Periodic.Types               (FromBS (..), LockName, getResult,
                                                packetREQ)
 import           Periodic.Types.Job
@@ -73,36 +73,36 @@ timeout = getTimeout <$> job
 
 workDone
   :: (MonadUnliftIO m, Transport tp)
-  => JobT tp m ()
+  => JobT tp m Bool
 workDone = workDone_ empty
 
 workDone_
   :: (MonadUnliftIO m, Transport tp)
-  => ByteString -> JobT tp m ()
+  => ByteString -> JobT tp m Bool
 workDone_ w = do
   h <- getHandle <$> job
-  withSessionT Nothing $ send (packetREQ $ WorkDone h w)
+  successRequest (packetREQ $ WorkDone h w)
 
 workFail
   :: (MonadUnliftIO m, Transport tp)
-  =>  JobT tp m ()
+  =>  JobT tp m Bool
 workFail = do
   h <- getHandle <$> job
-  withSessionT Nothing $ send (packetREQ $ WorkFail h)
+  successRequest (packetREQ $ WorkFail h)
 
 schedLater
   :: (MonadUnliftIO m, Transport tp)
-  =>  Int64 -> JobT tp m ()
+  =>  Int64 -> JobT tp m Bool
 schedLater later = do
   h <- getHandle <$> job
-  withSessionT Nothing $ send (packetREQ $ SchedLater h later 0)
+  successRequest (packetREQ $ SchedLater h later 0)
 
 schedLater'
   :: (MonadUnliftIO m, Transport tp)
-  =>  Int64 -> Int -> JobT tp m ()
+  =>  Int64 -> Int -> JobT tp m Bool
 schedLater' later step = do
   h <- getHandle <$> job
-  withSessionT Nothing $ send (packetREQ $ SchedLater h later step)
+  successRequest (packetREQ $ SchedLater h later step)
 
 acquireLock
   :: (MonadUnliftIO m, Transport tp)
@@ -117,10 +117,10 @@ acquireLock n maxCount = do
 
 releaseLock
   :: (MonadUnliftIO m, Transport tp)
-  => LockName -> JobT tp m ()
+  => LockName -> JobT tp m Bool
 releaseLock n = do
   h <- getHandle <$> job
-  withSessionT Nothing $ send (packetREQ $ Release n h)
+  successRequest (packetREQ $ Release n h)
 
 withLock_
   :: (MonadUnliftIO m, Transport tp)
@@ -134,4 +134,4 @@ withLock
   => LockName -> Int -> JobT tp m () -> JobT tp m ()
 withLock n maxCount j = do
   withLock_ n maxCount j
-  releaseLock n
+  void $ releaseLock n
