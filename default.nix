@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc924" }:
+{ compiler-nix-name ? "ghc925" }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -26,10 +26,10 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2022-08-25T00:00:00Z";
-    index-sha256 = "8238f8872122f3c4dc77c67bfaff0e64213fa91623101f998f87c1de686abc9f";
-    plan-sha256 = if compiler-nix-name == "ghc924" then "0d1rlb1qgq514458irljbmyjn0a3qwsc106kd9zw6gyd00v0m37m" else null;
-    materialized = if compiler-nix-name == "ghc924" then ./nix/materialized else null;
+    index-state = "2022-12-01T00:00:00Z";
+    index-sha256 = "1646bdbd44908f0a7cc4c5bcbf6dae5a9159b3bd5f8238a9e68d4c30372a8e36";
+    plan-sha256 = if compiler-nix-name == "ghc925" then "1vyvbjky4qyy4c887a3qpw2lq481k3ywgbnskqqcc0sf85xh4flv" else null;
+    materialized = if compiler-nix-name == "ghc925" then ./nix/materialized else null;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
     modules = [(
@@ -39,7 +39,7 @@ in pkgs.haskell-nix.cabalProject {
            "--ghc-option=-optl=-lcrypto"
            "--ghc-option=-optl=-lpgport"
            "--ghc-option=-optl=-lpgcommon"
-           "--ghc-option=-optl=-L${pkgs.postgresql.lib.out}/lib"
+           "--ghc-option=-optl=-L${(pkgs.postgresql.overrideAttrs (old: { doCheck = false; })).lib.out}/lib"
            "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
          ];
       })];
