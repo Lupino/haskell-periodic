@@ -15,6 +15,13 @@ endif
 
 endif
 
+OUT = periodic periodic-run periodic-http-bridge periodicd
+BUNDLE_BIN = dist/bundle/bin
+BUNDLE_LIB = dist/bundle/lib/periodic
+BUNDLE_EXEC_PATH = @executable_path/../lib/periodic
+BUNDLE = dylibbundler -b -d $(BUNDLE_LIB) -p '$(BUNDLE_EXEC_PATH)' -of
+BUNDLE_BINS = $(foreach var,$(OUT),dist/bundle/bin/$(var))
+
 all: package
 
 dist/$(PLATFORM):
@@ -39,7 +46,7 @@ periodic-http-bridge:
 periodicd:
 	PKG=periodic-server make dist/$(PLATFORM)/$@
 
-package: periodic periodic-run periodic-http-bridge periodicd
+package: $(OUT)
 	cd dist/$(PLATFORM) && tar cjvf ../periodic-linux-$(PLATFORM).tar.bz2 periodic*
 
 
@@ -49,6 +56,24 @@ plan-sha256:
 materialized:
 	rm -r nix/materialized
 	nix-build 2>&1 | grep -om1 '/nix/store/.*-updateMaterialized' | bash
+
+dist/bundle/bin/%: bin/%
+	@mkdir -p dist/bundle/bin
+	@mkdir -p dist/bundle/lib/periodic
+	cp $< $@
+	nix-shell -p macdylibbundler --run "$(BUNDLE) -x $@"
+	echo sudo xattr -d com.apple.quarantine $< >> dist/bundle/install.sh
+
+macos-build:
+	stack install --local-bin-path bin
+
+macos-install:
+	echo '#!/usr/bin/env bash' > dist/bundle/install.sh
+
+macos-bundle: macos-install macos-build $(BUNDLE_BINS)
+	cd dist/bundle && find lib -type f | while read F; do echo sudo xattr -d com.apple.quarantine $$F >> install.sh; done
+	chmod +x dist/bundle/install.sh
+	cd dist/bundle && tar cjvf ../macos-bundle.tar.bz2 .
 
 clean:
 	rm -rf dist

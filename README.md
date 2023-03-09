@@ -133,16 +133,11 @@ or use the `periodic-run` command
 
 ### MacOS bundle
 
-    $ nix-shell -p macdylibbundler
-    (nix-shell) $ dylibbundler -b -x bin/periodicd -d lib -p '@executable_path/../lib'
-    (nix-shell) $ dylibbundler -b -x bin/periodic -d lib -p '@executable_path/../lib' -of
-    (nix-shell) $ dylibbundler -b -x bin/periodic-run -d lib -p '@executable_path/../lib' -of
-    (nix-shell) $ dylibbundler -b -x bin/periodic-http-bridge -d lib -p '@executable_path/../lib' -of
+    make macos-bundle
 
-
-    # install and fix cannot be opened because the developer cannot be verified
-    $ find -type f | while read F;do sudo xattr -d com.apple.quarantine $F; done
-
+    # install
+    tar xvf macos-bundle.tar.bz2
+    ./install.sh
 
 Periodic clients
 ----------------
