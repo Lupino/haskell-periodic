@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc925" }:
+{ compiler-nix-name ? "ghc927" }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -12,6 +12,13 @@ let
   #   niv add input-output-hk/haskell.nix -n haskellNix
 
   # Import nixpkgs and pass the haskell.nix provided nixpkgsArgs
+  overlays = haskellNix.overlays ++ [
+    (self: super: {
+        postgresql = super.postgresql.overrideAttrs (_: { doCheck = false;});
+    })
+  ];
+
+  # Import nixpkgs and pass the haskell.nix provided nixpkgsArgs
   pkgs = import
     # haskell.nix provides access to the nixpkgs pins which are used by our CI,
     # hence you will be more likely to get cache hits when using these.
@@ -19,17 +26,17 @@ let
     sources.nixpkgs
     # These arguments passed to nixpkgs, include some patches and also
     # the haskell.nix functionality itself as an overlay.
-    haskellNix.nixpkgsArgs;
+    (haskellNix.nixpkgsArgs // { inherit overlays; });
 in pkgs.haskell-nix.cabalProject {
     # 'cleanGit' cleans a source directory based on the files known by git
     src = pkgs.haskell-nix.haskellLib.cleanGit {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2022-12-01T00:00:00Z";
-    index-sha256 = "1646bdbd44908f0a7cc4c5bcbf6dae5a9159b3bd5f8238a9e68d4c30372a8e36";
-    plan-sha256 = if compiler-nix-name == "ghc925" then "1vyvbjky4qyy4c887a3qpw2lq481k3ywgbnskqqcc0sf85xh4flv" else null;
-    materialized = if compiler-nix-name == "ghc925" then ./nix/materialized else null;
+    index-state = "2023-04-05T00:00:00Z";
+    index-sha256 = "2e74554cde421629a0d374ad0971e73b670ce753031e00a6e0a620e564fd2d5c";
+    plan-sha256 = if compiler-nix-name == "ghc927" then "1vh42v9ljg8d5h1531asvbs5ij0q4qgj73v22mwbh6jmll30b6ib" else null;
+    materialized = if compiler-nix-name == "ghc927" then ./nix/materialized else null;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
     modules = [(
@@ -39,7 +46,7 @@ in pkgs.haskell-nix.cabalProject {
            "--ghc-option=-optl=-lcrypto"
            "--ghc-option=-optl=-lpgport"
            "--ghc-option=-optl=-lpgcommon"
-           "--ghc-option=-optl=-L${(pkgs.postgresql.overrideAttrs (old: { doCheck = false; })).lib.out}/lib"
+           "--ghc-option=-optl=-L${pkgs.postgresql.lib.out}/lib"
            "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
          ];
       })];
