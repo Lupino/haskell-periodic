@@ -11,12 +11,12 @@
     flags = { old-time = false; };
     package = {
       specVersion = "1.10";
-      identifier = { name = "unix-compat"; version = "0.5.4"; };
+      identifier = { name = "unix-compat"; version = "0.7"; };
       license = "BSD-3-Clause";
       copyright = "";
-      maintainer = "Jacob Stanley <jacob@stanley.io>";
+      maintainer = "Mitchell Rosen <mitchellwrosen@gmail.com>";
       author = "Björn Bringert, Duncan Coutts, Jacob Stanley, Bryan O'Sullivan";
-      homepage = "http://github.com/jacobstanley/unix-compat";
+      homepage = "http://github.com/haskell-pkg-janitors/unix-compat";
       url = "";
       synopsis = "Portable POSIX-compatibility layer.";
       description = "This package provides portable implementations of parts\nof the unix package. This package re-exports the unix\npackage when available. When it isn't available,\nportable implementations are used.";
@@ -29,6 +29,7 @@
           ] ++ (if system.isWindows
           then [
             (hsPkgs."Win32" or (errorHandler.buildDepError "Win32"))
+            (hsPkgs."filepath" or (errorHandler.buildDepError "filepath"))
             ] ++ (if flags.old-time
             then [
               (hsPkgs."old-time" or (errorHandler.buildDepError "old-time"))
@@ -43,12 +44,40 @@
         libs = (pkgs.lib).optional (system.isWindows) (pkgs."msvcrt" or (errorHandler.sysDepError "msvcrt"));
         buildable = true;
         };
+      tests = {
+        "unix-compat-testsuite" = {
+          depends = [
+            (hsPkgs."unix-compat" or (errorHandler.buildDepError "unix-compat"))
+            (hsPkgs."base" or (errorHandler.buildDepError "base"))
+            (hsPkgs."monad-parallel" or (errorHandler.buildDepError "monad-parallel"))
+            (hsPkgs."hspec" or (errorHandler.buildDepError "hspec"))
+            (hsPkgs."HUnit" or (errorHandler.buildDepError "HUnit"))
+            (hsPkgs."directory" or (errorHandler.buildDepError "directory"))
+            (hsPkgs."extra" or (errorHandler.buildDepError "extra"))
+            (hsPkgs."temporary" or (errorHandler.buildDepError "temporary"))
+            ] ++ (if system.isWindows
+            then if flags.old-time
+              then [
+                (hsPkgs."old-time" or (errorHandler.buildDepError "old-time"))
+                ] ++ [
+                (hsPkgs."directory" or (errorHandler.buildDepError "directory"))
+                ]
+              else [
+                (hsPkgs."time" or (errorHandler.buildDepError "time"))
+                (hsPkgs."directory" or (errorHandler.buildDepError "directory"))
+                ]
+            else [
+              (hsPkgs."directory" or (errorHandler.buildDepError "directory"))
+              ]);
+          buildable = true;
+          };
+        };
       };
     } // {
     src = (pkgs.lib).mkDefault (pkgs.fetchurl {
-      url = "http://hackage.haskell.org/package/unix-compat-0.5.4.tar.gz";
-      sha256 = "8224579d6e9acea7ecbd7af21f191758a11c77a2c5b2fc61f1079ac004a4a4b1";
+      url = "http://hackage.haskell.org/package/unix-compat-0.7.tar.gz";
+      sha256 = "2b75ca79e0f7368f915f01ca6a5201f7df58ada46b9e4869bca1b92d853f2e3e";
       });
     }) // {
-    package-description-override = "name:           unix-compat\r\nversion:        0.5.4\r\nx-revision: 2\r\nsynopsis:       Portable POSIX-compatibility layer.\r\ndescription:    This package provides portable implementations of parts\r\n                of the unix package. This package re-exports the unix\r\n                package when available. When it isn't available,\r\n                portable implementations are used.\r\n\r\nhomepage:       http://github.com/jacobstanley/unix-compat\r\nlicense:        BSD3\r\nlicense-file:   LICENSE\r\nauthor:         Björn Bringert, Duncan Coutts, Jacob Stanley, Bryan O'Sullivan\r\nmaintainer:     Jacob Stanley <jacob@stanley.io>\r\ncategory:       System\r\nbuild-type:     Simple\r\ncabal-version:  >= 1.10\r\n\r\nsource-repository head\r\n  type:     git\r\n  location: git://github.com/jacobstanley/unix-compat.git\r\n\r\nflag old-time\r\n  description: build against old-time package\r\n  default: False\r\n\r\nLibrary\r\n  default-language: Haskell2010\r\n  hs-source-dirs: src\r\n  ghc-options: -Wall\r\n  build-depends: base == 4.*\r\n\r\n  exposed-modules:\r\n    System.PosixCompat\r\n    System.PosixCompat.Extensions\r\n    System.PosixCompat.Files\r\n    System.PosixCompat.Temp\r\n    System.PosixCompat.Time\r\n    System.PosixCompat.Types\r\n    System.PosixCompat.Unistd\r\n    System.PosixCompat.User\r\n\r\n  if os(windows)\r\n    c-sources:\r\n      cbits/HsUname.c\r\n      cbits/mktemp.c\r\n\r\n    extra-libraries: msvcrt\r\n    build-depends: Win32 >= 2.5.0.0\r\n\r\n    if flag(old-time)\r\n      build-depends: old-time >= 1.0.0.0 && < 1.2.0.0\r\n      cpp-options: -DOLD_TIME\r\n\r\n      if impl(ghc < 7)\r\n        build-depends: directory == 1.0.*\r\n        cpp-options: -DDIRECTORY_1_0\r\n      else\r\n        build-depends: directory == 1.1.*\r\n    else\r\n      build-depends: time >= 1.0 && < 1.13\r\n      build-depends: directory >= 1.2 && < 1.4\r\n\r\n    other-modules:\r\n      System.PosixCompat.Internal.Time\r\n\r\n  else\r\n    build-depends: unix >= 2.6 && < 2.8\r\n    include-dirs: include\r\n    includes: HsUnixCompat.h\r\n    install-includes: HsUnixCompat.h\r\n    c-sources: cbits/HsUnixCompat.c\r\n    if os(solaris)\r\n      cc-options: -DSOLARIS\r\n";
+    package-description-override = "name:           unix-compat\nversion:        0.7\nsynopsis:       Portable POSIX-compatibility layer.\ndescription:    This package provides portable implementations of parts\n                of the unix package. This package re-exports the unix\n                package when available. When it isn't available,\n                portable implementations are used.\n\nhomepage:       http://github.com/haskell-pkg-janitors/unix-compat\nlicense:        BSD3\nlicense-file:   LICENSE\nauthor:         Björn Bringert, Duncan Coutts, Jacob Stanley, Bryan O'Sullivan\nmaintainer:     Mitchell Rosen <mitchellwrosen@gmail.com>\ncategory:       System\nbuild-type:     Simple\ncabal-version:  >= 1.10\n\nextra-source-files:\n  CHANGELOG.md\n\nsource-repository head\n  type:     git\n  location: git@github.com:haskell-pkg-janitors/unix-compat.git\n\nflag old-time\n  description: build against old-time package\n  default: False\n\nLibrary\n  default-language: Haskell2010\n  hs-source-dirs: src\n  ghc-options: -Wall\n  build-depends: base == 4.*\n\n  exposed-modules:\n    System.PosixCompat\n    System.PosixCompat.Extensions\n    System.PosixCompat.Files\n    System.PosixCompat.Temp\n    System.PosixCompat.Time\n    System.PosixCompat.Types\n    System.PosixCompat.Unistd\n\n  if os(windows)\n    c-sources:\n      cbits/HsUname.c\n      cbits/mktemp.c\n\n    extra-libraries: msvcrt\n    build-depends: Win32 >= 2.5.0.0\n    build-depends: filepath >= 1.0 && < 1.5\n\n    if flag(old-time)\n      build-depends: old-time >= 1.0.0.0 && < 1.2.0.0\n      cpp-options: -DOLD_TIME\n\n      if impl(ghc < 7)\n        build-depends: directory == 1.0.*\n        cpp-options: -DDIRECTORY_1_0\n      else\n        build-depends: directory == 1.1.*\n    else\n      build-depends: time >= 1.0 && < 1.13\n      build-depends: directory >= 1.3.1 && < 1.4\n\n    other-modules:\n      System.PosixCompat.Internal.Time\n\n  else\n    build-depends: unix >= 2.6 && < 2.9\n    include-dirs: include\n    includes: HsUnixCompat.h\n    install-includes: HsUnixCompat.h\n    c-sources: cbits/HsUnixCompat.c\n    if os(solaris)\n      cc-options: -DSOLARIS\n\nTest-Suite unix-compat-testsuite\n  default-language: Haskell2010\n  type: exitcode-stdio-1.0\n  hs-source-dirs: tests\n  ghc-options: -Wall\n  main-is: main.hs\n\n  other-modules:\n     MkstempSpec\n     LinksSpec\n\n  -- ghc-options:\n  --   -Wall\n  --   -fwarn-tabs\n  --   -funbox-strict-fields\n  --   -threaded\n  --   -fno-warn-unused-do-bind\n  --   -fno-warn-type-defaults\n\n  -- extensions:\n  --   OverloadedStrings\n  --   ExtendedDefaultRules\n\n  -- if flag(lifted)\n  --    cpp-options: -DLIFTED\n\n  build-depends:\n      unix-compat\n    , base == 4.*\n    , monad-parallel\n    , hspec\n    , HUnit\n    , directory\n    , extra\n    , temporary\n\n  if os(windows)\n    -- c-sources:\n    --   cbits/HsUname.c\n    --   cbits/mktemp.c\n\n    -- extra-libraries: msvcrt\n    -- build-depends: Win32 >= 2.5.0.0\n\n    if flag(old-time)\n      build-depends: old-time >= 1.0.0.0 && < 1.2.0.0\n      cpp-options: -DOLD_TIME\n\n      if impl(ghc < 7)\n        build-depends: directory == 1.0.*\n        cpp-options: -DDIRECTORY_1_0\n      else\n        build-depends: directory == 1.1.*\n    else\n      build-depends: time >= 1.0 && < 1.13\n      build-depends: directory >= 1.3.1 && < 1.4\n\n    -- other-modules:\n    --   System.PosixCompat.Internal.Time\n\n  else\n    -- build-depends: unix >= 2.4 && < 2.9\n    -- include-dirs: include\n    -- includes: HsUnixCompat.h\n    -- install-includes: HsUnixCompat.h\n    -- c-sources: cbits/HsUnixCompat.c\n    if os(solaris)\n      cc-options: -DSOLARIS\n\n    build-depends: directory >= 1.3.1 && < 1.4\n";
     }
