@@ -5,13 +5,14 @@ module Main
   ( main
   ) where
 
-import           Control.Concurrent         (forkIO, killThread)
+import           Control.Concurrent         (forkIO, killThread, threadDelay)
 import           Control.DeepSeq            (rnf)
 import           Control.Monad              (unless, void, when)
 import           Control.Monad.IO.Class     (liftIO)
 import qualified Data.ByteString.Char8      as B (pack)
-import qualified Data.ByteString.Lazy       as LB (null, toStrict)
+import qualified Data.ByteString.Lazy       as LB (ByteString, null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
+import           Data.Int                   (Int64)
 import           Data.List                  (isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Version               (showVersion)
@@ -22,8 +23,9 @@ import           Metro.TP.TLS               (makeClientParams', tlsConfig)
 import           Metro.TP.WebSockets        (clientConfig)
 import           Metro.TP.XOR               (xorConfig)
 import           Paths_periodic_client_exe  (version)
-import           Periodic.Trans.Job         (JobT, name, withLock_, workDone,
-                                             workDone_, workFail, workload)
+import           Periodic.Trans.Job         (JobT, name, schedLater, withLock_,
+                                             workDone, workDone_, workFail,
+                                             workload)
 import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
                                              startWorkerT, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
@@ -31,13 +33,14 @@ import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
 import           System.IO                  (hClose)
 import           System.Process             (CreateProcess (std_in, std_out),
+                                             ProcessHandle,
                                              StdStream (CreatePipe, Inherit),
-                                             proc, waitForProcess,
-                                             withCreateProcess)
-import           UnliftIO                   (MVar, SomeException, evaluate,
-                                             mask, newEmptyMVar, onException,
-                                             putMVar, takeMVar, throwIO, try,
-                                             tryIO)
+                                             proc, terminateProcess,
+                                             waitForProcess, withCreateProcess)
+import           UnliftIO                   (MVar, SomeException, async, cancel,
+                                             evaluate, mask, newEmptyMVar,
+                                             onException, putMVar, takeMVar,
+                                             throwIO, try, tryIO)
 
 
 data Options = Options
@@ -56,6 +59,8 @@ data Options = Options
     , useData   :: Bool
     , useName   :: Bool
     , showHelp  :: Bool
+    , timeoutS  :: Int
+    , retrySecs :: Int64
     }
 
 options :: Maybe Int -> Maybe String -> Maybe String -> Options
@@ -75,6 +80,8 @@ options t h f = Options
   , useData   = False
   , useName   = True
   , showHelp  = False
+  , timeoutS  = 0
+  , retrySecs = 0
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -94,6 +101,8 @@ parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
 parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
+parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
+parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
 parseOptions ("-h":xs)             opt = parseOptions xs opt { showHelp = True }
 parseOptions []                    opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                   opt = (opt { showHelp = True }, "", "", [])
@@ -103,7 +112,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name]] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -121,6 +130,8 @@ printHelp = do
   putStrLn "     --broadcast  Is broadcast worker"
   putStrLn "     --data       Send work data to client"
   putStrLn "     --no-name    Ignore the job name"
+  putStrLn "     --timeout    Process wait timeout in seconds"
+  putStrLn "     --retry-secs Failed job retry in seconds"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
@@ -168,6 +179,22 @@ run opts@Options {xorFile = "", ..} func cmd argv =
 run opts@Options {..} func cmd argv =
   startWorkerT (xorConfig xorFile $ socket host) $ doWork opts func cmd argv
 
+
+finishProcess :: Int -> ProcessHandle -> Maybe LB.ByteString -> IO (ExitCode, Maybe LB.ByteString)
+finishProcess 0 ph out = do
+  code <- waitForProcess ph
+  return (code, out)
+finishProcess t ph out = do
+  io <- async $ do
+    threadDelay t
+    terminateProcess ph
+
+  retval <- finishProcess 0 ph out
+  cancel io
+
+  return retval
+
+
 processWorker :: Transport tp => Options -> String -> [String] -> JobT tp IO ()
 processWorker Options{..} cmd argv = do
   n <- name
@@ -181,8 +208,7 @@ processWorker Options{..} cmd argv = do
       (Just inh, Nothing) -> do
         unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
         void $ tryIO $ hClose inh
-        code <- waitForProcess ph
-        return (code, Nothing)
+        finishProcess timeoutS ph Nothing
 
       (Just inh, Just outh) -> do
         output  <- LB.hGetContents outh
@@ -193,12 +219,13 @@ processWorker Options{..} cmd argv = do
           waitOut
           hClose outh
 
-          code <- waitForProcess ph
-          return (code, Just output)
+          finishProcess timeoutS ph (Just output)
 
 
   case code of
-    ExitFailure _ -> void workFail
+    ExitFailure _ ->
+      if retrySecs > 0 then void $ schedLater retrySecs
+                       else void workFail
     ExitSuccess   ->
       case out of
         Nothing -> void workDone
@@ -212,9 +239,9 @@ processWorker Options{..} cmd argv = do
 -- try to close that handle, which could otherwise deadlock.
 --
 withForkWait :: IO () -> (IO () ->  IO a) -> IO a
-withForkWait async body = do
+withForkWait io body = do
   waitVar <- newEmptyMVar :: IO (MVar (Either SomeException ()))
   mask $ \restore -> do
-    tid <- forkIO $ try (restore async) >>= putMVar waitVar
+    tid <- forkIO $ try (restore io) >>= putMVar waitVar
     let wait = takeMVar waitVar >>= either throwIO return
     restore (body wait) `onException` killThread tid
