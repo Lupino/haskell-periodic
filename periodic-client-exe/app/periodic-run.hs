@@ -7,13 +7,13 @@ module Main
 
 import           Control.Concurrent         (forkIO, killThread, threadDelay)
 import           Control.DeepSeq            (rnf)
-import           Control.Monad              (unless, void, when)
+import           Control.Monad              (forever, unless, void, when)
 import           Control.Monad.IO.Class     (liftIO)
 import qualified Data.ByteString.Char8      as B (pack)
-import qualified Data.ByteString.Lazy       as LB (ByteString, null, toStrict)
+import qualified Data.ByteString.Lazy       as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
 import           Data.Int                   (Int64)
-import           Data.List                  (isPrefixOf)
+import           Data.List                  (find, isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
@@ -33,10 +33,11 @@ import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
 import           System.IO                  (hClose)
 import           System.Process             (CreateProcess (std_in, std_out),
-                                             ProcessHandle,
+                                             Pid, ProcessHandle,
                                              StdStream (CreatePipe, Inherit),
-                                             proc, terminateProcess,
-                                             waitForProcess, withCreateProcess)
+                                             getPid, proc, readProcess,
+                                             terminateProcess, waitForProcess,
+                                             withCreateProcess)
 import           UnliftIO                   (MVar, SomeException, async, cancel,
                                              evaluate, mask, newEmptyMVar,
                                              onException, putMVar, takeMVar,
@@ -61,6 +62,7 @@ data Options = Options
     , showHelp  :: Bool
     , timeoutS  :: Int
     , retrySecs :: Int64
+    , memLimit  :: Int64
     }
 
 options :: Maybe Int -> Maybe String -> Maybe String -> Options
@@ -82,6 +84,7 @@ options t h f = Options
   , showHelp  = False
   , timeoutS  = 0
   , retrySecs = 0
+  , memLimit  = 0
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -103,6 +106,7 @@ parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
 parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
 parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
+parseOptions ("--mem-limit":x:xs)  opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("-h":xs)             opt = parseOptions xs opt { showHelp = True }
 parseOptions []                    opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                   opt = (opt { showHelp = True }, "", "", [])
@@ -112,7 +116,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -132,6 +136,7 @@ printHelp = do
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "     --timeout    Process wait timeout in seconds"
   putStrLn "     --retry-secs Failed job retry in seconds"
+  putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
@@ -180,16 +185,34 @@ run opts@Options {..} func cmd argv =
   startWorkerT (xorConfig xorFile $ socket host) $ doWork opts func cmd argv
 
 
-finishProcess :: Int -> ProcessHandle -> Maybe LB.ByteString -> IO (ExitCode, Maybe LB.ByteString)
-finishProcess 0 ph out = do
+finishProcess :: Int -> Int64 -> ProcessHandle -> IO ExitCode
+finishProcess 0 0 ph = do
   code <- waitForProcess ph
-  return (code, out)
-finishProcess t ph out = do
+  return code
+finishProcess t 0 ph = do
   io <- async $ do
-    threadDelay t
+    threadDelay timeoutUs
     terminateProcess ph
 
-  retval <- finishProcess 0 ph out
+  retval <- finishProcess 0 0 ph
+  cancel io
+
+  return retval
+
+  where timeoutUs = t * 1000000
+
+finishProcess t mem ph = do
+  io <- async $ forever $ do
+    threadDelay 1000000 -- 1 seconds
+    mpid <- getPid ph
+    case mpid of
+      Nothing -> pure ()
+      Just pid -> do
+        currMem <- getProcessMem pid
+        if currMem > mem then terminateProcess ph
+                         else pure ()
+
+  retval <- finishProcess t 0 ph
   cancel io
 
   return retval
@@ -208,7 +231,8 @@ processWorker Options{..} cmd argv = do
       (Just inh, Nothing) -> do
         unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
         void $ tryIO $ hClose inh
-        finishProcess timeoutS ph Nothing
+        code <- finishProcess timeoutS memLimit ph
+        return (code, Nothing)
 
       (Just inh, Just outh) -> do
         output  <- LB.hGetContents outh
@@ -216,10 +240,11 @@ processWorker Options{..} cmd argv = do
           unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
           void $ tryIO $ hClose inh
 
+          code <- finishProcess timeoutS memLimit ph
           waitOut
           hClose outh
 
-          finishProcess timeoutS ph (Just output)
+          return (code, Just output)
 
 
   case code of
@@ -245,3 +270,33 @@ withForkWait io body = do
     tid <- forkIO $ try (restore io) >>= putMVar waitVar
     let wait = takeMVar waitVar >>= either throwIO return
     restore (body wait) `onException` killThread tid
+
+parseMemStr :: String -> Int64
+parseMemStr [] = 0
+parseMemStr [x] = read [x]
+parseMemStr str = go (init str) (last str)
+  where go :: String -> Char -> Int64
+        go num 'k' = (read num :: Int64) * 1024
+        go num 'm' = (read num :: Int64) * 1024 * 1024
+        go num 'g' = (read num :: Int64) * 1024 * 1024 * 1024
+        go num 'K' = (read num :: Int64) * 1024
+        go num 'M' = (read num :: Int64) * 1024 * 1024
+        go num 'G' = (read num :: Int64) * 1024 * 1024 * 1024
+        go num c   = read (num ++ [c]) :: Int64
+
+parseMemLine :: String -> (Pid, Int64)
+parseMemLine str = (read x :: Pid, parseMemStr y)
+  where [x, y] = words str
+
+parseMemMap :: String -> [(Pid, Int64)]
+parseMemMap = map parseMemLine . tail . lines
+
+getMemMap :: IO [(Pid, Int64)]
+getMemMap = parseMemMap <$> readProcess "ps" ["-eo", "pid,rss"] ""
+
+getProcessMem :: Pid -> IO Int64
+getProcessMem pid = do
+  memMap <- getMemMap
+  case find ((== pid) . fst) memMap of
+    Nothing       -> pure 0
+    Just (_, mem) -> pure mem
