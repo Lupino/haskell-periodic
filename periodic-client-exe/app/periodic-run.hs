@@ -23,9 +23,9 @@ import           Metro.TP.TLS               (makeClientParams', tlsConfig)
 import           Metro.TP.WebSockets        (clientConfig)
 import           Metro.TP.XOR               (xorConfig)
 import           Paths_periodic_client_exe  (version)
-import           Periodic.Trans.Job         (JobT, name, schedLater, withLock_,
-                                             workDone, workDone_, workFail,
-                                             workload)
+import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
+                                             withLock_, workDone, workDone_,
+                                             workFail, workload)
 import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
                                              startWorkerT, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
@@ -82,7 +82,7 @@ options t h f = Options
   , useData   = False
   , useName   = True
   , showHelp  = False
-  , timeoutS  = 0
+  , timeoutS  = -1
   , retrySecs = 0
   , memLimit  = 0
   }
@@ -134,7 +134,7 @@ printHelp = do
   putStrLn "     --broadcast  Is broadcast worker"
   putStrLn "     --data       Send work data to client"
   putStrLn "     --no-name    Ignore the job name"
-  putStrLn "     --timeout    Process wait timeout in seconds"
+  putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
   putStrLn "     --retry-secs Failed job retry in seconds"
   putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "  -h --help       Display help message"
@@ -186,9 +186,7 @@ run opts@Options {..} func cmd argv =
 
 
 finishProcess :: Int -> Int64 -> ProcessHandle -> IO ExitCode
-finishProcess 0 0 ph = do
-  code <- waitForProcess ph
-  return code
+finishProcess 0 0 ph = waitForProcess ph
 finishProcess t 0 ph = do
   io <- async $ do
     threadDelay timeoutUs
@@ -209,8 +207,7 @@ finishProcess t mem ph = do
       Nothing -> pure ()
       Just pid -> do
         currMem <- getProcessMem pid
-        if currMem > mem then terminateProcess ph
-                         else pure ()
+        when (currMem > mem) $ terminateProcess ph
 
   retval <- finishProcess t 0 ph
   cancel io
@@ -222,6 +219,7 @@ processWorker :: Transport tp => Options -> String -> [String] -> JobT tp IO ()
 processWorker Options{..} cmd argv = do
   n <- name
   rb <- workload
+  tout <- if timeoutS > -1 then pure timeoutS else timeout
   let argv' = if useName then argv ++ [n] else argv
       cp = (proc cmd argv') {std_in = CreatePipe, std_out= if useData then CreatePipe else Inherit}
 
@@ -231,7 +229,7 @@ processWorker Options{..} cmd argv = do
       (Just inh, Nothing) -> do
         unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
         void $ tryIO $ hClose inh
-        code <- finishProcess timeoutS memLimit ph
+        code <- finishProcess tout memLimit ph
         return (code, Nothing)
 
       (Just inh, Just outh) -> do
@@ -240,7 +238,7 @@ processWorker Options{..} cmd argv = do
           unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
           void $ tryIO $ hClose inh
 
-          code <- finishProcess timeoutS memLimit ph
+          code <- finishProcess tout memLimit ph
           waitOut
           hClose outh
 
