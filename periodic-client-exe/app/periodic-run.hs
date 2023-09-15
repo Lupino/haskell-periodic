@@ -32,6 +32,7 @@ import           Periodic.Types             (FuncName (..), LockName (..))
 import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
 import           System.IO                  (hClose)
+import           System.Log.Logger          (errorM)
 import           System.Process             (CreateProcess (std_in, std_out),
                                              Pid, ProcessHandle,
                                              StdStream (CreatePipe, Inherit),
@@ -185,21 +186,22 @@ run opts@Options {..} func cmd argv =
   startWorkerT (xorConfig xorFile $ socket host) $ doWork opts func cmd argv
 
 
-finishProcess :: Int -> Int64 -> ProcessHandle -> IO ExitCode
-finishProcess 0 0 ph = waitForProcess ph
-finishProcess t 0 ph = do
+finishProcess :: (String -> IO ()) ->  Int -> Int64 -> ProcessHandle -> IO ExitCode
+finishProcess _ 0 0 ph = waitForProcess ph
+finishProcess onError t 0 ph = do
   io <- async $ do
     threadDelay timeoutUs
+    onError $ "timeout after " ++ show t ++ "s"
     terminateProcess ph
 
-  retval <- finishProcess 0 0 ph
+  retval <- finishProcess onError 0 0 ph
   cancel io
 
   return retval
 
   where timeoutUs = t * 1000000
 
-finishProcess t mem ph = do
+finishProcess onError t mem ph = do
   io <- async $ forever $ do
     threadDelay 1000000 -- 1 seconds
     mpid <- getPid ph
@@ -207,9 +209,11 @@ finishProcess t mem ph = do
       Nothing -> pure ()
       Just pid -> do
         currMem <- getProcessMem pid
-        when (currMem > mem) $ terminateProcess ph
+        when (currMem > mem) $ do
+          onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show mem ++ ")"
+          terminateProcess ph
 
-  retval <- finishProcess t 0 ph
+  retval <- finishProcess onError t 0 ph
   cancel io
 
   return retval
@@ -222,14 +226,18 @@ processWorker Options{..} cmd argv = do
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   let argv' = if useName then argv ++ [n] else argv
       cp = (proc cmd argv') {std_in = CreatePipe, std_out= if useData then CreatePipe else Inherit}
+      onError err = errorM "periodic-run" $ "Task(" ++ n ++ ") error: " ++ err
 
   (code, out) <- liftIO $ withCreateProcess cp $ \mb_inh mb_outh _ ph ->
     case (mb_inh, mb_outh) of
-      (Nothing, _) -> error "processWorker: Failed to get a stdin handle."
+      (Nothing, _) -> do
+        onError "Failed to get a stdin handle."
+        terminateProcess ph
+        return (ExitFailure 1, Nothing)
       (Just inh, Nothing) -> do
         unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
         void $ tryIO $ hClose inh
-        code <- finishProcess tout memLimit ph
+        code <- finishProcess onError tout memLimit ph
         return (code, Nothing)
 
       (Just inh, Just outh) -> do
@@ -238,7 +246,7 @@ processWorker Options{..} cmd argv = do
           unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
           void $ tryIO $ hClose inh
 
-          code <- finishProcess tout memLimit ph
+          code <- finishProcess onError tout memLimit ph
           waitOut
           hClose outh
 
