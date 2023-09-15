@@ -280,15 +280,15 @@ withForkWait io body = do
 parseMemStr :: String -> Int64
 parseMemStr [] = 0
 parseMemStr [x] = read [x]
-parseMemStr str = go (init str) (last str)
-  where go :: String -> Char -> Int64
-        go num 'k' = (read num :: Int64) * 1024
-        go num 'm' = (read num :: Int64) * 1024 * 1024
-        go num 'g' = (read num :: Int64) * 1024 * 1024 * 1024
-        go num 'K' = (read num :: Int64) * 1024
-        go num 'M' = (read num :: Int64) * 1024 * 1024
-        go num 'G' = (read num :: Int64) * 1024 * 1024 * 1024
-        go num c   = read (num ++ [c]) :: Int64
+parseMemStr str = floor $ go (init str) (last str)
+  where go :: String -> Char -> Float
+        go num 'k' = read num * 1024
+        go num 'm' = read num * 1024 * 1024
+        go num 'g' = read num * 1024 * 1024 * 1024
+        go num 'K' = read num * 1024
+        go num 'M' = read num * 1024 * 1024
+        go num 'G' = read num * 1024 * 1024 * 1024
+        go num c   = read (num ++ [c])
 
 parseMemLine :: String -> (Pid, Int64)
 parseMemLine str = (read x :: Pid, parseMemStr y)
