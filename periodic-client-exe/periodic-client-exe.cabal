@@ -40,10 +40,28 @@ executable periodic-run
                      , periodic-client
                      , periodic-common
                      , bytestring
-                     , text
                      , process
                      , unliftio
                      , deepseq
+                     , metro
+                     , metro-socket
+                     , metro-transport-xor
+                     , metro-transport-tls
+                     , metro-transport-websockets
+                     , hslogger
+  other-modules:       Paths_periodic_client_exe
+  default-language:    Haskell2010
+
+executable periodic-run-pipe
+  hs-source-dirs:      app
+  main-is:             periodic-run-pipe.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base >= 4.7 && < 5
+                     , periodic-client
+                     , periodic-common
+                     , bytestring
+                     , process
+                     , unliftio
                      , metro
                      , metro-socket
                      , metro-transport-xor

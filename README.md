@@ -122,6 +122,10 @@ or use the `periodic-run` command
 
     periodic-run show_file echo
 
+or use the `periodic-run-pipe` command
+
+    periodic-run-pipe show_file cat
+
 ### Submit a job
 
     periodic submit show_file abc.md
