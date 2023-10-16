@@ -61,6 +61,7 @@ data Options = Options
     , timeoutS  :: Int
     , retrySecs :: Int64
     , memLimit  :: Int64
+    , bufSize   :: Int
     }
 
 options :: Maybe Int -> Maybe String -> Maybe String -> Options
@@ -81,6 +82,7 @@ options t h f = Options
   , timeoutS  = -1
   , retrySecs = 0
   , memLimit  = 0
+  , bufSize   = 4194304
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -101,6 +103,7 @@ parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
 parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
 parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
 parseOptions ("--mem-limit":x:xs)  opt = parseOptions xs opt { memLimit = parseMemStr x }
+parseOptions ("--buf-size":x:xs)   opt = parseOptions xs opt { bufSize = fromIntegral (parseMemStr x) }
 parseOptions ("-h":xs)             opt = parseOptions xs opt { showHelp = True }
 parseOptions []                    opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                   opt = (opt { showHelp = True }, "", "", [])
@@ -110,7 +113,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run-pipe - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run-pipe [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
+  putStrLn "Usage: periodic-run-pipe [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--buf-size SIZE] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -129,6 +132,7 @@ printHelp = do
   putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
   putStrLn "     --retry-secs Failed job retry in seconds"
   putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
+  putStrLn "     --buf-size   Pipe max buffer size in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
@@ -154,7 +158,7 @@ main = do
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork opts@Options{..} func cmd argv = do
   pipes <- newTQueueIO
-  liftIO $ replicateM_ thread $ void $ createRunner pipes memLimit cmd argv
+  liftIO $ replicateM_ thread $ void $ createRunner pipes bufSize memLimit cmd argv
   let w = processPipeWorker opts pipes
   if notify then void $ broadcast func w
   else
@@ -178,38 +182,6 @@ run opts@Options {xorFile = "", ..} func cmd argv =
 run opts@Options {..} func cmd argv =
   startWorkerT (xorConfig xorFile $ socket host) $ doWork opts func cmd argv
 
-
--- finishProcess :: (String -> IO ()) ->  Int -> Int64 -> ProcessHandle -> IO ()
--- finishProcess _ 0 0 ph = waitForProcess ph
--- finishProcess onError t 0 ph = do
---   io <- async $ do
---     threadDelay timeoutUs
---     onError $ "timeout after " ++ show t ++ "s"
---     terminateProcess ph
---
---   retval <- finishProcess onError 0 0 ph
---   cancel io
---
---   return retval
---
---   where timeoutUs = t * 1000000
---
--- finishProcess onError t mem ph = do
---   io <- async $ forever $ do
---     threadDelay 1000000 -- 1 seconds
---     mpid <- getPid ph
---     case mpid of
---       Nothing -> pure ()
---       Just pid -> do
---         currMem <- getProcessMem pid
---         when (currMem > mem) $ do
---           onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show mem ++ ")"
---           terminateProcess ph
---
---   retval <- finishProcess onError t 0 ph
---   cancel io
---
---   return retval
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0
@@ -253,8 +225,8 @@ newPipe :: IO Pipe
 newPipe = Pipe <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO Nothing
 
 
-createPipeProcess :: Pipe -> Int64 -> String -> [String] -> IO ()
-createPipeProcess Pipe{..} mem cmd argv = do
+createPipeProcess :: Pipe -> Int -> Int64 -> String -> [String] -> IO ()
+createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
   let cp = (proc cmd argv) {std_in = CreatePipe, std_out = CreatePipe}
       onError err = errorM "periodic-run-pipe" $ "Error: " ++ err
 
@@ -272,26 +244,26 @@ createPipeProcess Pipe{..} mem cmd argv = do
         io <- async $ forever $ do
           atomically (takeTMVar pipeIn) >>= B.hPutStrLn inh
           hFlush inh
-          B.hGetSome outh 4096 >>= atomically . tryPutTMVar pipeOut
+          B.hGetSome outh maxBufSize >>= atomically . tryPutTMVar pipeOut
 
         atomically $ writeTVar pipeIO $ Just io
 
         mpid <- getPid ph
         io1 <- case mpid of
           Nothing  -> pure Nothing
-          Just pid -> checkPipeMemory pid io onError mem
+          Just pid -> checkPipeMemory pid io onError maxMem
         void $ waitCatch io
         mapM_ cancel io1
         terminateProcess ph
         atomically $ tryPutTMVar pipeOut "WORKFAIL"
 
 
-createRunner :: TQueue Pipe -> Int64 -> String -> [String] -> IO (Async ())
-createRunner pipes mem cmd argv = do
+createRunner :: TQueue Pipe -> Int -> Int64 -> String -> [String] -> IO (Async ())
+createRunner pipes maxBufSize maxMem cmd argv = do
   pipe <- newPipe
   atomically $ writeTQueue pipes pipe
   async $ forever $ do
-    createPipeProcess pipe mem cmd argv
+    createPipeProcess pipe maxBufSize maxMem cmd argv
     threadDelay 1000000 -- 1s
 
 
@@ -310,15 +282,14 @@ checkPipeTimeout tIO onError t = do
 
 checkPipeMemory :: Pid -> Async () -> (String -> IO ()) -> Int64 -> IO (Maybe (Async ()))
 checkPipeMemory _ _ _ 0         = pure Nothing
-checkPipeMemory pid io onError mem = do
+checkPipeMemory pid io onError maxMem = do
   nio <- async $ forever $ do
     threadDelay 1000000 -- 1 seconds
     currMem <- getProcessMem pid
-    when (currMem > mem) $ do
-      onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show mem ++ ")"
+    when (currMem > maxMem) $ do
+      onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show maxMem ++ ")"
       cancel io
   return $ Just nio
-
 
 
 readPipe :: MonadIO m => TQueue Pipe -> m Pipe
