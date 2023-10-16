@@ -23,7 +23,8 @@ import           Metro.TP.WebSockets       (clientConfig)
 import           Metro.TP.XOR              (xorConfig)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
-                                            withLock_, workDone_, workFail)
+                                            withLock_, workDone_, workFail,
+                                            workload)
 import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
                                             startWorkerT, work)
 import           Periodic.Types            (FuncName (..), LockName (..))
@@ -58,6 +59,7 @@ data Options = Options
     , lockCount :: Int
     , lockName  :: Maybe LockName
     , notify    :: Bool
+    , useName   :: Bool
     , showHelp  :: Bool
     , timeoutS  :: Int
     , retrySecs :: Int64
@@ -79,6 +81,7 @@ options t h f = Options
   , lockCount = 1
   , lockName  = Nothing
   , notify    = False
+  , useName   = True
   , showHelp  = False
   , timeoutS  = -1
   , retrySecs = 0
@@ -101,6 +104,7 @@ parseOptions ("--lock-count":x:xs) opt = parseOptions xs opt { lockCount = read 
 parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
+parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
 parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
 parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
 parseOptions ("--mem-limit":x:xs)  opt = parseOptions xs opt { memLimit = parseMemStr x }
@@ -114,7 +118,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run-pipe - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run-pipe [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--buf-size SIZE] funcname command [options]"
+  putStrLn "Usage: periodic-run-pipe [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--buf-size SIZE] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -130,6 +134,7 @@ printHelp = do
   putStrLn "     --lock-count Max lock count (optional: 1)"
   putStrLn "     --lock-name  The lock name (optional: no lock)"
   putStrLn "     --broadcast  Is broadcast worker"
+  putStrLn "     --no-name    Use one line workload instead of name"
   putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
   putStrLn "     --retry-secs Failed job retry in seconds"
   putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
@@ -302,12 +307,13 @@ readPipe pipes = liftIO $ atomically $ do
 processPipeWorker :: Transport tp => Options -> TQueue Pipe -> JobT tp IO ()
 processPipeWorker Options{..} pipes = do
   Pipe{..} <- readPipe pipes
-  n <- name
+  jn <- name
+  n <- if useName then name else workload
   atomically $ do
     putTMVar pipeIn n
     void $ tryTakeTMVar pipeOut
 
-  let onError err = errorM "periodic-run-pipe" $ "Task(" ++ show n ++ ") error: " ++ err
+  let onError err = errorM "periodic-run-pipe" $ "Task(" ++ jn ++ ") error: " ++ err
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   io <- liftIO $ checkPipeTimeout pipeIO onError tout
 

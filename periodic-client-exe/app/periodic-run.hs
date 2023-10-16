@@ -225,7 +225,7 @@ processWorker Options{..} cmd argv = do
   rb <- workload
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   let argv' = if useName then argv ++ [n] else argv
-      cp = (proc cmd argv') {std_in = CreatePipe, std_out= if useData then CreatePipe else Inherit}
+      cp = (proc cmd argv') {std_in = CreatePipe, std_out = if useData then CreatePipe else Inherit}
       onError err = errorM "periodic-run" $ "Task(" ++ n ++ ") error: " ++ err
 
   (code, out) <- liftIO $ withCreateProcess cp $ \mb_inh mb_outh _ ph ->
