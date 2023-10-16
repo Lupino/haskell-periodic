@@ -32,16 +32,17 @@ import           System.Exit               (exitSuccess)
 import           System.IO                 (hFlush)
 import           System.Log.Logger         (errorM)
 import           System.Process            (CreateProcess (std_in, std_out),
-                                            Pid, StdStream (CreatePipe), getPid,
+                                            Pid, ProcessHandle,
+                                            StdStream (CreatePipe), getPid,
                                             proc, readProcess, terminateProcess,
-                                            withCreateProcess)
+                                            waitForProcess, withCreateProcess)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel,
                                             newEmptyTMVarIO, newTQueueIO,
                                             newTVarIO, putTMVar, readTQueue,
                                             readTVarIO, takeTMVar, tryPutTMVar,
-                                            tryTakeTMVar, waitCatch,
-                                            writeTQueue, writeTVar)
+                                            tryTakeTMVar, writeTQueue,
+                                            writeTVar)
 
 
 data Options = Options
@@ -217,7 +218,7 @@ getProcessMem pid = do
 data Pipe = Pipe
   { pipeIn  :: TMVar ByteString
   , pipeOut :: TMVar ByteString
-  , pipeIO  :: TVar (Maybe (Async ()))
+  , pipeIO  :: TVar (Maybe ProcessHandle)
   }
 
 
@@ -231,7 +232,6 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
       onError err = errorM "periodic-run-pipe" $ "Error: " ++ err
 
   withCreateProcess cp $ \mb_inh mb_outh _ ph ->
-    -- atomically $ writeTVar pipeHandle $ Just ph
     case (mb_inh, mb_outh) of
       (Nothing, _) -> do
         onError "Failed to get a stdin handle."
@@ -240,22 +240,19 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
         onError "Failed to get a stdout handle."
         terminateProcess ph
 
-      (Just inh, Just outh) -> forever $ do
+      (Just inh, Just outh) -> do
+        atomically $ writeTVar pipeIO $ Just ph
         io <- async $ forever $ do
           atomically (takeTMVar pipeIn) >>= B.hPutStrLn inh
           hFlush inh
           B.hGetSome outh maxBufSize >>= atomically . tryPutTMVar pipeOut
 
-        atomically $ writeTVar pipeIO $ Just io
+        io1 <- checkPipeMemory ph onError maxMem
 
-        mpid <- getPid ph
-        io1 <- case mpid of
-          Nothing  -> pure Nothing
-          Just pid -> checkPipeMemory pid io onError maxMem
-        void $ waitCatch io
+        void $ waitForProcess ph
+        cancel io
         mapM_ cancel io1
-        terminateProcess ph
-        atomically $ tryPutTMVar pipeOut "WORKFAIL"
+        void $ atomically $ tryPutTMVar pipeOut "WORKFAIL"
 
 
 createRunner :: TQueue Pipe -> Int -> Int64 -> String -> [String] -> IO (Async ())
@@ -267,29 +264,33 @@ createRunner pipes maxBufSize maxMem cmd argv = do
     threadDelay 1000000 -- 1s
 
 
-checkPipeTimeout :: TVar (Maybe (Async ())) -> (String -> IO ()) -> Int -> IO (Maybe (Async ()))
+checkPipeTimeout :: TVar (Maybe ProcessHandle) -> (String -> IO ()) -> Int -> IO (Maybe (Async ()))
 checkPipeTimeout _ _ 0 = pure Nothing
 checkPipeTimeout tIO onError t = do
   io <- async $ do
     threadDelay timeoutUs
     onError $ "timeout after " ++ show t ++ "s"
     io <- readTVarIO tIO
-    mapM_ cancel io
+    mapM_ terminateProcess io
 
   pure $ Just io
   where timeoutUs = t * 1000000
 
 
-checkPipeMemory :: Pid -> Async () -> (String -> IO ()) -> Int64 -> IO (Maybe (Async ()))
-checkPipeMemory _ _ _ 0         = pure Nothing
-checkPipeMemory pid io onError maxMem = do
-  nio <- async $ forever $ do
-    threadDelay 1000000 -- 1 seconds
-    currMem <- getProcessMem pid
-    when (currMem > maxMem) $ do
-      onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show maxMem ++ ")"
-      cancel io
-  return $ Just nio
+checkPipeMemory :: ProcessHandle -> (String -> IO ()) -> Int64 -> IO (Maybe (Async ()))
+checkPipeMemory _ _ 0         = pure Nothing
+checkPipeMemory ph onError maxMem = do
+  mpid <- getPid ph
+  case mpid of
+    Nothing  -> pure Nothing
+    Just pid -> do
+      nio <- async $ forever $ do
+        threadDelay 1000000 -- 1 seconds
+        currMem <- getProcessMem pid
+        when (currMem > maxMem) $ do
+          onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show maxMem ++ ")"
+          terminateProcess ph
+      return $ Just nio
 
 
 readPipe :: MonadIO m => TQueue Pipe -> m Pipe
