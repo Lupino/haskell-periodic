@@ -35,6 +35,7 @@ in pkgs.haskell-nix.cabalProject {
     };
     index-state = "2023-10-15T00:00:00Z";
     index-sha256 = "7f445a790f82e69f7453632d1d5eb993a9c6725fc4ef5d7e4a48fb89bd2c7dc6";
+    sha256map = import ./nix/sha256map.nix;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
     modules = [(

@@ -69,6 +69,9 @@ macos-bundle: macos-install macos-build $(BUNDLE_BINS)
 	chmod +x dist/bundle/install.sh
 	cd dist/bundle && tar cjvf ../macos-bundle.tar.bz2 .
 
+update-sha256:
+	gawk -f nix/update-sha256.awk cabal.project > nix/sha256map.nix
+
 clean:
 	rm -rf dist
 
@@ -77,3 +80,4 @@ help:
 	@echo make PLATFORM=musl64
 	@echo make PLATFORM=aarch64-multiplatform-musl
 	@echo make clean
+	@echo make update-sha256
