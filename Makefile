@@ -51,14 +51,6 @@ periodicd:
 package: $(OUT)
 	cd dist/$(PLATFORM) && tar cjvf ../periodic-linux-$(PLATFORM).tar.bz2 periodic*
 
-
-plan-sha256:
-	nix-build -A plan-nix.passthru.calculateMaterializedSha | bash
-
-materialized:
-	rm -r nix/materialized
-	nix-build 2>&1 | grep -om1 '/nix/store/.*-updateMaterialized' | bash
-
 dist/bundle/bin/%: bin/%
 	@mkdir -p dist/bundle/bin
 	@mkdir -p dist/bundle/lib/periodic
@@ -85,5 +77,3 @@ help:
 	@echo make PLATFORM=musl64
 	@echo make PLATFORM=aarch64-multiplatform-musl
 	@echo make clean
-	@echo make plan-sha256
-	@echo make materialized
