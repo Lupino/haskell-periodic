@@ -1,21 +1,20 @@
 PLATFORM ?= musl64
 STRIP = strip
 PKG ?= periodic-client-exe
-COMPILER = ghc945
 
 ifeq ($(PLATFORM),aarch64-multiplatform-musl)
 STRIP = aarch64-linux-gnu-strip
+COMPILER ?= ghc8107
 else
 ifeq ($(PLATFORM),muslpi)
 STRIP = armv6l-unknown-linux-musleabihf-strip
-COMPILER = ghc884
+COMPILER ?= ghc884
 else
-
+COMPILER ?= ghc947
+endif
 endif
 
-endif
-
-OUT = periodic periodic-run periodic-http-bridge periodicd
+OUT = periodic periodic-run periodic-run-pipe periodic-http-bridge periodicd
 BUNDLE_BIN = dist/bundle/bin
 BUNDLE_LIB = dist/bundle/lib/periodic
 BUNDLE_EXEC_PATH = @executable_path/../lib/periodic
@@ -38,6 +37,9 @@ periodic:
 	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
 
 periodic-run:
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+
+periodic-run-pipe:
 	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
 
 periodic-http-bridge:

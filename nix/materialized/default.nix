@@ -3,7 +3,7 @@
     {
       packages = {
         Cabal-syntax.revision = (((hackage.Cabal-syntax)."3.8.1.0").revisions).default;
-        bytestring.revision = (((hackage.bytestring)."0.11.4.0").revisions).default;
+        bytestring.revision = (((hackage.bytestring)."0.11.5.2").revisions).default;
         safe-exceptions.revision = import ./cabal-files/safe-exceptions.nix;
         HUnit.revision = import ./cabal-files/HUnit.nix;
         dlist.revision = import ./cabal-files/dlist.nix;
@@ -48,7 +48,7 @@
         cryptonite.flags.support_pclmuldq = false;
         cryptonite.flags.support_aesni = true;
         asn1-parse.revision = import ./cabal-files/asn1-parse.nix;
-        ghc-prim.revision = (((hackage.ghc-prim)."0.9.0").revisions).default;
+        ghc-prim.revision = (((hackage.ghc-prim)."0.9.1").revisions).default;
         transformers-base.revision = import ./cabal-files/transformers-base.nix;
         transformers-base.flags.orphaninstances = true;
         hslogger.revision = import ./cabal-files/hslogger.nix;
@@ -103,7 +103,7 @@
         regex-posix.flags._regex-posix-clib = false;
         OneTuple.revision = import ./cabal-files/OneTuple.nix;
         x509-store.revision = import ./cabal-files/x509-store.nix;
-        base.revision = (((hackage.base)."4.17.1.0").revisions).default;
+        base.revision = (((hackage.base)."4.17.2.0").revisions).default;
         time.revision = (((hackage.time)."1.12.2").revisions).default;
         pem.revision = import ./cabal-files/pem.nix;
         http2.revision = import ./cabal-files/http2.nix;
@@ -188,7 +188,7 @@
         direct-sqlite.flags.json1 = true;
         time-compat.revision = import ./cabal-files/time-compat.nix;
         time-compat.flags.old-locale = false;
-        process.revision = (((hackage.process)."1.6.16.0").revisions).default;
+        process.revision = (((hackage.process)."1.6.17.0").revisions).default;
         unix.revision = (((hackage.unix)."2.7.3").revisions).default;
         wai.revision = import ./cabal-files/wai.nix;
         byteorder.revision = import ./cabal-files/byteorder.nix;
@@ -218,7 +218,7 @@
         attoparsec.flags.developer = false;
         array.revision = (((hackage.array)."0.5.4.0").revisions).default;
         basement.revision = import ./cabal-files/basement.nix;
-        ghc-boot-th.revision = (((hackage.ghc-boot-th)."9.4.5").revisions).default;
+        ghc-boot-th.revision = (((hackage.ghc-boot-th)."9.4.7").revisions).default;
         wai-extra.revision = import ./cabal-files/wai-extra.nix;
         wai-extra.flags.build-example = false;
         vector.revision = import ./cabal-files/vector.nix;
@@ -246,8 +246,8 @@
         hashable.flags.integer-gmp = true;
         };
       compiler = {
-        version = "9.4.5";
-        nix-name = "ghc945";
+        version = "9.4.7";
+        nix-name = "ghc947";
         packages = {
           "pretty" = "1.1.3.6";
           "text" = "2.0.2";
@@ -256,14 +256,14 @@
           "Cabal" = "3.8.1.0";
           "mtl" = "2.2.2";
           "parsec" = "3.1.16.1";
-          "bytestring" = "0.11.4.0";
+          "bytestring" = "0.11.5.2";
           "filepath" = "1.4.2.2";
           "stm" = "2.5.1.0";
-          "ghc-prim" = "0.9.0";
-          "ghc-boot-th" = "9.4.5";
-          "base" = "4.17.1.0";
+          "ghc-prim" = "0.9.1";
+          "ghc-boot-th" = "9.4.7";
+          "base" = "4.17.2.0";
           "time" = "1.12.2";
-          "process" = "1.6.16.0";
+          "process" = "1.6.17.0";
           "ghc-bignum" = "1.3";
           "directory" = "1.3.7.1";
           "exceptions" = "0.10.5";
@@ -418,6 +418,7 @@
           "byteorder".components.library.planned = lib.mkOverride 900 true;
           "witherable".components.library.planned = lib.mkOverride 900 true;
           "generically".components.library.planned = lib.mkOverride 900 true;
+          "periodic-client-exe".components.exes."periodic-run-pipe".planned = lib.mkOverride 900 true;
           "asn1-encoding".components.library.planned = lib.mkOverride 900 true;
           "semialign".components.library.planned = lib.mkOverride 900 true;
           "metro-transport-tls".components.library.planned = lib.mkOverride 900 true;

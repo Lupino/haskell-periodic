@@ -10,8 +10,8 @@
   ({
     flags = {};
     package = {
-      specVersion = "1.8";
-      identifier = { name = "time-manager"; version = "0.0.0"; };
+      specVersion = "1.10";
+      identifier = { name = "time-manager"; version = "0.0.1"; };
       license = "MIT";
       copyright = "";
       maintainer = "kazu@iij.ad.jp";
@@ -27,15 +27,16 @@
         depends = [
           (hsPkgs."base" or (errorHandler.buildDepError "base"))
           (hsPkgs."auto-update" or (errorHandler.buildDepError "auto-update"))
+          (hsPkgs."unliftio" or (errorHandler.buildDepError "unliftio"))
           ];
         buildable = true;
         };
       };
     } // {
     src = (pkgs.lib).mkDefault (pkgs.fetchurl {
-      url = "http://hackage.haskell.org/package/time-manager-0.0.0.tar.gz";
-      sha256 = "90a616ed20b2119bb64f78f84230b6798cde22a35e87bc8d9ee08cdf1d90fcdb";
+      url = "http://hackage.haskell.org/package/time-manager-0.0.1.tar.gz";
+      sha256 = "07492523fabc69b8ec308f6276cc93df3dd060c91f23df2ac8a1f56d331ea05b";
       });
     }) // {
-    package-description-override = "Name:                time-manager\r\nVersion:             0.0.0\r\nx-revision: 1\r\nSynopsis:            Scalable timer\r\nLicense:             MIT\r\nLicense-file:        LICENSE\r\nAuthor:              Michael Snoyman and Kazu Yamamoto\r\nMaintainer:          kazu@iij.ad.jp\r\nHomepage:            http://github.com/yesodweb/wai\r\nCategory:            System\r\nBuild-Type:          Simple\r\nCabal-Version:       >=1.8\r\nStability:           Stable\r\nDescription:         Scalable timer functions provided by a timer manager.\r\n\r\nLibrary\r\n  Build-Depends:     base                      >= 4.8        && < 5\r\n                   , auto-update               >= 0.1.3\r\n  Exposed-modules:   System.TimeManager\r\n  Ghc-Options:       -Wall\r\n";
+    package-description-override = "Name:                time-manager\nVersion:             0.0.1\nSynopsis:            Scalable timer\nLicense:             MIT\nLicense-file:        LICENSE\nAuthor:              Michael Snoyman and Kazu Yamamoto\nMaintainer:          kazu@iij.ad.jp\nHomepage:            http://github.com/yesodweb/wai\nCategory:            System\nBuild-Type:          Simple\nCabal-Version:       >=1.10\nStability:           Stable\nDescription:         Scalable timer functions provided by a timer manager.\n\nLibrary\n  Build-Depends:     base                      >= 4.12       && < 5\n                   , auto-update\n                   , unliftio\n  Default-Language:  Haskell2010\n  Exposed-modules:   System.TimeManager\n  Ghc-Options:       -Wall\n";
     }
