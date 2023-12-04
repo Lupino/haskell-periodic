@@ -10,7 +10,7 @@ import           Control.Monad             (forever, replicateM_, void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetSome, hPutStrLn,
-                                                 pack, take, unpack)
+                                                 null, pack, take, unpack)
 import           Data.Int                  (Int64)
 import           Data.List                 (find, isPrefixOf)
 import           Data.Maybe                (fromMaybe)
@@ -37,7 +37,8 @@ import           System.Log.Logger         (errorM, infoM)
 import           System.Process            (CreateProcess (std_in, std_out),
                                             Pid, ProcessHandle,
                                             StdStream (CreatePipe), getPid,
-                                            proc, readProcess, terminateProcess,
+                                            getProcessExitCode, proc,
+                                            readProcess, terminateProcess,
                                             waitForProcess, withCreateProcess)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel,
@@ -258,7 +259,15 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
           void $ atomically $ tryPutTMVar pipeInWait True
           atomically (takeTMVar pipeIn) >>= B.hPutStrLn inh
           hFlush inh
-          B.hGetSome outh maxBufSize >>= atomically . tryPutTMVar pipeOut
+          out <- B.hGetSome outh maxBufSize
+          let writeOut = void $ atomically $ tryPutTMVar pipeOut out
+          if B.null out then do
+            threadDelay 1000000 -- 1s
+            mcode <- getProcessExitCode ph
+            case mcode of
+              Nothing -> writeOut
+              Just _  -> pure ()
+          else writeOut
 
         io1 <- checkPipeMemory ph onError maxMem
 
@@ -330,6 +339,7 @@ processPipeWorker Options{..} pipes = do
 
   out <- atomically $ takeTMVar pipeOut
   mapM_ cancel io
+
   case B.take 8 out of
     "WORKDONE" -> void $ workDone_ $ B.drop 9 out
     "WORKFAIL" ->
