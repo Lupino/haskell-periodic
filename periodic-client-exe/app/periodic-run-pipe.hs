@@ -10,7 +10,7 @@ import           Control.Monad             (forever, replicateM_, void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetSome, hPutStrLn,
-                                                 pack, take)
+                                                 pack, take, unpack)
 import           Data.Int                  (Int64)
 import           Data.List                 (find, isPrefixOf)
 import           Data.Maybe                (fromMaybe)
@@ -21,6 +21,7 @@ import           Metro.TP.Socket           (socket)
 import           Metro.TP.TLS              (makeClientParams', tlsConfig)
 import           Metro.TP.WebSockets       (clientConfig)
 import           Metro.TP.XOR              (xorConfig)
+import           Metro.Utils               (setupLog)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workDone_, workFail,
@@ -31,7 +32,8 @@ import           Periodic.Types            (FuncName (..), LockName (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
 import           System.IO                 (hFlush)
-import           System.Log.Logger         (errorM)
+import           System.Log                (Priority (INFO))
+import           System.Log.Logger         (errorM, infoM)
 import           System.Process            (CreateProcess (std_in, std_out),
                                             Pid, ProcessHandle,
                                             StdStream (CreatePipe), getPid,
@@ -159,6 +161,7 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
+  setupLog INFO
   run opts func cmd argv
 
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
@@ -221,14 +224,15 @@ getProcessMem pid = do
 
 
 data Pipe = Pipe
-  { pipeIn  :: TMVar ByteString
-  , pipeOut :: TMVar ByteString
-  , pipeIO  :: TVar (Maybe ProcessHandle)
+  { pipeInWait :: TMVar Bool
+  , pipeIn     :: TMVar ByteString
+  , pipeOut    :: TMVar ByteString
+  , pipeIO     :: TVar (Maybe ProcessHandle)
   }
 
 
 newPipe :: IO Pipe
-newPipe = Pipe <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO Nothing
+newPipe = Pipe <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO Nothing
 
 
 createPipeProcess :: Pipe -> Int -> Int64 -> String -> [String] -> IO ()
@@ -246,8 +250,12 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
         terminateProcess ph
 
       (Just inh, Just outh) -> do
+        welcome <- B.hGetSome outh maxBufSize
+        infoM "periodic-run-pipe" $ "Welcome: " ++ B.unpack welcome
+
         atomically $ writeTVar pipeIO $ Just ph
         io <- async $ forever $ do
+          void $ atomically $ tryPutTMVar pipeInWait True
           atomically (takeTMVar pipeIn) >>= B.hPutStrLn inh
           hFlush inh
           B.hGetSome outh maxBufSize >>= atomically . tryPutTMVar pipeOut
@@ -255,6 +263,8 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
         io1 <- checkPipeMemory ph onError maxMem
 
         void $ waitForProcess ph
+        void $ atomically $ tryTakeTMVar pipeInWait
+
         cancel io
         mapM_ cancel io1
         void $ atomically $ tryPutTMVar pipeOut "WORKFAIL"
@@ -310,6 +320,7 @@ processPipeWorker Options{..} pipes = do
   jn <- name
   n <- if useName then name else workload
   atomically $ do
+    void $ takeTMVar pipeInWait
     putTMVar pipeIn n
     void $ tryTakeTMVar pipeOut
 

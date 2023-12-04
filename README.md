@@ -124,7 +124,7 @@ or use the `periodic-run` command
 
 or use the `periodic-run-pipe` command
 
-    periodic-run-pipe show_file cat
+    periodic-run-pipe show_file sh -c "echo hello; cat"
 
 ### Submit a job
 
