@@ -1,12 +1,13 @@
-FROM alpine:3.18.2
-ENV VERSION v1.2.0.0
-RUN apk add --no-cache wget=1.21.2-r2 && \
+FROM alpine:3.18.5 as base
+ENV VERSION v1.2.0.1
+RUN apk add --no-cache wget && \
     wget https://github.com/Lupino/haskell-periodic/releases/download/$VERSION/periodic-linux-$VERSION.tar.bz2 && \
-    apk del wget && \
-    tar xvf periodic-linux-$VERSION.tar.bz2 && \
-    mv periodic /usr/bin && \
-    mv periodicd /usr/bin && \
-    rm periodic*
+    tar xvf periodic-linux-$VERSION.tar.bz2
+
+FROM alpine:3.18.5
+
+COPY --from=base periodic /usr/bin
+COPY --from=base periodicd /usr/bin
 
 ENV PERIODIC_PORT tcp://:5000
 
