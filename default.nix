@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc947" }:
+{ compiler-nix-name ? "ghc948" }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -33,8 +33,8 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2023-10-15T00:00:00Z";
-    index-sha256 = "7f445a790f82e69f7453632d1d5eb993a9c6725fc4ef5d7e4a48fb89bd2c7dc6";
+    index-state = "2023-12-07T00:00:00Z";
+    index-sha256 = "1201cf0b74ca9dd7ccd139d045de4b3446f4ae4c78e19d0086c6f7b06449dc4e";
     sha256map = import ./nix/sha256map.nix;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;

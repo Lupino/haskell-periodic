@@ -10,7 +10,7 @@ ifeq ($(PLATFORM),muslpi)
 STRIP = armv6l-unknown-linux-musleabihf-strip
 COMPILER ?= ghc884
 else
-COMPILER ?= ghc947
+COMPILER ?= ghc948
 endif
 endif
 
