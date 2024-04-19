@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-21.23
+resolver: lts-22.17
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -52,7 +52,7 @@ extra-package-dbs: []
 
 extra-deps:
 - git: https://github.com/Lupino/metro.git
-  commit: 64aff9063c390099571cc748e0f619ab39530f79
+  commit: 01e84ebb4a4a1b1872cfacee7179b5e72d23b0e4
   subdirs:
   - .
   - map-io
@@ -61,7 +61,7 @@ extra-deps:
   - metro-transport-tls
   - metro-transport-websockets
 - git: https://github.com/Lupino/yuntan-common.git
-  commit: 8f0ddd2decf3e07296d11864eec4b776ecd3a011
+  commit: eafbf3326065ab7b1df63f3fdd4f6c4f2d1f22b7
   subdirs:
   - psql-utils
 
@@ -84,4 +84,4 @@ extra-deps:
 # compiler-check: newer-minor
 
 nix:
-    packages: [zlib]
+    packages: [zlib, postgresql]

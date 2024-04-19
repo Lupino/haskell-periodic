@@ -5,7 +5,8 @@ module Periodic.Trans.ClientPool
   , openPool
   ) where
 
-import           Data.Pool             (Pool, createPool, withResource)
+import           Data.Pool             (Pool, defaultPoolConfig, newPool,
+                                        withResource)
 import           Metro.Class           (Transport, TransportConfig)
 import           Periodic.Trans.Client hiding (close)
 import qualified Periodic.Trans.Client as C (close)
@@ -16,4 +17,4 @@ runClientPoolT :: ClientPoolEnv tp -> ClientT tp IO a -> IO a
 runClientPoolT pool m = withResource pool $ flip runClientT m
 
 openPool :: Transport tp => TransportConfig tp -> Int -> IO (ClientPoolEnv tp)
-openPool config = createPool (open config) (`runClientT` C.close) 1 5000
+openPool config = newPool . defaultPoolConfig (open config) (`runClientT` C.close) 5000

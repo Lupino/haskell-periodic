@@ -1,11 +1,13 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main
   ( main
   ) where
 
 
+import           Control.Exception               (SomeException)
 import           Control.Monad                   (when)
 import           Control.Monad.IO.Class          (liftIO)
 import qualified Data.ByteString.Char8           as B (pack)
@@ -30,10 +32,11 @@ import           Periodic.Trans.ClientPool
 import           Periodic.Types.Job
 import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitSuccess)
-import           Web.Scotty                      (ActionM, ScottyM, body, get,
-                                                  param, post, raw, rescue,
-                                                  scottyOpts, settings)
 import qualified Web.Scotty                      as WS (status)
+import           Web.Scotty                      (ActionM, ScottyM, body,
+                                                  captureParam, get, post,
+                                                  queryParam, raw, rescue,
+                                                  scottyOpts, settings)
 
 
 data Options = Options
@@ -154,15 +157,15 @@ application clientEnv = do
 
 paramJob :: ActionM (FuncName, JobName)
 paramJob = do
-  fn <- fromString <$> param "func_name"
-  jn <- fromString <$> param "job_name"
+  fn <- fromString <$> captureParam "func_name"
+  jn <- fromString <$> captureParam "job_name"
   return (fn, jn)
 
 paramJob_ :: ActionM Job
 paramJob_ = do
   (fn, jn) <- paramJob
-  schedAt <- param "sched_at" `rescue` const (return 0)
-  timeout <- param "timeout" `rescue` const (return 0)
+  schedAt <- queryParam "sched_at" `rescue` (\(_ :: SomeException) -> return 0)
+  timeout <- queryParam "timeout" `rescue` (\(_ :: SomeException) -> return 0)
   wb <- Workload . LB.toStrict <$> body
   pure $ setSchedAt schedAt $ setTimeout timeout $ setWorkload wb $ initJob fn jn
 
@@ -195,7 +198,7 @@ runJobHandler clientEnv = do
 
 dropFuncHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 dropFuncHandler clientEnv = do
-  fn <- fromString <$> param "func_name"
+  fn <- fromString <$> captureParam "func_name"
   r <- liftIO $ runClientPoolT clientEnv $ dropFunc fn
   sampleRet r
 
