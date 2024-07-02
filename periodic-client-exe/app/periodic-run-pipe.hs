@@ -5,6 +5,7 @@ module Main
   ( main
   ) where
 
+
 import           Control.Concurrent        (threadDelay)
 import           Control.Monad             (forever, replicateM_, void, when)
 import           Control.Monad.IO.Class    (liftIO)
@@ -12,19 +13,24 @@ import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetSome, hPutStrLn,
                                                  null, pack, take, unpack)
 import           Data.Int                  (Int64)
+import           Data.IOMap                (IOMap)
+import qualified Data.IOMap                as IOMap
+import qualified Data.IOMap.STM            as IOMapS
 import           Data.List                 (find, isPrefixOf)
+import qualified Data.Map                  as Map
 import           Data.Maybe                (fromMaybe)
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
 import           Metro.TP.Socket           (socket)
 import           Metro.Utils               (setupLog)
 import           Paths_periodic_client_exe (version)
+import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workDone_, workFail,
                                             workload)
 import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
                                             startWorkerT, work)
-import           Periodic.Types            (FuncName (..), LockName (..))
+import           Periodic.Types            (FuncName (..), LockName (..), Msgid)
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
 import           System.IO                 (hFlush)
@@ -40,9 +46,9 @@ import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel,
                                             newEmptyTMVarIO, newTQueueIO,
                                             newTVarIO, putTMVar, readTQueue,
-                                            readTVarIO, takeTMVar, tryPutTMVar,
-                                            tryTakeTMVar, writeTQueue,
-                                            writeTVar)
+                                            readTVarIO, retrySTM, takeTMVar,
+                                            tryPutTMVar, tryTakeTMVar,
+                                            writeTQueue, writeTVar)
 
 
 data Options = Options
@@ -178,14 +184,14 @@ getProcessMem pid = do
 
 data Pipe = Pipe
   { pipeInWait :: TMVar Bool
-  , pipeIn     :: TMVar ByteString
-  , pipeOut    :: TMVar ByteString
+  , pipeIn     :: TMVar (Msgid, ByteString)
+  , pipeOut    :: IOMap Msgid (Maybe ByteString)
   , pipeIO     :: TVar (Maybe ProcessHandle)
   }
 
 
 newPipe :: IO Pipe
-newPipe = Pipe <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO Nothing
+newPipe = Pipe <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> IOMap.empty <*> newTVarIO Nothing
 
 
 createPipeProcess :: Pipe -> Int -> Int64 -> String -> [String] -> IO ()
@@ -208,11 +214,18 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
 
         atomically $ writeTVar pipeIO $ Just ph
         io <- async $ forever $ do
-          void $ atomically $ tryPutTMVar pipeInWait True
-          atomically (takeTMVar pipeIn) >>= B.hPutStrLn inh
+
+          (msgid, bs) <- atomically $ do
+            void $ tryPutTMVar pipeInWait True
+            takeTMVar pipeIn
+
+          B.hPutStrLn inh bs
           hFlush inh
+
           out <- B.hGetSome outh maxBufSize
-          let writeOut = void $ atomically $ tryPutTMVar pipeOut out
+
+          let writeOut = IOMap.insert msgid (Just out) pipeOut
+
           if B.null out then do
             threadDelay 1000000 -- 1s
             mcode <- getProcessExitCode ph
@@ -228,7 +241,7 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
 
         cancel io
         mapM_ cancel io1
-        void $ atomically $ tryPutTMVar pipeOut "WORKFAIL"
+        IOMap.modifyIOMap (const Map.empty) pipeOut
 
 
 createRunner :: TQueue Pipe -> Int -> Int64 -> String -> [String] -> IO (Async ())
@@ -280,16 +293,25 @@ processPipeWorker Options{..} pipes = do
   Pipe{..} <- readPipe pipes
   jn <- name
   n <- if useName then name else workload
+  msgid <- liftIO sessionGen
   atomically $ do
     void $ takeTMVar pipeInWait
-    putTMVar pipeIn n
-    void $ tryTakeTMVar pipeOut
+    putTMVar pipeIn (msgid, n)
+    IOMapS.insert msgid Nothing pipeOut
 
   let onError err = errorM "periodic-run-pipe" $ "Task(" ++ jn ++ ") error: " ++ err
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   io <- liftIO $ checkPipeTimeout pipeIO onError tout
 
-  out <- atomically $ takeTMVar pipeOut
+  out <- atomically $ do
+    mout <- IOMapS.lookup msgid pipeOut
+    case mout of
+      Nothing         -> pure "WORKFAIL"
+      Just Nothing    -> retrySTM
+      Just (Just out) -> pure out
+
+  IOMap.delete msgid pipeOut
+
   mapM_ cancel io
 
   case B.take 8 out of
