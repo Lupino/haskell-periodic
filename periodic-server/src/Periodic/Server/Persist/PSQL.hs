@@ -58,6 +58,7 @@ instance ToField Job where
 
 newtype PSQL = PSQL PSQLPool
 
+numStripes = Just 1
 idleTime = 10
 maxResources = 10
 
@@ -73,7 +74,7 @@ instance Persist PSQL where
 
   newPersist (PSQLPath path) = do
     infoM "Periodic.Server.Persist.PSQL" ("PSQL connected " ++ show path)
-    pool <- createPSQLPool path idleTime maxResources
+    pool <- createPSQLPool path numStripes idleTime maxResources
     runPSQLPool "" pool $ withTransaction $ do
       void createConfigTable
       void createJobTable
