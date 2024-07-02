@@ -1,4 +1,4 @@
 {
-  "https://github.com/Lupino/metro.git"."64aff9063c390099571cc748e0f619ab39530f79" = "1194n8hlid5jyh96a8lakcmkbm0vr6b07bgwn51ghwz8rlkzhsd7";
-  "https://github.com/Lupino/yuntan-common.git"."8f0ddd2decf3e07296d11864eec4b776ecd3a011" = "1hrayg93012ybx68qdgmx6h9id9xfq5rzdjdrksz07y6xqzv5j23";
+  "https://github.com/Lupino/metro.git"."01e84ebb4a4a1b1872cfacee7179b5e72d23b0e4" = "1z2xwlxry19c7fgfjnj5l1dwmfdr1snm8m4cjas8pvm3bz78h7cx";
+  "https://github.com/Lupino/yuntan-common.git"."eafbf3326065ab7b1df63f3fdd4f6c4f2d1f22b7" = "1wn5phfpvfsariv57a00k7jh5knglmx2azv4wdx4001p1hwsh9aw";
 }

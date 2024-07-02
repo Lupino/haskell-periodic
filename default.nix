@@ -33,8 +33,8 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2023-12-07T00:00:00Z";
-    index-sha256 = "1201cf0b74ca9dd7ccd139d045de4b3446f4ae4c78e19d0086c6f7b06449dc4e";
+    index-state = "2024-06-30T00:00:00Z";
+    index-sha256 = "5b1b317db9c6c4626fbe7a827a2b51f9fba30edd0c594e11abbd83c4edc45fb0";
     sha256map = import ./nix/sha256map.nix;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
