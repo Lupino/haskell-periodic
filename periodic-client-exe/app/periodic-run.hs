@@ -17,11 +17,7 @@ import           Data.List                  (find, isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
-import           Metro.Socket               (getHost, getService)
 import           Metro.TP.Socket            (socket)
-import           Metro.TP.TLS               (makeClientParams', tlsConfig)
-import           Metro.TP.WebSockets        (clientConfig)
-import           Metro.TP.XOR               (xorConfig)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workDone, workDone_,
@@ -47,13 +43,6 @@ import           UnliftIO                   (MVar, SomeException, async, cancel,
 
 data Options = Options
     { host      :: String
-    , xorFile   :: FilePath
-    , useTls    :: Bool
-    , useWs     :: Bool
-    , hostName  :: String
-    , certKey   :: FilePath
-    , cert      :: FilePath
-    , caStore   :: FilePath
     , thread    :: Int
     , lockCount :: Int
     , lockName  :: Maybe LockName
@@ -66,16 +55,9 @@ data Options = Options
     , memLimit  :: Int64
     }
 
-options :: Maybe Int -> Maybe String -> Maybe String -> Options
-options t h f = Options
+options :: Maybe Int -> Maybe String -> Options
+options t h = Options
   { host      = fromMaybe "unix:///tmp/periodic.sock" h
-  , xorFile   = fromMaybe "" f
-  , useTls    = False
-  , useWs     = False
-  , hostName  = "localhost"
-  , certKey   = "client-key.pem"
-  , cert      = "client.pem"
-  , caStore   = "ca.pem"
   , thread    = fromMaybe 1 t
   , lockCount = 1
   , lockName  = Nothing
@@ -91,13 +73,6 @@ options t h f = Options
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
 parseOptions ("-H":x:xs)           opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)       opt = parseOptions xs opt { host      = x }
-parseOptions ("--xor":x:xs)        opt = parseOptions xs opt { xorFile   = x }
-parseOptions ("--tls":xs)          opt = parseOptions xs opt { useTls = True }
-parseOptions ("--ws":xs)           opt = parseOptions xs opt { useWs = True }
-parseOptions ("--hostname":x:xs)   opt = parseOptions xs opt { hostName = x }
-parseOptions ("--cert-key":x:xs)   opt = parseOptions xs opt { certKey = x }
-parseOptions ("--cert":x:xs)       opt = parseOptions xs opt { cert = x }
-parseOptions ("--ca":x:xs)         opt = parseOptions xs opt { caStore = x }
 parseOptions ("--thread":x:xs)     opt = parseOptions xs opt { thread = read x }
 parseOptions ("--lock-count":x:xs) opt = parseOptions xs opt { lockCount = read x }
 parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
@@ -117,18 +92,11 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--xor FILE] [--ws] [--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
   putStrLn "                  Eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --xor        XOR Transport encode file [$XOR_FILE]"
-  putStrLn "     --tls        Use tls transport"
-  putStrLn "     --ws         Use websockets transport"
-  putStrLn "     --hostname   Host name"
-  putStrLn "     --cert-key   Private key associated"
-  putStrLn "     --cert       Public certificate (X.509 format)"
-  putStrLn "     --ca         Trusted certificates"
   putStrLn "     --thread     Worker thread [$THREAD]"
   putStrLn "     --lock-count Max lock count (optional: 1)"
   putStrLn "     --lock-name  The lock name (optional: no lock)"
@@ -147,10 +115,9 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  f <- lookupEnv "XOR_FILE"
   t <- fmap read <$> lookupEnv "THREAD"
 
-  (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h f) <$> getArgs
+  (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 
   when showHelp printHelp
 
@@ -158,7 +125,7 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  run opts func cmd argv
+  startWorkerT (socket host) $ doWork opts func cmd argv
 
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork opts@Options{..} func cmd argv = do
@@ -170,21 +137,6 @@ doWork opts@Options{..} func cmd argv = do
       Just n  -> void $ addFunc func $ withLock_ n lockCount w
   liftIO $ putStrLn "Worker started."
   work thread
-
-run :: Options -> FuncName -> String -> [String] -> IO ()
-run opts@Options {useTls = True, ..} func cmd argv = do
-  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ fromMaybe "" $ getService host)
-  startWorkerT (tlsConfig prms (socket host)) $ doWork opts func cmd argv
-
-run opts@Options {useWs = True, ..} func cmd argv =
-  startWorkerT (clientConfig (socket host) (fromMaybe "0.0.0.0" $ getHost host) (fromMaybe "" $ getService host)) $ doWork opts func cmd argv
-
-run opts@Options {xorFile = "", ..} func cmd argv =
-  startWorkerT (socket host) $ doWork opts func cmd argv
-
-run opts@Options {..} func cmd argv =
-  startWorkerT (xorConfig xorFile $ socket host) $ doWork opts func cmd argv
-
 
 finishProcess :: (String -> IO ()) ->  Int -> Int64 -> ProcessHandle -> IO ExitCode
 finishProcess _ 0 0 ph = waitForProcess ph

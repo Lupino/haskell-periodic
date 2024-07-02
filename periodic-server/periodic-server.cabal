@@ -54,6 +54,7 @@ library
                      , psql-utils
                      , unix-time
                      , monadlist
+
   default-language:    Haskell2010
 
 executable periodicd
@@ -68,9 +69,6 @@ executable periodicd
                      , hslogger
                      , metro
                      , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
   other-modules:       Paths_periodic_server
   default-language:    Haskell2010
 

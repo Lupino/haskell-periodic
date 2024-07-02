@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-22.17
+resolver: lts-22.20
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -57,9 +57,6 @@ extra-deps:
   - .
   - map-io
   - metro-socket
-  - metro-transport-xor
-  - metro-transport-tls
-  - metro-transport-websockets
 - git: https://github.com/Lupino/yuntan-common.git
   commit: eafbf3326065ab7b1df63f3fdd4f6c4f2d1f22b7
   subdirs:

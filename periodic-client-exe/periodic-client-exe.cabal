@@ -26,9 +26,6 @@ executable periodic
                      , binary
                      , metro
                      , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
   other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
 
@@ -45,9 +42,6 @@ executable periodic-run
                      , deepseq
                      , metro
                      , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
                      , hslogger
   other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
@@ -64,9 +58,6 @@ executable periodic-run-pipe
                      , unliftio
                      , metro
                      , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
                      , hslogger
   other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
@@ -86,10 +77,6 @@ executable periodic-http-bridge
                      , http-types
                      , metro
                      , metro-socket
-                     , metro-transport-xor
-                     , metro-transport-tls
-                     , metro-transport-websockets
-                     , websockets
   other-modules:       Paths_periodic_client_exe
   default-language:    Haskell2010
 

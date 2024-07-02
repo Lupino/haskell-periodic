@@ -9,18 +9,14 @@ import           Control.Monad             (void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.Binary               (decodeFile, encodeFile)
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Char8     as B (lines, pack, putStr, readFile,
-                                                 split, unpack)
+import qualified Data.ByteString.Char8     as B (lines, putStr, readFile, split,
+                                                 unpack)
 import           Data.Int                  (Int64)
 import           Data.List                 (isPrefixOf, transpose)
 import           Data.Maybe                (fromMaybe)
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
-import           Metro.Socket              (getHost, getService)
 import           Metro.TP.Socket           (socket)
-import           Metro.TP.TLS              (makeClientParams', tlsConfig)
-import           Metro.TP.WebSockets       (clientConfig)
-import           Metro.TP.XOR              (xorConfig)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Client
 import           Periodic.Types            (Workload (..))
@@ -62,44 +58,24 @@ parseCommand _          = Help
 
 data Options = Options
     { host     :: String
-    , xorFile  :: FilePath
-    , useTls   :: Bool
-    , useWs    :: Bool
-    , hostName :: String
-    , certKey  :: FilePath
-    , cert     :: FilePath
-    , caStore  :: FilePath
     }
 
-options :: Maybe String -> Maybe String -> Options
-options h f = Options { host    = fromMaybe "unix:///tmp/periodic.sock" h
-                      , xorFile = fromMaybe "" f
-                      , useTls = False
-                      , useWs = False
-                      , hostName = "localhost"
-                      , certKey = "client-key.pem"
-                      , cert = "client.pem"
-                      , caStore = "ca.pem"
-                      }
+options :: Maybe String -> Options
+options h = Options
+  { host    = fromMaybe "unix:///tmp/periodic.sock" h
+  }
 
 parseOptions :: [String] -> Options -> (Command, Options, [String])
-parseOptions []                  opt = (Help, opt, [])
-parseOptions ("-H":x:xs)         opt = parseOptions xs opt { host      = x }
-parseOptions ("--host":x:xs)     opt = parseOptions xs opt { host      = x }
-parseOptions ("--xor":x:xs)      opt = parseOptions xs opt { xorFile   = x }
-parseOptions ("--tls":xs)        opt = parseOptions xs opt { useTls = True }
-parseOptions ("--ws":xs)        opt  = parseOptions xs opt { useWs = True }
-parseOptions ("--hostname":x:xs) opt = parseOptions xs opt { hostName = x }
-parseOptions ("--cert-key":x:xs) opt = parseOptions xs opt { certKey = x }
-parseOptions ("--cert":x:xs)     opt = parseOptions xs opt { cert = x }
-parseOptions ("--ca":x:xs)       opt = parseOptions xs opt { caStore = x }
-parseOptions (x:xs)              opt = (parseCommand x, opt, xs)
+parseOptions []              opt = (Help, opt, [])
+parseOptions ("-H":x:xs)     opt = parseOptions xs opt { host      = x }
+parseOptions ("--host":x:xs) opt = parseOptions xs opt { host      = x }
+parseOptions (x:xs)          opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
 printHelp = do
   putStrLn "periodic - Periodic task system client"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]] command [options]"
+  putStrLn "Usage: periodic [--host|-H HOST] command [options]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "     status   Show status"
@@ -117,13 +93,6 @@ printHelp = do
   putStrLn "Available options:"
   putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"
   putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --xor      XOR Transport encode file [$XOR_FILE]"
-  putStrLn "     --tls      Use tls transport"
-  putStrLn "     --ws       Use websockets transport"
-  putStrLn "     --hostname Host name"
-  putStrLn "     --cert-key Private key associated"
-  putStrLn "     --cert     Public certificate (X.509 format)"
-  putStrLn "     --ca       trusted certificates"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -229,9 +198,8 @@ printDumpHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  f <- lookupEnv "XOR_FILE"
 
-  (cmd, opts@Options {..}, argv) <- flip parseOptions (options h f) <$> getArgs
+  (cmd, Options {..}, argv) <- flip parseOptions (options h) <$> getArgs
 
   let argc = length argv
 
@@ -249,23 +217,7 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  run opts cmd argv
-
-run Options {useTls = True, ..} cmd argv = do
-  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ fromMaybe "" $ getService host)
-  clientEnv <- open (tlsConfig prms (socket host))
-  runClientT clientEnv $ processCommand cmd argv
-
-run Options {useWs = True, ..} cmd argv = do
-  clientEnv <- open (clientConfig (socket host) (fromMaybe "0.0.0.0" $ getHost host) (fromMaybe "" $ getService host))
-  runClientT clientEnv $ processCommand cmd argv
-
-run Options {xorFile = "", ..} cmd argv = do
   clientEnv <- open (socket host)
-  runClientT clientEnv $ processCommand cmd argv
-
-run Options {..} cmd argv = do
-  clientEnv <- open (xorConfig xorFile $ socket host)
   runClientT clientEnv $ processCommand cmd argv
 
 processCommand :: Transport tp => Command -> [String] -> ClientT tp IO ()

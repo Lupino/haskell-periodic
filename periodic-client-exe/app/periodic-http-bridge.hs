@@ -10,7 +10,6 @@ module Main
 import           Control.Exception               (SomeException)
 import           Control.Monad                   (when)
 import           Control.Monad.IO.Class          (liftIO)
-import qualified Data.ByteString.Char8           as B (pack)
 import qualified Data.ByteString.Lazy            as LB (empty, fromStrict,
                                                         toStrict)
 import           Data.Default.Class              (def)
@@ -20,11 +19,7 @@ import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
 import           Data.Version                    (showVersion)
 import           Metro.Class                     (Transport)
-import           Metro.Socket                    (getHost, getService)
 import           Metro.TP.Socket                 (socket)
-import           Metro.TP.TLS                    (makeClientParams', tlsConfig)
-import           Metro.TP.WebSockets             (clientConfig)
-import           Metro.TP.XOR                    (xorConfig)
 import           Network.HTTP.Types              (status204, status500)
 import           Network.Wai.Handler.Warp        (setHost, setPort)
 import           Paths_periodic_client_exe       (version)
@@ -41,29 +36,15 @@ import           Web.Scotty                      (ActionM, ScottyM, body,
 
 data Options = Options
     { host     :: String
-    , xorFile  :: FilePath
-    , useTls   :: Bool
-    , useWs    :: Bool
-    , hostName :: String
-    , certKey  :: FilePath
-    , cert     :: FilePath
-    , caStore  :: FilePath
     , httpHost :: String
     , httpPort :: Int
     , poolSize :: Int
     , showHelp :: Bool
     }
 
-options :: Maybe String -> Maybe String -> Options
-options h f = Options
+options :: Maybe String -> Options
+options h = Options
   { host     = fromMaybe "unix:///tmp/periodic.sock" h
-  , xorFile  = fromMaybe "" f
-  , useTls   = False
-  , useWs    = False
-  , hostName = "localhost"
-  , certKey  = "client-key.pem"
-  , cert     = "client.pem"
-  , caStore  = "ca.pem"
   , httpHost = "127.0.0.1"
   , httpPort = 8080
   , poolSize = 10
@@ -74,13 +55,6 @@ parseOptions :: [String] -> Options -> Options
 parseOptions []                   opt = opt
 parseOptions ("-H":x:xs)          opt = parseOptions xs opt { host = x }
 parseOptions ("--host":x:xs)      opt = parseOptions xs opt { host = x }
-parseOptions ("--xor":x:xs)       opt = parseOptions xs opt { xorFile = x }
-parseOptions ("--tls":xs)         opt = parseOptions xs opt { useTls = True }
-parseOptions ("--ws":xs)          opt = parseOptions xs opt { useWs = True }
-parseOptions ("--hostname":x:xs)  opt = parseOptions xs opt { hostName = x }
-parseOptions ("--cert-key":x:xs)  opt = parseOptions xs opt { certKey = x }
-parseOptions ("--cert":x:xs)      opt = parseOptions xs opt { cert = x }
-parseOptions ("--ca":x:xs)        opt = parseOptions xs opt { caStore = x }
 parseOptions ("--http-host":x:xs) opt = parseOptions xs opt { httpHost = x }
 parseOptions ("--http-port":x:xs) opt = parseOptions xs opt { httpPort = read x }
 parseOptions ("--pool-size":x:xs) opt = parseOptions xs opt { poolSize = read x }
@@ -92,18 +66,11 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-http-bridge - Periodic task system client http bridge"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--http-host HOST] [--http-port PORT] [--pool-size SIZE] [--xor FILE|--ws|--tls [--hostname HOSTNAME] [--cert-key FILE] [--cert FILE] [--ca FILE]]"
+  putStrLn "Usage: periodic [--host|-H HOST] [--http-host HOST] [--http-port PORT] [--pool-size SIZE]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host      Socket path [$PERIODIC_PORT]"
   putStrLn "                 eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --xor       XOR Transport encode file [$XOR_FILE]"
-  putStrLn "     --tls       Use tls transport"
-  putStrLn "     --ws        Use websockets transport"
-  putStrLn "     --hostname  Host name"
-  putStrLn "     --cert-key  Private key associated"
-  putStrLn "     --cert      Public certificate (X.509 format)"
-  putStrLn "     --ca        trusted certificates"
   putStrLn "     --http-host HTTP host (optional: 127.0.0.1)"
   putStrLn "     --http-port HTTP port (optional: 8080)"
   putStrLn "     --pool-size Connection pool size"
@@ -116,9 +83,8 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  f <- lookupEnv "XOR_FILE"
 
-  opts@Options{..} <- flip parseOptions (options h f) <$> getArgs
+  Options{..} <- flip parseOptions (options h) <$> getArgs
 
   when showHelp printHelp
 
@@ -126,26 +92,13 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  run opts def
-    { settings = setPort httpPort
-               $ setHost (Host httpHost) (settings def)}
+  let sopts = def
+        { settings = setPort httpPort
+                   $ setHost (Host httpHost) (settings def)}
 
-run Options {useTls = True, ..} sopts = do
-  prms <- makeClientParams' cert [] certKey caStore (hostName, B.pack $ fromMaybe "" $ getService host)
-  clientEnv <- openPool (tlsConfig prms (socket host)) poolSize
-  scottyOpts sopts $ application clientEnv
-
-run Options {useWs = True, ..} sopts = do
-  clientEnv <- openPool (clientConfig (socket host) (fromMaybe "0.0.0.0" $ getHost host) (fromMaybe "" $ getService host)) poolSize
-  scottyOpts sopts $ application clientEnv
-
-run Options {xorFile = "", ..} sopts = do
   clientEnv <- openPool (socket host) poolSize
   scottyOpts sopts $ application clientEnv
 
-run Options {..} sopts = do
-  clientEnv <- openPool (xorConfig xorFile $ socket host) poolSize
-  scottyOpts sopts $ application clientEnv
 
 application :: Transport tp => ClientPoolEnv tp ->  ScottyM ()
 application clientEnv = do
