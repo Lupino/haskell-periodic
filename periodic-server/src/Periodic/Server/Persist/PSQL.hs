@@ -9,6 +9,7 @@ module Periodic.Server.Persist.PSQL
   ) where
 
 
+import           Control.Concurrent      (getNumCapabilities)
 import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
 import           Data.Byteable           (toBytes)
@@ -58,9 +59,7 @@ instance ToField Job where
 
 newtype PSQL = PSQL PSQLPool
 
-numStripes = Just 1
 idleTime = 10
-maxResources = 10
 
 runDB :: PSQL -> DB.PSQL a -> IO a
 runDB (PSQL pool) = runPSQLPool "" pool
@@ -74,7 +73,8 @@ instance Persist PSQL where
 
   newPersist (PSQLPath path) = do
     infoM "Periodic.Server.Persist.PSQL" ("PSQL connected " ++ show path)
-    pool <- createPSQLPool path numStripes idleTime maxResources
+    maxResources <- (*2) <$> getNumCapabilities
+    pool <- createPSQLPool path Nothing idleTime maxResources
     runPSQLPool "" pool $ withTransaction $ do
       void createConfigTable
       void createJobTable
