@@ -39,8 +39,7 @@ import           System.Log.Logger         (errorM, infoM)
 import           System.Process            (CreateProcess (std_in, std_out),
                                             Pid, ProcessHandle,
                                             StdStream (CreatePipe), getPid,
-                                            getProcessExitCode, proc,
-                                            readProcess, terminateProcess,
+                                            proc, readProcess, terminateProcess,
                                             waitForProcess, withCreateProcess)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel,
@@ -224,15 +223,12 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
 
           out <- B.hGetSome outh maxBufSize
 
-          let writeOut = IOMap.insert msgid (Just out) pipeOut
-
-          if B.null out then do
-            threadDelay 1000000 -- 1s
-            mcode <- getProcessExitCode ph
-            case mcode of
-              Nothing -> writeOut
-              Just _  -> pure ()
-          else writeOut
+          when (B.null out) $ threadDelay 1000000 -- 1s
+          atomically $ do
+            mw <- IOMapS.lookup msgid pipeOut
+            case mw of
+              Nothing -> pure ()
+              Just _  -> IOMapS.insert msgid (Just out) pipeOut
 
         io1 <- checkPipeMemory ph onError maxMem
 
