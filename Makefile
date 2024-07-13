@@ -4,13 +4,13 @@ PKG ?= periodic-client-exe
 
 ifeq ($(PLATFORM),aarch64-multiplatform-musl)
 STRIP = aarch64-linux-gnu-strip
-COMPILER ?= ghc8107
+COMPILER ?= ghc966
 else
 ifeq ($(PLATFORM),muslpi)
 STRIP = armv6l-unknown-linux-musleabihf-strip
 COMPILER ?= ghc884
 else
-COMPILER ?= ghc948
+COMPILER ?= ghc966
 endif
 endif
 
