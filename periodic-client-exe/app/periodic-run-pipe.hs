@@ -214,9 +214,8 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
         atomically $ writeTVar pipeIO $ Just ph
         io <- async $ forever $ do
 
-          (msgid, bs) <- atomically $ do
-            void $ tryPutTMVar pipeInWait True
-            takeTMVar pipeIn
+          void $ atomically $ tryPutTMVar pipeInWait True
+          (msgid, bs) <- atomically $ takeTMVar pipeIn
 
           B.hPutStrLn inh bs
           hFlush inh
