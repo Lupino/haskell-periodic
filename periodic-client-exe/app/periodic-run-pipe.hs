@@ -11,7 +11,8 @@ import           Control.Monad             (forever, replicateM_, void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetSome, hPutStrLn,
-                                                 null, pack, take, unpack)
+                                                 length, null, pack, take,
+                                                 unpack)
 import           Data.Int                  (Int64)
 import           Data.IOMap                (IOMap)
 import qualified Data.IOMap                as IOMap
@@ -30,7 +31,8 @@ import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             workload)
 import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
                                             startWorkerT, work)
-import           Periodic.Types            (FuncName (..), LockName (..), Msgid)
+import           Periodic.Types            (FuncName (..), LockName (..),
+                                            Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
 import           System.IO                 (hFlush)
@@ -215,19 +217,22 @@ createPipeProcess Pipe{..} maxBufSize maxMem cmd argv = do
         io <- async $ forever $ do
 
           void $ atomically $ tryPutTMVar pipeInWait True
-          (msgid, bs) <- atomically $ takeTMVar pipeIn
+          (msgid@(Msgid wid), bs) <- atomically $ takeTMVar pipeIn
 
-          B.hPutStrLn inh bs
+          let mwid = B.pack (show wid)
+              mlen = B.length mwid
+
+          B.hPutStrLn inh (mwid <> " " <> bs)
           hFlush inh
 
           out <- B.hGetSome outh maxBufSize
 
           when (B.null out) $ threadDelay 1000000 -- 1s
-          atomically $ do
+          when (B.take mlen out == mwid) $ atomically $ do
             mw <- IOMapS.lookup msgid pipeOut
             case mw of
               Nothing -> pure ()
-              Just _  -> IOMapS.insert msgid (Just out) pipeOut
+              Just _  -> IOMapS.insert msgid (Just (B.drop (mlen + 1) out)) pipeOut
 
         io1 <- checkPipeMemory ph onError maxMem
 
