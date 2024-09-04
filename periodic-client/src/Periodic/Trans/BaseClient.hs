@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module Periodic.Trans.BaseClient
   ( BaseClientT
   , BaseClientEnv
@@ -12,17 +10,22 @@ module Periodic.Trans.BaseClient
   , submitJob
   , runJob_
   , runJob
+  , recvJobData_
+  , recvJobData
   , checkHealth
 
   , successRequest
   ) where
 
-import           Control.Monad                (unless)
+import           Control.Monad                (forever, unless)
+import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (Binary)
 import           Data.ByteString              (ByteString)
 import           Data.Int                     (Int64)
 import           Metro.Class                  (Transport)
-import           Metro.Node                   (getEnv1, request, stopNodeT)
+import           Metro.Node                   (getEnv1, request, stopNodeT,
+                                               withSessionT)
+import qualified Metro.Session                as S (receive, send)
 import           Metro.Utils                  (getEpochTime)
 import           Periodic.Node
 import           Periodic.Types               (Packet, getResult, packetREQ)
@@ -62,17 +65,34 @@ submitJob fn jn w later tout = do
     $ setWorkload w
     $ initJob fn jn
 
-runJob_ :: (MonadUnliftIO m, Transport tp) => Job -> BaseClientT u tp m (Maybe ByteString)
-runJob_ j =  getResult Nothing getData <$> request Nothing (packetREQ . RunJob $ setSchedAt 0 j)
+getServerData :: Maybe (Packet ServerCommand) -> Maybe ByteString
+getServerData = getResult Nothing getData
   where getData :: ServerCommand -> Maybe ByteString
         getData (Data bs) = Just bs
         getData _         = Nothing
+
+runJob_ :: (MonadUnliftIO m, Transport tp) => Job -> BaseClientT u tp m (Maybe ByteString)
+runJob_ j =  getServerData <$> request Nothing (packetREQ . RunJob $ setSchedAt 0 j)
 
 runJob
   :: (MonadUnliftIO m, Transport tp)
   => FuncName -> JobName -> Workload -> Int -> BaseClientT u tp m (Maybe ByteString)
 runJob fn jn w tout = do
   runJob_ $ setTimeout tout $ setWorkload w $ initJob fn jn
+
+recvJobData_
+  :: (MonadUnliftIO m, Transport tp)
+  => (ByteString -> m ()) ->  Job -> BaseClientT u tp m ()
+recvJobData_ cb j = withSessionT Nothing $ do
+  S.send (packetREQ (RecvData j))
+  forever $ do
+    ret <- S.receive
+    lift $ mapM_ cb (getServerData ret)
+
+recvJobData
+  :: (MonadUnliftIO m, Transport tp)
+  =>(ByteString -> m ()) ->  FuncName -> JobName -> BaseClientT u tp m ()
+recvJobData cb fn jn = recvJobData_ cb $ initJob fn jn
 
 checkHealth :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m ()
 checkHealth = do

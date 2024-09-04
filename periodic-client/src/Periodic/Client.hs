@@ -11,6 +11,8 @@ module Periodic.Client
   , submitJob
   , runJob_
   , runJob
+  , recvJobData_
+  , recvJobData
   , removeJob
   , dropFunc
   , status

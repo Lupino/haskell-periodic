@@ -49,8 +49,15 @@ handleClientSessionT (CC.RunJob job) = do
   c <- lift . canRun $ getFuncName job
   if c then do
     (!nid, !msgid) <- ident <$> getSessionEnv1
-    lift $ prepareWait job nid msgid
+    lift $ prepareWait job nid msgid False
     lift $ pushJob job
+  else send $ packetRES NoWorker
+
+handleClientSessionT (CC.RecvData job) = do
+  c <- lift . canRun $ getFuncName job
+  if c then do
+    (!nid, !msgid) <- ident <$> getSessionEnv1
+    lift $ prepareWait job nid msgid True
   else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
@@ -96,6 +103,9 @@ handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   IOMap.delete jh wJobQueue
   lift $ doneJob jh w
+  send $ packetRES Success
+handleWorkerSessionT ClientConfig {..} (WC.WorkData jh w) = do
+  lift $ workData jh w
   send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
   IOMap.delete jh wJobQueue

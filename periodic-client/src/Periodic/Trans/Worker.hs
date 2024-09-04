@@ -251,7 +251,7 @@ processJob WorkerEnv{..} ((sid, _), job) = do
     case task of
       Nothing -> do
         void $ removeFunc_ taskList f
-        void $ workFail
+        void workFail
       Just task' ->
         catchAny task' $ \e -> do
           n <- name
@@ -264,7 +264,7 @@ processJob WorkerEnv{..} ((sid, _), job) = do
                           , "\nError: "
                           , show e
                           ]
-          void $ workFail
+          void workFail
 
   atomically $ do
     s <- readTVar tskSizeH

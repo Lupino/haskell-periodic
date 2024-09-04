@@ -51,7 +51,9 @@ instance Binary Command where
       18 -> CC <$> get
       19 -> CC <$> get
       25 -> CC <$> get
-      _  -> error $ "Error Command" ++ show cmd
+      29 -> CC <$> get
+      30 -> WC <$> get
+      _  -> error $ "Error Command " ++ show cmd
 
   put (CC cmd) = put cmd
   put (WC cmd) = put cmd

@@ -9,8 +9,8 @@ import           Control.Monad             (void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.Binary               (decodeFile, encodeFile)
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Char8     as B (lines, putStr, readFile, split,
-                                                 unpack)
+import qualified Data.ByteString.Char8     as B (lines, putStrLn, readFile,
+                                                 split, unpack)
 import           Data.Int                  (Int64)
 import           Data.List                 (isPrefixOf, transpose)
 import           Data.Maybe                (fromMaybe)
@@ -28,6 +28,7 @@ import           Data.String               (fromString)
 import           Data.UnixTime
 import           System.IO.Unsafe          (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes    as T
+import           UnliftIO                  (async, cancel)
 
 
 data Command = Status
@@ -56,7 +57,7 @@ parseCommand "load"     = Load
 parseCommand "ping"     = Ping
 parseCommand _          = Help
 
-data Options = Options
+newtype Options = Options
     { host     :: String
     }
 
@@ -119,9 +120,10 @@ printRunHelp :: IO ()
 printRunHelp = do
   putStrLn "periodic run - Run job and output result"
   putStrLn ""
-  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10]"
+  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10] [--data]"
   printWorkloadHelp
   putStrLn "     --timeout  Run job timeout"
+  putStrLn "     --data     Run step data(workData)"
   putStrLn ""
   exitSuccess
 
@@ -286,6 +288,11 @@ getWorkload argv =
     ('@':f) -> Workload <$> B.readFile f
     w       -> pure $ fromString w
 
+getSub :: [String] -> Bool
+getSub []           = False
+getSub ("--data":_) = True
+getSub (_:xs)       = getSub xs
+
 
 getTimeout :: Int -> [String] -> Int
 getTimeout def = safeRead def . getFlag ["--timeout"]
@@ -307,14 +314,20 @@ doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
 doRunJob (x:y:xs) = do
   w <- liftIO $ getWorkload xs
+  mio <- if getSub xs then do
+           io <- async $ recvJobData B.putStrLn (fromString x) (fromString y)
+           pure $ Just io
+         else pure Nothing
   liftIO . putR
     =<< runJob (fromString x) (fromString y) w t
+
+  mapM_ cancel mio
 
   where t = getTimeout 10 xs
 
         putR :: Maybe ByteString -> IO ()
         putR Nothing   = putStrLn "Error: run job failed"
-        putR (Just bs) = B.putStr bs
+        putR (Just bs) = B.putStrLn bs
 
 doStatus :: Transport tp => ClientT tp IO ()
 doStatus = do

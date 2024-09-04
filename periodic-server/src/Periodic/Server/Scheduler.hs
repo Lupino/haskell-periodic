@@ -19,6 +19,7 @@ module Periodic.Server.Scheduler
   , failJob
   , doneJob
   , schedLaterJob
+  , workData
   , acquireLock
   , releaseLock
   , addFunc
@@ -71,7 +72,11 @@ import           System.Log.Logger          (debugM, errorM, infoM)
 import           UnliftIO                   hiding (poll)
 import           UnliftIO.Concurrent        (threadDelay)
 
-type Waiter = (Nid, Msgid)
+data Waiter = Waiter
+  { waiterNid    :: Nid
+  , waiterMsgid  :: Msgid
+  , waiterIsData :: Bool
+  }
 
 data WaitItem = WaitItem
     { itemExpiredAt :: Int64
@@ -496,7 +501,7 @@ removeJob_ reason jh = do
 
   asks sSchedPoolList >>= IOMap.lookup fn >>= mapM_ (`Pool.unspawn` job)
 
-  pushResult jh reason
+  pushResult jh reason False
   getDuration t0 >>= runHook eventRemoveJob job
 
   where (fn, jn) = unHandle jh
@@ -596,8 +601,16 @@ doneJob_ jh w = do
   p <- asks sPersist
   getJobDuration jh >>= runHook eventDoneJob jh
   liftIO $ P.delete p fn jn
-  pushResult jh w
+  pushResult jh w False
   where (fn, jn) = unHandle jh
+
+
+workData
+  :: (MonadIO m, Persist db)
+  => JobHandle -> ByteString -> SchedT db m ()
+workData jh w = do
+  liftIO $ debugM "Periodic.Server.Scheduler" ("workData: " ++ show jh)
+  pushResult jh w True
 
 
 doneJob
@@ -827,8 +840,8 @@ shutdown = do
   readTVarIO sTaskList >>= mapM_ cancel
   liftIO sCleanup
 
-prepareWait :: MonadIO m => Job -> Nid -> Msgid -> SchedT db m ()
-prepareWait job nid msgid = do
+prepareWait :: MonadIO m => Job -> Nid -> Msgid -> Bool -> SchedT db m ()
+prepareWait job nid msgid isData = do
   wl <- asks sWaitList
   expiredAt <- (+tout) <$> getEpochTime
   IOMap.alter (updateWL expiredAt) jh wl
@@ -843,24 +856,32 @@ prepareWait job nid msgid = do
           }
 
         jh     = getHandle job
-        waiter = (nid, msgid)
+        waiter = Waiter
+          { waiterNid = nid
+          , waiterMsgid = msgid
+          , waiterIsData = isData
+          }
         tout   = fromIntegral $ getJobTimeout job 60
 
 pushResult
   :: MonadIO m
-  => JobHandle -> ByteString -> SchedT db m ()
-pushResult jh w = do
+  => JobHandle -> ByteString -> Bool -> SchedT db m ()
+pushResult jh w isData = do
   wl <- asks sWaitList
   pushData <- asks sPushData
   waiters <- atomically $ do
     w0 <- IOMapS.lookup jh wl
-    IOMapS.delete jh wl
+    unless isData $ IOMapS.delete jh wl
 
     case w0 of
       Nothing   -> pure []
-      Just item -> pure $ itemWaiters item
+      Just item -> pure $ filter filterFunc $ itemWaiters item
 
-  liftIO $ forM_ waiters $ \(nid, msgid) -> pushData nid msgid w
+  liftIO $ forM_ waiters $ \Waiter {waiterNid = nid, waiterMsgid = msgid} ->
+    pushData nid msgid w
+
+  where filterFunc :: Waiter -> Bool
+        filterFunc waiter = waiterIsData waiter == isData
 
 existsWaitList :: MonadIO m => JobHandle -> SchedT db m Bool
 existsWaitList jh = do

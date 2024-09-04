@@ -12,6 +12,7 @@ module Periodic.Trans.Job
 
   , workDone
   , workDone_
+  , workData
   , workFail
   , schedLater
   , schedLater'
@@ -82,6 +83,13 @@ workDone_
 workDone_ w = do
   h <- getHandle <$> job
   successRequest (packetREQ $ WorkDone h w)
+
+workData
+  :: (MonadUnliftIO m, Transport tp)
+  => ByteString -> JobT tp m Bool
+workData w = do
+  h <- getHandle <$> job
+  successRequest (packetREQ $ WorkData h w)
 
 workFail
   :: (MonadUnliftIO m, Transport tp)

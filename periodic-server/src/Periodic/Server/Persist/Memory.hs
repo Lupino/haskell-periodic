@@ -139,10 +139,7 @@ doUpdateState m s f j = atomically $ do
 doDelete :: Memory -> FuncName -> JobName -> IO ()
 doDelete m f j = atomically $ do
   mJobMap <- getJobMap m f
-  case mJobMap of
-    Nothing     -> pure ()
-    Just jobMap -> IOMapS.delete j jobMap
-
+  mapM_ (IOMapS.delete j) mJobMap
 
 doSize :: Memory -> State -> FuncName -> IO Int64
 doSize m s f =

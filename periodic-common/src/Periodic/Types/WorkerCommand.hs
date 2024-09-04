@@ -25,6 +25,7 @@ data WorkerCommand = GrabJob
     | Broadcast FuncName
     | Acquire LockName Int JobHandle
     | Release LockName JobHandle
+    | WorkData JobHandle ByteString
     deriving (Show)
 
 instance Binary WorkerCommand where
@@ -53,6 +54,9 @@ instance Binary WorkerCommand where
       28 -> do
         n <- get
         Release n <$> get
+      30 -> do
+        tn <- get
+        WorkData tn . toStrict <$> getRemainingLazyByteString
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
@@ -88,6 +92,10 @@ instance Binary WorkerCommand where
     putWord8 28
     put n
     put jh
+  put (WorkData tn w) = do
+    putWord8 30
+    put tn
+    putByteString w
 
 instance Validatable WorkerCommand where
   validate (SchedLater jh _ step) = do
@@ -95,7 +103,7 @@ instance Validatable WorkerCommand where
     validateNum "Step" 0 0xFFFF step
   validate (WorkDone jh w) = do
     validate jh
-    validateLength "WorkData" 0 maxBound $ B.length w
+    validateLength "WorkDone" 0 maxBound $ B.length w
   validate (WorkFail jh) = validate jh
   validate (CanDo fn) = validate fn
   validate (CantDo fn) = validate fn
@@ -104,7 +112,10 @@ instance Validatable WorkerCommand where
     validate n
     validateNum "LockCount" 1 0xFFFF c
     validate jh
-  validate (Release n jh)    = do
+  validate (Release n jh) = do
     validate n
     validate jh
+  validate (WorkData tn w) = do
+    validate tn
+    validateLength "WorkData" 0 maxBound $ B.length w
   validate _               = Right ()

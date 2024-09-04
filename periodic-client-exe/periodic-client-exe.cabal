@@ -24,6 +24,7 @@ executable periodic
                      , boxes
                      , unix-time
                      , binary
+                     , unliftio
                      , metro
                      , metro-socket
   other-modules:       Paths_periodic_client_exe
