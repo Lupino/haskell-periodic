@@ -19,7 +19,7 @@ import qualified Data.IOMap                as IOMap
 import qualified Data.IOMap.STM            as IOMapS
 import           Data.List                 (find, isPrefixOf)
 import qualified Data.Map                  as Map
-import           Data.Maybe                (fromMaybe, isJust)
+import           Data.Maybe                (fromMaybe)
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
 import           Metro.TP.Socket           (socket)
@@ -47,9 +47,9 @@ import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel,
                                             newEmptyTMVarIO, newTQueueIO,
                                             newTVarIO, putTMVar, readTQueue,
-                                            readTVarIO, retrySTM, takeTMVar,
-                                            tryPutTMVar, tryTakeTMVar,
-                                            writeTQueue, writeTVar)
+                                            readTVarIO, takeTMVar, tryPutTMVar,
+                                            tryTakeTMVar, writeTQueue,
+                                            writeTVar)
 
 
 data Options = Options
@@ -179,14 +179,12 @@ getProcessMem pid = do
     Nothing       -> pure 0
     Just (_, mem) -> pure mem
 
-type PipeOut = IOMap Msgid (Maybe ByteString)
-type PipeData = IOMap Msgid (TQueue ByteString)
+type PipeOut = IOMap Msgid (TQueue ByteString)
 
 data Pipe = Pipe
   { pipeInWait :: TMVar Bool
   , pipeIn     :: TMVar (Msgid, ByteString)
   , pipeOut    :: PipeOut
-  , pipeData   :: PipeData
   , pipeIO     :: TVar (Maybe ProcessHandle)
   }
 
@@ -197,26 +195,23 @@ newPipe =
     <$> newEmptyTMVarIO
     <*> newEmptyTMVarIO
     <*> IOMap.empty
-    <*> IOMap.empty
     <*> newTVarIO Nothing
 
 
-runPipeOut :: PipeOut -> PipeData -> Handle -> Msgid -> IO ()
-runPipeOut pipeout pipedata outh msgid@(Msgid wid) = do
+runPipeOut :: PipeOut -> Handle -> Msgid -> IO ()
+runPipeOut pipeout outh msgid@(Msgid wid) = do
   out <- B.hGetLine outh
 
   when (B.null out) $ threadDelay 1000000 -- 1s
   when (B.take mlen out == mwid) $ do
     let dat = B.drop (mlen + 1) out
+    atomically $ do
+      mqueue <- IOMapS.lookup msgid pipeout
+      mapM_ (`writeTQueue` dat) mqueue
     case B.take 8 dat of
       "WORKDATA" -> do
-        atomically $ do
-          mqueue <- IOMapS.lookup msgid pipedata
-          mapM_ (`writeTQueue` B.drop 9 dat) mqueue
-        runPipeOut pipeout pipedata outh msgid
-      _ -> atomically $ do
-        mw <- IOMapS.lookup msgid pipeout
-        when (isJust mw) $ IOMapS.insert msgid (Just dat) pipeout
+        runPipeOut pipeout outh msgid
+      _ -> pure ()
 
   where mwid = B.pack (show wid)
         mlen = B.length mwid
@@ -251,7 +246,7 @@ createPipeProcess Pipe{..} maxMem cmd argv = do
           B.hPutStrLn inh (mwid <> " " <> bs)
           hFlush inh
 
-          runPipeOut pipeOut pipeData outh msgid
+          runPipeOut pipeOut outh msgid
 
         io1 <- checkPipeMemory ph onError maxMem
 
@@ -307,42 +302,44 @@ readPipe pipes = liftIO $ atomically $ do
   writeTQueue pipes pipe
   return pipe
 
+
+workPipeOut :: Transport tp => PipeOut -> Msgid -> Int64 -> JobT tp IO ()
+workPipeOut pipeout msgid retrySecs = do
+  out <- atomically $ do
+    mqueue <- IOMapS.lookup msgid pipeout
+    case mqueue of
+      Nothing    -> pure "WORKFAIL"
+      Just queue -> readTQueue queue
+
+  case B.take 8 out of
+    "WORKDATA" -> do
+      void $ workData $ B.drop 9 out
+      workPipeOut pipeout msgid retrySecs
+    "WORKDONE" -> void $ workDone_ $ B.drop 9 out
+    "WORKFAIL" ->
+      if retrySecs > 0 then void $ schedLater retrySecs
+                       else void workFail
+    _          -> void $ workDone_ out
+
+
 processPipeWorker :: Transport tp => Options -> TQueue Pipe -> JobT tp IO ()
 processPipeWorker Options{..} pipes = do
   Pipe{..} <- readPipe pipes
   jn <- name
   n <- if useName then name else workload
   msgid <- liftIO sessionGen
-  datQueue <- newTQueueIO
+  queue <- newTQueueIO
   atomically $ do
     void $ takeTMVar pipeInWait
     putTMVar pipeIn (msgid, n)
-    IOMapS.insert msgid Nothing pipeOut
-    IOMapS.insert msgid datQueue pipeData
+    IOMapS.insert msgid queue pipeOut
 
   let onError err = errorM "periodic-run-pipe" $ "Task(" ++ jn ++ ") error: " ++ err
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   io <- liftIO $ checkPipeTimeout pipeIO onError tout
-  ioDat <- async $ forever $ do
-    dat <- atomically $ readTQueue datQueue
-    workData dat
 
-  out <- atomically $ do
-    mout <- IOMapS.lookup msgid pipeOut
-    case mout of
-      Nothing         -> pure "WORKFAIL"
-      Just Nothing    -> retrySTM
-      Just (Just out) -> pure out
+  workPipeOut pipeOut msgid retrySecs
 
   IOMap.delete msgid pipeOut
-  IOMap.delete msgid pipeData
 
   mapM_ cancel io
-  cancel ioDat
-
-  case B.take 8 out of
-    "WORKDONE" -> void $ workDone_ $ B.drop 9 out
-    "WORKFAIL" ->
-      if retrySecs > 0 then void $ schedLater retrySecs
-                       else void workFail
-    _          -> void $ workDone_ out
