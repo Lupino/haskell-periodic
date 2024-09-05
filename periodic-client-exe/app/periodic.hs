@@ -120,10 +120,9 @@ printRunHelp :: IO ()
 printRunHelp = do
   putStrLn "periodic run - Run job and output result"
   putStrLn ""
-  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10] [--data]"
+  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10]"
   printWorkloadHelp
   putStrLn "     --timeout  Run job timeout"
-  putStrLn "     --data     Run step data(workData)"
   putStrLn ""
   exitSuccess
 
@@ -288,12 +287,6 @@ getWorkload argv =
     ('@':f) -> Workload <$> B.readFile f
     w       -> pure $ fromString w
 
-getSub :: [String] -> Bool
-getSub []           = False
-getSub ("--data":_) = True
-getSub (_:xs)       = getSub xs
-
-
 getTimeout :: Int -> [String] -> Int
 getTimeout def = safeRead def . getFlag ["--timeout"]
 
@@ -314,20 +307,19 @@ doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
 doRunJob (x:y:xs) = do
   w <- liftIO $ getWorkload xs
-  mio <- if getSub xs then do
-           io <- async $ recvJobData B.putStrLn (fromString x) (fromString y)
-           pure $ Just io
-         else pure Nothing
+  io <- async $ recvJobData putD (fromString x) (fromString y)
   liftIO . putR
     =<< runJob (fromString x) (fromString y) w t
-
-  mapM_ cancel mio
+  cancel io
 
   where t = getTimeout 10 xs
 
         putR :: Maybe ByteString -> IO ()
         putR Nothing   = putStrLn "Error: run job failed"
-        putR (Just bs) = B.putStrLn bs
+        putR (Just bs) = B.putStrLn $ "Result: " <> bs
+
+        putD :: ByteString -> IO ()
+        putD bs = B.putStrLn $ "Data: " <> bs
 
 doStatus :: Transport tp => ClientT tp IO ()
 doStatus = do
