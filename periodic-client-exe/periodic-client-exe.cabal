@@ -1,5 +1,5 @@
 name:                periodic-client-exe
-version:             1.2.0.2
+version:             1.2.1.0
 synopsis:            Periodic task system haskell client executables
 description:         Periodic task system haskell client executables.
 homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-client-exe#readme

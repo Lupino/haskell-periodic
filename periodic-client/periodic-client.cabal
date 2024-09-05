@@ -1,5 +1,5 @@
 name:                periodic-client
-version:             1.2.0.0
+version:             1.2.1.0
 synopsis:            Periodic task system haskell client.
 description:         Periodic task system haskell client library.
 homepage:            https://github.com/Lupino/haskell-periodic/tree/master/periodic-client#readme
