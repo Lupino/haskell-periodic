@@ -9,7 +9,9 @@ import           Control.Concurrent         (forkIO, killThread, threadDelay)
 import           Control.DeepSeq            (rnf)
 import           Control.Monad              (forever, unless, void, when)
 import           Control.Monad.IO.Class     (liftIO)
-import qualified Data.ByteString.Char8      as B (pack)
+import           Data.ByteString            (ByteString)
+import qualified Data.ByteString.Char8      as B (drop, empty, hGetLine, null,
+                                                  pack, take)
 import qualified Data.ByteString.Lazy       as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
 import           Data.Int                   (Int64)
@@ -20,14 +22,14 @@ import           Metro.Class                (Transport)
 import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
-                                             withLock_, workDone, workDone_,
+                                             withLock_, workData, workDone_,
                                              workFail, workload)
 import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
                                              startWorkerT, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
 import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
-import           System.IO                  (hClose)
+import           System.IO                  (Handle, hClose)
 import           System.Log.Logger          (errorM)
 import           System.Process             (CreateProcess (std_in, std_out),
                                              Pid, ProcessHandle,
@@ -35,39 +37,45 @@ import           System.Process             (CreateProcess (std_in, std_out),
                                              getPid, proc, readProcess,
                                              terminateProcess, waitForProcess,
                                              withCreateProcess)
-import           UnliftIO                   (MVar, SomeException, async, cancel,
+import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
+                                             async, atomically, cancel,
                                              evaluate, mask, newEmptyMVar,
-                                             onException, putMVar, takeMVar,
-                                             throwIO, try, tryIO)
+                                             newTQueueIO, newTVarIO,
+                                             onException, putMVar, readTQueue,
+                                             readTVarIO, takeMVar, throwIO, try,
+                                             tryIO, wait, writeTQueue,
+                                             writeTVar)
 
 
 data Options = Options
-    { host      :: String
-    , thread    :: Int
-    , lockCount :: Int
-    , lockName  :: Maybe LockName
-    , notify    :: Bool
-    , useData   :: Bool
-    , useName   :: Bool
-    , showHelp  :: Bool
-    , timeoutS  :: Int
-    , retrySecs :: Int64
-    , memLimit  :: Int64
-    }
+  { host        :: String
+  , thread      :: Int
+  , lockCount   :: Int
+  , lockName    :: Maybe LockName
+  , notify      :: Bool
+  , useData     :: Bool
+  , useName     :: Bool
+  , showHelp    :: Bool
+  , timeoutS    :: Int
+  , retrySecs   :: Int64
+  , memLimit    :: Int64
+  , useWorkData :: Bool
+  }
 
 options :: Maybe Int -> Maybe String -> Options
 options t h = Options
-  { host      = fromMaybe "unix:///tmp/periodic.sock" h
-  , thread    = fromMaybe 1 t
-  , lockCount = 1
-  , lockName  = Nothing
-  , notify    = False
-  , useData   = False
-  , useName   = True
-  , showHelp  = False
-  , timeoutS  = -1
-  , retrySecs = 0
-  , memLimit  = 0
+  { host        = fromMaybe "unix:///tmp/periodic.sock" h
+  , thread      = fromMaybe 1 t
+  , lockCount   = 1
+  , lockName    = Nothing
+  , notify      = False
+  , useData     = False
+  , useName     = True
+  , showHelp    = False
+  , timeoutS    = -1
+  , retrySecs   = 0
+  , memLimit    = 0
+  , useWorkData = False
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -79,6 +87,7 @@ parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (
 parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
 parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
+parseOptions ("--work-data":xs)    opt = parseOptions xs opt { useWorkData = True }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
 parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
 parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
@@ -92,7 +101,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -101,7 +110,8 @@ printHelp = do
   putStrLn "     --lock-count Max lock count (optional: 1)"
   putStrLn "     --lock-name  The lock name (optional: no lock)"
   putStrLn "     --broadcast  Is broadcast worker"
-  putStrLn "     --data       Send work data to client"
+  putStrLn "     --data       Send result data to client"
+  putStrLn "     --work-data  Send work data and result data to client"
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
   putStrLn "     --retry-secs Failed job retry in seconds"
@@ -171,48 +181,84 @@ finishProcess onError t mem ph = do
   return retval
 
 
+runPipeOut :: TQueue ByteString -> Handle -> IO ()
+runPipeOut queue outh = do
+  out <- B.hGetLine outh
+
+  when (B.null out) $ threadDelay 1000000 -- 1s
+  atomically $ writeTQueue queue out
+  case B.take 8 out of
+    "WORKDATA" -> do
+      runPipeOut queue outh
+    _ -> pure ()
+
+
+workPipeOut :: Transport tp => TQueue ByteString -> TVar ByteString -> JobT tp IO ()
+workPipeOut queue outh = do
+  out <- atomically $ readTQueue queue
+
+  case B.take 8 out of
+    "WORKDATA" -> do
+      void $ workData $ B.drop 9 out
+      workPipeOut queue outh
+    "WORKDONE" -> atomically $ writeTVar outh $ B.drop 9 out
+    _ -> atomically $ writeTVar outh out
+
+
 processWorker :: Transport tp => Options -> String -> [String] -> JobT tp IO ()
 processWorker Options{..} cmd argv = do
   n <- name
   rb <- workload
   tout <- if timeoutS > -1 then pure timeoutS else timeout
-  let argv' = if useName then argv ++ [n] else argv
-      cp = (proc cmd argv') {std_in = CreatePipe, std_out = if useData then CreatePipe else Inherit}
-      onError err = errorM "periodic-run" $ "Task(" ++ n ++ ") error: " ++ err
 
-  (code, out) <- liftIO $ withCreateProcess cp $ \mb_inh mb_outh _ ph ->
+  queue <- newTQueueIO
+  outTVar <- newTVarIO B.empty
+
+  let argv' = if useName then argv ++ [n] else argv
+      cp = (proc cmd argv') {std_in = CreatePipe, std_out = if useData || useWorkData then CreatePipe else Inherit}
+      onError err = errorM "periodic-run" $ "Task(" ++ n ++ ") error: " ++ err
+      writeIn inh = do
+        unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
+        void $ tryIO $ hClose inh
+
+  mio <- if useWorkData then Just <$> async (workPipeOut queue outTVar) else pure Nothing
+
+  code <- liftIO $ withCreateProcess cp $ \mb_inh mb_outh _ ph ->
     case (mb_inh, mb_outh) of
       (Nothing, _) -> do
         onError "Failed to get a stdin handle."
         terminateProcess ph
-        return (ExitFailure 1, Nothing)
+        return (ExitFailure 1)
       (Just inh, Nothing) -> do
-        unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
-        void $ tryIO $ hClose inh
-        code <- finishProcess onError tout memLimit ph
-        return (code, Nothing)
+        writeIn inh
+        finishProcess onError tout memLimit ph
 
       (Just inh, Just outh) -> do
-        output  <- LB.hGetContents outh
-        withForkWait (evaluate $ rnf output) $ \waitOut -> do
-          unless (LB.null rb) $ void $ tryIO $ LB.hPut inh rb
-          void $ tryIO $ hClose inh
+        if useWorkData then do
+          writeIn inh
+          runPipeOut queue outh
+          finishProcess onError tout memLimit ph
+        else do
+          output  <- LB.hGetContents outh
+          withForkWait (evaluate $ rnf output) $ \waitOut -> do
+            writeIn inh
 
-          code <- finishProcess onError tout memLimit ph
-          waitOut
-          hClose outh
+            code <- finishProcess onError tout memLimit ph
+            waitOut
+            hClose outh
 
-          return (code, Just output)
+            atomically $ writeTVar outTVar $ LB.toStrict output
 
+            return code
 
   case code of
     ExitFailure _ ->
       if retrySecs > 0 then void $ schedLater retrySecs
                        else void workFail
-    ExitSuccess   ->
-      case out of
-        Nothing -> void workDone
-        Just wl -> void $ workDone_ $ LB.toStrict wl
+    ExitSuccess   -> do
+      mapM_ wait mio
+      wl <- readTVarIO outTVar
+      void $ workDone_ wl
 
 -- | Fork a thread while doing something else, but kill it if there's an
 -- exception.
@@ -226,8 +272,8 @@ withForkWait io body = do
   waitVar <- newEmptyMVar :: IO (MVar (Either SomeException ()))
   mask $ \restore -> do
     tid <- forkIO $ try (restore io) >>= putMVar waitVar
-    let wait = takeMVar waitVar >>= either throwIO return
-    restore (body wait) `onException` killThread tid
+    let wait_ = takeMVar waitVar >>= either throwIO return
+    restore (body wait_) `onException` killThread tid
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0
