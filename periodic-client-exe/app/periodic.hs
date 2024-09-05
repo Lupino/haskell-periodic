@@ -34,6 +34,7 @@ import           UnliftIO                  (async, cancel)
 data Command = Status
     | Submit
     | Run
+    | Recv
     | Remove
     | Drop
     | Config
@@ -48,6 +49,7 @@ parseCommand :: String -> Command
 parseCommand "status"   = Status
 parseCommand "submit"   = Submit
 parseCommand "run"      = Run
+parseCommand "recv"     = Recv
 parseCommand "remove"   = Remove
 parseCommand "drop"     = Drop
 parseCommand "config"   = Config
@@ -82,6 +84,7 @@ printHelp = do
   putStrLn "     status   Show status"
   putStrLn "     submit   Submit job"
   putStrLn "     run      Run job and output result"
+  putStrLn "     recv     Recv job work data once"
   putStrLn "     remove   Remove job"
   putStrLn "     drop     Drop function"
   putStrLn "     config   Set or Get config"
@@ -123,6 +126,14 @@ printRunHelp = do
   putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10]"
   printWorkloadHelp
   putStrLn "     --timeout  Run job timeout"
+  putStrLn ""
+  exitSuccess
+
+printRecvHelp :: IO ()
+printRecvHelp = do
+  putStrLn "periodic recv - Recv job work data once"
+  putStrLn ""
+  putStrLn "Usage: periodic run funcname jobname"
   putStrLn ""
   exitSuccess
 
@@ -226,6 +237,7 @@ processCommand Help _     = liftIO printHelp
 processCommand Status _   = doStatus
 processCommand Submit xs  = doSubmitJob xs
 processCommand Run xs     = doRunJob xs
+processCommand Recv xs    = doRecvJob xs
 processCommand Remove xs  = doRemoveJob xs
 processCommand Drop xs    = doDropFunc xs
 processCommand Config xs  = doConfig xs
@@ -319,6 +331,15 @@ doRunJob (x:y:xs) = do
         putR (Just bs) = B.putStrLn $ "Result: " <> bs
 
         putD :: ByteString -> IO ()
+        putD bs = B.putStrLn $ "Data: " <> bs
+
+doRecvJob :: Transport tp => [String] -> ClientT tp IO ()
+doRecvJob []       = liftIO printRecvHelp
+doRecvJob [_]      = liftIO printRecvHelp
+doRecvJob (x:y:_) = do
+  recvJobData putD (fromString x) (fromString y)
+
+  where putD :: ByteString -> IO ()
         putD bs = B.putStrLn $ "Data: " <> bs
 
 doStatus :: Transport tp => ClientT tp IO ()
