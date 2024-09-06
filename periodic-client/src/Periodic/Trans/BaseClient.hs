@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Periodic.Trans.BaseClient
   ( BaseClientT
   , BaseClientEnv
@@ -17,7 +19,7 @@ module Periodic.Trans.BaseClient
   , successRequest
   ) where
 
-import           Control.Monad                (forever, unless)
+import           Control.Monad                (unless)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (Binary)
 import           Data.ByteString              (ByteString)
@@ -26,7 +28,7 @@ import           Metro.Class                  (Transport)
 import           Metro.Node                   (getEnv1, request, stopNodeT,
                                                withSessionT)
 import qualified Metro.Session                as S (receive, send)
-import           Metro.Utils                  (getEpochTime)
+import           Metro.Utils                  (foreverExit, getEpochTime)
 import           Periodic.Node
 import           Periodic.Types               (Packet, getResult, packetREQ)
 import           Periodic.Types.ClientCommand
@@ -85,9 +87,12 @@ recvJobData_
   => (ByteString -> m ()) ->  Job -> BaseClientT u tp m ()
 recvJobData_ cb j = withSessionT Nothing $ do
   S.send (packetREQ (RecvData j))
-  forever $ do
-    ret <- S.receive
-    lift $ mapM_ cb (getServerData ret)
+  foreverExit $ \exit -> do
+    ret <- lift S.receive
+    case getServerData ret of
+      Nothing    -> pure ()
+      Just "EOF" -> exit ()
+      Just dat   -> lift $ lift $ cb dat
 
 recvJobData
   :: (MonadUnliftIO m, Transport tp)

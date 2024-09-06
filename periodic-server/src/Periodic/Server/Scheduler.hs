@@ -501,6 +501,7 @@ removeJob_ reason jh = do
 
   asks sSchedPoolList >>= IOMap.lookup fn >>= mapM_ (`Pool.unspawn` job)
 
+  pushResult jh "EOF" True
   pushResult jh reason False
   getDuration t0 >>= runHook eventRemoveJob job
 
@@ -601,6 +602,7 @@ doneJob_ jh w = do
   p <- asks sPersist
   getJobDuration jh >>= runHook eventDoneJob jh
   liftIO $ P.delete p fn jn
+  pushResult jh "EOF" True
   pushResult jh w False
   where (fn, jn) = unHandle jh
 

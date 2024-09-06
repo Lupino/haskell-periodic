@@ -28,7 +28,7 @@ import           Data.String               (fromString)
 import           Data.UnixTime
 import           System.IO.Unsafe          (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes    as T
-import           UnliftIO                  (async, cancel)
+import           UnliftIO                  (async, wait)
 
 
 data Command = Status
@@ -322,7 +322,7 @@ doRunJob (x:y:xs) = do
   io <- async $ recvJobData putD (fromString x) (fromString y)
   liftIO . putR
     =<< runJob (fromString x) (fromString y) w t
-  cancel io
+  wait io
 
   where t = getTimeout 10 xs
 
