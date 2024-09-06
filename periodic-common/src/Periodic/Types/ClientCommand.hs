@@ -43,8 +43,8 @@ instance Binary ClientCommand where
       18 -> pure Dump
       19 -> Load <$> get
       25 -> RunJob <$> get
-      29 -> RecvData <$> get
-      _  -> error $ "Error ClientCommand" ++ show tp
+      31 -> RecvData <$> get
+      _  -> error $ "Error ClientCommand " ++ show tp
 
   put (SubmitJob job) = do
     putWord8 13
@@ -74,7 +74,7 @@ instance Binary ClientCommand where
     putWord8 25
     put job
   put (RecvData job) = do
-    putWord8 29
+    putWord8 31
     put job
 
 instance Validatable ClientCommand where
@@ -87,7 +87,7 @@ instance Validatable ClientCommand where
   validate (ConfigSet k v) = do
     validate k
     validateNum "ConfigValue" 0 0xFFFFFFFF v
-  validate (Load jobs)      = validate jobs
-  validate (RunJob job)     = validate job
+  validate (Load jobs)     = validate jobs
+  validate (RunJob job)    = validate job
   validate (RecvData job)  = validate job
-  validate _                = Right ()
+  validate _               = Right ()

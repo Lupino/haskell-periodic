@@ -54,7 +54,7 @@ instance Binary WorkerCommand where
       28 -> do
         n <- get
         Release n <$> get
-      30 -> do
+      32 -> do
         tn <- get
         WorkData tn . toStrict <$> getRemainingLazyByteString
       _ -> error $ "Error WorkerCommand " ++ show tp
@@ -93,7 +93,7 @@ instance Binary WorkerCommand where
     put n
     put jh
   put (WorkData tn w) = do
-    putWord8 30
+    putWord8 32
     put tn
     putByteString w
 
