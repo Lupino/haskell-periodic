@@ -58,6 +58,7 @@ handleClientSessionT (CC.RecvData job) = do
   if c then do
     (!nid, !msgid) <- ident <$> getSessionEnv1
     lift $ prepareWait job nid msgid True
+    send $ packetRES Success
   else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do

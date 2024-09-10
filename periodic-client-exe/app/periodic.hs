@@ -28,7 +28,8 @@ import           Data.String               (fromString)
 import           Data.UnixTime
 import           System.IO.Unsafe          (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes    as T
-import           UnliftIO                  (async, wait)
+import           UnliftIO                  (async, atomically, newEmptyTMVarIO,
+                                            takeTMVar, wait)
 
 
 data Command = Status
@@ -319,7 +320,9 @@ doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp
 doRunJob (x:y:xs) = do
   w <- liftIO $ getWorkload xs
-  io <- async $ recvJobData putD (fromString x) (fromString y)
+  waiter <- newEmptyTMVarIO
+  io <- async $ recvJobData (Just waiter) putD (fromString x) (fromString y)
+  atomically $ takeTMVar waiter
   liftIO . putR
     =<< runJob (fromString x) (fromString y) w t
   wait io
@@ -337,7 +340,7 @@ doRecvJob :: Transport tp => [String] -> ClientT tp IO ()
 doRecvJob []       = liftIO printRecvHelp
 doRecvJob [_]      = liftIO printRecvHelp
 doRecvJob (x:y:_) = do
-  recvJobData putD (fromString x) (fromString y)
+  recvJobData Nothing putD (fromString x) (fromString y)
 
   where putD :: ByteString -> IO ()
         putD bs = B.putStrLn $ "Data: " <> bs

@@ -84,20 +84,24 @@ runJob fn jn w tout = do
 
 recvJobData_
   :: (MonadUnliftIO m, Transport tp)
-  => (ByteString -> m ()) ->  Job -> BaseClientT u tp m ()
-recvJobData_ cb j = withSessionT Nothing $ do
+  => Maybe (TMVar ())
+  -> (ByteString -> m ())
+  ->  Job -> BaseClientT u tp m ()
+recvJobData_ mwaiter cb j = withSessionT Nothing $ do
   S.send (packetREQ (RecvData j))
   foreverExit $ \exit -> do
     ret <- lift S.receive
     case getServerData ret of
-      Nothing    -> pure ()
+      Nothing    -> atomically $ mapM_ (`tryPutTMVar` ()) mwaiter
       Just "EOF" -> exit ()
       Just dat   -> lift $ lift $ cb dat
 
 recvJobData
   :: (MonadUnliftIO m, Transport tp)
-  =>(ByteString -> m ()) ->  FuncName -> JobName -> BaseClientT u tp m ()
-recvJobData cb fn jn = recvJobData_ cb $ initJob fn jn
+  => Maybe (TMVar ())
+  -> (ByteString -> m ())
+  ->  FuncName -> JobName -> BaseClientT u tp m ()
+recvJobData mwaiter cb fn jn = recvJobData_ mwaiter cb $ initJob fn jn
 
 checkHealth :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m ()
 checkHealth = do
