@@ -888,7 +888,16 @@ pushResult jh w isData = do
 existsWaitList :: MonadIO m => JobHandle -> SchedT db m Bool
 existsWaitList jh = do
   wl <- asks sWaitList
-  isJust <$> IOMap.lookup jh wl
+  mitem <- IOMap.lookup jh wl
+  case mitem of
+    Nothing   -> pure False
+    Just item -> pure $ hasWaiter $ itemWaiters item
+
+  where hasWaiter :: [Waiter] -> Bool
+        hasWaiter [] = False
+        hasWaiter (x:xs)
+          | waiterIsData x = hasWaiter xs
+          | otherwise = True
 
 runHook :: (MonadIO m, GetHookName a) => HookEvent -> a -> Double -> SchedT db m ()
 runHook evt n c = do
