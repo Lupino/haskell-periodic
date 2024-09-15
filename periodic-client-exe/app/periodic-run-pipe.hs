@@ -11,8 +11,8 @@ import           Control.Monad             (forever, replicateM_, void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetLine, hPutStrLn,
-                                                 length, null, pack, take,
-                                                 unpack)
+                                                 length, null, pack, putStrLn,
+                                                 take, unpack)
 import           Data.Int                  (Int64)
 import           Data.IOMap                (IOMap)
 import qualified Data.IOMap                as IOMap
@@ -35,7 +35,7 @@ import           Periodic.Types            (FuncName (..), LockName (..),
                                             Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
-import           System.IO                 (Handle, hFlush)
+import           System.IO                 (Handle, hClose, hFlush)
 import           System.Log                (Priority (INFO))
 import           System.Log.Logger         (errorM, infoM)
 import           System.Process            (CreateProcess (std_in, std_out),
@@ -202,8 +202,7 @@ runPipeOut :: PipeOut -> Handle -> Msgid -> IO ()
 runPipeOut pipeout outh msgid@(Msgid wid) = do
   out <- B.hGetLine outh
 
-  when (B.null out) $ threadDelay 1000000 -- 1s
-  when (B.take mlen out == mwid) $ do
+  if B.take mlen out == mwid then do
     let dat = B.drop (mlen + 1) out
     atomically $ do
       mqueue <- IOMapS.lookup msgid pipeout
@@ -212,6 +211,10 @@ runPipeOut pipeout outh msgid@(Msgid wid) = do
       "WORKDATA" -> do
         runPipeOut pipeout outh msgid
       _ -> pure ()
+  else do
+    B.putStrLn out
+    when (B.null out) $ threadDelay 10000 -- 10ms
+    runPipeOut pipeout outh msgid
 
   where mwid = B.pack (show wid)
         mlen = B.length mwid
@@ -255,6 +258,7 @@ createPipeProcess Pipe{..} maxMem cmd argv = do
 
         cancel io
         mapM_ cancel io1
+        hClose outh
         IOMap.modifyIOMap (const Map.empty) pipeOut
 
 

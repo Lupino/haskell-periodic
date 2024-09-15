@@ -42,9 +42,9 @@ import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
                                              evaluate, mask, newEmptyMVar,
                                              newTQueueIO, newTVarIO,
                                              onException, putMVar, readTQueue,
-                                             readTVarIO, takeMVar, throwIO, try,
-                                             tryIO, wait, writeTQueue,
-                                             writeTVar)
+                                             readTVar, readTVarIO, retrySTM,
+                                             takeMVar, throwIO, try, tryIO,
+                                             wait, writeTQueue, writeTVar)
 
 
 data Options = Options
@@ -181,16 +181,21 @@ finishProcess onError t mem ph = do
   return retval
 
 
-runPipeOut :: TQueue ByteString -> Handle -> IO ()
-runPipeOut queue outh = do
+runPipeOut :: TVar (Maybe Bool) -> TQueue ByteString -> Handle -> IO ()
+runPipeOut waiter queue outh = do
   out <- B.hGetLine outh
-
-  when (B.null out) $ threadDelay 1000000 -- 1s
   atomically $ writeTQueue queue out
-  case B.take 8 out of
-    "WORKDATA" -> do
-      runPipeOut queue outh
-    _ -> pure ()
+
+  when (B.null out) $ do
+    atomically $ do
+      w <- readTVar waiter
+      case w of
+        Nothing -> pure ()
+        Just _  -> writeTVar waiter $ Just True
+
+    threadDelay 10000 -- 10ms
+
+  runPipeOut waiter queue outh
 
 
 workPipeOut :: Transport tp => TQueue ByteString -> TVar ByteString -> JobT tp IO ()
@@ -202,7 +207,9 @@ workPipeOut queue outh = do
       void $ workData $ B.drop 9 out
       workPipeOut queue outh
     "WORKDONE" -> atomically $ writeTVar outh $ B.drop 9 out
-    _ -> atomically $ writeTVar outh out
+    _ -> atomically $ do
+      buf <- readTVar outh
+      writeTVar outh $ buf <> "\n" <> out
 
 
 processWorker :: Transport tp => Options -> String -> [String] -> JobT tp IO ()
@@ -236,8 +243,19 @@ processWorker Options{..} cmd argv = do
       (Just inh, Just outh) -> do
         if useWorkData then do
           writeIn inh
-          runPipeOut queue outh
-          finishProcess onError tout memLimit ph
+          waiter <- newTVarIO Nothing
+          io <- async $ runPipeOut waiter queue outh
+          code <- finishProcess onError tout memLimit ph
+          atomically $ writeTVar waiter (Just False)
+          atomically $ do
+            mv <- readTVar waiter
+            case mv of
+              Nothing -> pure ()
+              Just v  -> unless v retrySTM
+
+          cancel io
+          hClose outh
+          return code
         else do
           output  <- LB.hGetContents outh
           withForkWait (evaluate $ rnf output) $ \waitOut -> do
