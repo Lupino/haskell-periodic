@@ -29,8 +29,8 @@ import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitSuccess)
 import qualified Web.Scotty                      as WS (status)
 import           Web.Scotty                      (ActionM, ScottyM, body,
-                                                  captureParam, get, post,
-                                                  queryParam, raw, rescue,
+                                                  captureParam, catch, get,
+                                                  post, queryParam, raw,
                                                   scottyOpts, settings)
 
 
@@ -117,8 +117,8 @@ paramJob = do
 paramJob_ :: ActionM Job
 paramJob_ = do
   (fn, jn) <- paramJob
-  schedAt <- queryParam "sched_at" `rescue` (\(_ :: SomeException) -> return 0)
-  timeout <- queryParam "timeout" `rescue` (\(_ :: SomeException) -> return 0)
+  schedAt <- queryParam "sched_at" `catch` (\(_ :: SomeException) -> return 0)
+  timeout <- queryParam "timeout" `catch` (\(_ :: SomeException) -> return 0)
   wb <- Workload . LB.toStrict <$> body
   pure $ setSchedAt schedAt $ setTimeout timeout $ setWorkload wb $ initJob fn jn
 

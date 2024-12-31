@@ -319,7 +319,7 @@ parseMemLine str = (read x :: Pid, parseMemStr y)
   where [x, y] = words str
 
 parseMemMap :: String -> [(Pid, Int64)]
-parseMemMap = map parseMemLine . tail . lines
+parseMemMap = map parseMemLine . drop 1 . lines
 
 getMemMap :: IO [(Pid, Int64)]
 getMemMap = parseMemMap <$> readProcess "ps" ["-eo", "pid,rss"] ""
