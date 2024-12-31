@@ -22,8 +22,8 @@ import           Metro.Class                (Transport)
 import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
-                                             withLock_, workData, workDone_,
-                                             workFail, workload)
+                                             withLock_, workData, workDone,
+                                             workDone_, workFail, workload)
 import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
                                              startWorkerT, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
@@ -60,6 +60,7 @@ data Options = Options
   , retrySecs   :: Int64
   , memLimit    :: Int64
   , useWorkData :: Bool
+  , skipFail    :: Bool
   }
 
 options :: Maybe Int -> Maybe String -> Options
@@ -76,6 +77,7 @@ options t h = Options
   , retrySecs   = 0
   , memLimit    = 0
   , useWorkData = False
+  , skipFail    = False
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -89,6 +91,7 @@ parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
 parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
 parseOptions ("--work-data":xs)    opt = parseOptions xs opt { useWorkData = True }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
+parseOptions ("--skip-fail":xs)    opt = parseOptions xs opt { skipFail = True }
 parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
 parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
 parseOptions ("--mem-limit":x:xs)  opt = parseOptions xs opt { memLimit = parseMemStr x }
@@ -101,7 +104,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--skip-fail] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
@@ -115,6 +118,7 @@ printHelp = do
   putStrLn "     --no-name    Ignore the job name"
   putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
   putStrLn "     --retry-secs Failed job retry in seconds"
+  putStrLn "     --skip-fail  Skip failed job, no retry"
   putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "  -h --help       Display help message"
   putStrLn ""
@@ -271,8 +275,12 @@ processWorker Options{..} cmd argv = do
 
   case code of
     ExitFailure _ ->
-      if retrySecs > 0 then void $ schedLater retrySecs
-                       else void workFail
+      if skipFail
+        then void workDone
+        else
+        if retrySecs > 0
+          then void $ schedLater retrySecs
+          else void workFail
     ExitSuccess   -> do
       mapM_ wait mio
       wl <- readTVarIO outTVar
