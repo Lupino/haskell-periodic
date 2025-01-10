@@ -10,10 +10,10 @@ module Periodic.Server.Persist.SQLite
 
 import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
+import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString, append)
 import qualified Data.ByteString.Char8   as B (pack)
 import           Data.ByteString.Lazy    (fromStrict)
-import           Data.Byteable           (toBytes)
 import           Data.Int                (Int64)
 import           Data.Maybe              (listToMaybe)
 import           Data.String             (IsString (..))
@@ -71,6 +71,7 @@ instance Persist SQLite where
   funcList       (SQLite db) = doFuncList db
   minSchedAt     (SQLite db) = doMinSchedAt db Pending
   countPending   (SQLite db) = doCountPending db
+  insertMetric   (SQLite db) = doInsertMetric db
 
 instance Exception (PersistException SQLite)
 
@@ -293,3 +294,6 @@ stepMaybeInt stmt = do
   case sr of
     Done -> pure Nothing
     Row  -> Just . fromIntegral <$> columnInt64 stmt 0
+
+doInsertMetric :: Database -> String -> String -> Int -> IO ()
+doInsertMetric _ _ _ _ = pure ()

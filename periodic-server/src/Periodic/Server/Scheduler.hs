@@ -126,7 +126,7 @@ data SchedEnv db = SchedEnv
     , sPersist       :: db
     , sAssignJob     :: Nid -> Msgid -> Job -> IO Bool
     , sPushData      :: Nid -> Msgid -> ByteString -> IO ()
-    , sHook          :: Hook
+    , sHook          :: Hook db
     , sAssignJobTime :: IOMap JobHandle UnixTime
     , sMaxPoolSize   :: TVar Int
     , sSchedPoolList :: IOMap FuncName SchedPool
@@ -162,7 +162,7 @@ initSchedEnv
   -> m ()
   -> (Nid -> Msgid -> Job -> IO Bool)
   -> (Nid -> Msgid -> ByteString -> IO ())
-  -> Hook
+  -> Hook db
   -> PoolSize
   -> m (SchedEnv db)
 initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolSize) = do
@@ -899,7 +899,8 @@ existsWaitList jh = do
           | waiterIsData x = hasWaiter xs
           | otherwise = True
 
-runHook :: (MonadIO m, GetHookName a) => HookEvent -> a -> Double -> SchedT db m ()
+runHook :: (MonadIO m, GetHookName a, Persist db) => HookEvent -> a -> Double -> SchedT db m ()
 runHook evt n c = do
   hook <- asks sHook
-  Hook.runHook hook evt n c
+  db <- asks sPersist
+  Hook.runHook hook db evt n c

@@ -41,6 +41,7 @@ class (Exception (PersistException db)) => Persist db where
   funcList       :: db -> IO [FuncName]
   minSchedAt     :: db -> FuncName -> IO Int64
   countPending   :: db -> FuncName -> Int64 -> IO Int
+  insertMetric   :: db -> String -> String -> Int -> IO ()
 
 
 loopFetchData :: Int -> Int -> Int -> (Int -> IO [a]) -> IO [a]

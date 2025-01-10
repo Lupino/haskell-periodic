@@ -23,10 +23,12 @@ import           Database.PSQL.Types     (From (..), FromField (..), Only (..),
                                           PSQLPool, Size (..), TableName,
                                           ToField (..), asc, count,
                                           createPSQLPool, createTable, delete,
-                                          insertOrUpdate, none, runPSQLPool,
-                                          selectOneOnly, selectOnly,
-                                          selectOnly_, update, withTransaction)
+                                          insert, insertOrUpdate, none,
+                                          runPSQLPool, selectOneOnly,
+                                          selectOnly, selectOnly_, update,
+                                          withTransaction)
 import qualified Database.PSQL.Types     as DB (PSQL)
+import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
                                           State (..), loopFetchData)
 import qualified Periodic.Server.Persist as Persist
@@ -79,6 +81,7 @@ instance Persist PSQL where
       void createConfigTable
       void createJobTable
       void createFuncTable
+      void createMetricTable
       void allPending
     return $ PSQL pool
 
@@ -99,6 +102,7 @@ instance Persist PSQL where
   funcList       db       = runDB  db   doFuncList
   minSchedAt     db       = runDB  db . doMinSchedAt Pending
   countPending   db ts    = runDB  db . doCountPending ts
+  insertMetric   db e n   = runDB  db . doInsertMetric e n
 
 instance Exception (PersistException PSQL)
 
@@ -116,6 +120,9 @@ jobs = "jobs"
 
 funcs :: TableName
 funcs = "funcs"
+
+metrics :: TableName
+metrics = "metrics"
 
 createConfigTable :: DB.PSQL Int64
 createConfigTable =
@@ -141,6 +148,17 @@ createFuncTable =
   createTable funcs
     [ "func VARCHAR(256) NOT NULL"
     , "CONSTRAINT func_pk PRIMARY KEY (func)"
+    ]
+
+
+createMetricTable :: DB.PSQL Int64
+createMetricTable =
+  createTable metrics
+    [ "id BIGSERIAL PRIMARY KEY"
+    , "event VARCHAR(50) NOT NULL"
+    , "name VARCHAR(150) NOT NULL"
+    , "duration_ms INT DEFAULT '0'"
+    , "created_at INT DEFAULT '0'"
     ]
 
 allPending :: DB.PSQL Int64
@@ -227,3 +245,8 @@ decodeJob bs =
       case decodeOrFail (fromStrict bs0) of
         Left e            -> Left $ show e
         Right (_, _, job) -> Right job
+
+doInsertMetric :: String -> String -> Int -> DB.PSQL ()
+doInsertMetric event name durationMs = do
+  now <- getEpochTime
+  void $ insert metrics ["event", "name", "duration_ms", "created_at"] (event, name, durationMs, now)

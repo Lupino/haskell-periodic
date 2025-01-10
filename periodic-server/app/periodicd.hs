@@ -77,7 +77,8 @@ printHelp = do
   putStrLn "                       eg: postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
   putStrLn "                       eg: cache+file://data.sqlite"
   putStrLn "                       eg: cache+postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
-  putStrLn "     --hook            Event hook socket uri (optional: null)"
+  putStrLn "     --hook            Event hook name or socket uri (optional: null)"
+  putStrLn "                       eg: persist save to postgresql table metrics"
   putStrLn "                       eg: udp://127.0.0.1:1000"
   putStrLn "                       eg: tcp://127.0.0.1:1000"
   putStrLn "     --max-cache-size  Max cache size only effect use cache (optional: 1000)"
@@ -101,21 +102,20 @@ main = do
 
   setupLog logLevel
 
-  hook <- genHook hookHostPort
-
   if take 11 storePath == "postgres://" then
-    run opts (usePSQL $ drop 11 storePath) hook
+    run opts (usePSQL $ drop 11 storePath) hookHostPort
   else if take 7 storePath == "file://" then
-    run opts (useSQLite $ drop 7 storePath) hook
+    run opts (useSQLite $ drop 7 storePath) hookHostPort
   else if storePath == ":memory:" then
-    run opts useMemory hook
+    run opts useMemory hookHostPort
   else if take 13 storePath == "cache+file://" then
-    run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath) hook
+    run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath) hookHostPort
   else if take 17 storePath == "cache+postgres://" then
-    run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath) hook
+    run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath) hookHostPort
   else
-    run opts (useSQLite storePath) hook
+    run opts (useSQLite storePath) hookHostPort
 
-run :: Persist db => Options -> PersistConfig db -> Hook -> IO ()
-run Options {host, pushTaskSize, schedTaskSize} config hook =
-    startServer config id (socketServer host) hook pushTaskSize schedTaskSize
+run :: Persist db => Options -> PersistConfig db -> String -> IO ()
+run Options {host, pushTaskSize, schedTaskSize} config hookHostPort = do
+  hook <- genHook hookHostPort
+  startServer config id (socketServer host) hook pushTaskSize schedTaskSize
