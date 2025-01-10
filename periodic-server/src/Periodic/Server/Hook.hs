@@ -18,16 +18,17 @@ module Periodic.Server.Hook
   ) where
 
 
-import qualified Data.ByteString.Char8 as B (pack, unpack)
-import           Metro.Class           (Transport (..))
-import qualified Metro.Lock            as L (Lock, new, with)
-import           Metro.TP.Socket       (socket)
-import           Periodic.Types        (FuncName (..), Job, JobHandle,
-                                        LockName (..), getFuncName, unHandle)
-import           System.Log.Logger     (errorM)
-import           UnliftIO              (MonadIO (..), TVar, atomically,
-                                        newTVarIO, readTVarIO, timeout, tryAny,
-                                        writeTVar)
+import qualified Data.ByteString.Char8   as B (pack, unpack)
+import           Metro.Class             (Transport (..))
+import qualified Metro.Lock              as L (Lock, new, with)
+import           Metro.TP.Socket         (socket)
+import           Periodic.Server.Persist (Persist (..))
+import           Periodic.Types          (FuncName (..), Job, JobHandle,
+                                          LockName (..), getFuncName, unHandle)
+import           System.Log.Logger       (errorM)
+import           UnliftIO                (MonadIO (..), TVar, atomically,
+                                          newTVarIO, readTVarIO, timeout,
+                                          tryAny, writeTVar)
 
 newtype HookEvent = HookEvent String
   deriving (Show)
@@ -35,8 +36,8 @@ newtype HookEvent = HookEvent String
 newtype HookName = HookName String
   deriving (Show)
 
-newtype Hook = Hook
-  { runHook_ :: HookEvent -> HookName -> Double -> IO ()
+newtype Hook db = Hook
+  { runHook_ :: db -> HookEvent -> HookName -> Double -> IO ()
   }
 
 eventPushJob       = HookEvent "pushJob"
@@ -47,11 +48,11 @@ eventAcquireLock   = HookEvent "acquireLock"
 eventReleaseLock   = HookEvent "releaseLock"
 eventRemoveJob     = HookEvent "removeJob"
 
-runHook :: (MonadIO m, GetHookName a) => Hook -> HookEvent -> a -> Double -> m ()
-runHook hook evt n c = liftIO $ runHook_ hook evt (hookName n) c
+runHook :: (MonadIO m, GetHookName a) => Hook db -> db -> HookEvent -> a -> Double -> m ()
+runHook hook db evt n c = liftIO $ runHook_ hook db evt (hookName n) c
 
-emptyHook :: Hook
-emptyHook = Hook $ \_ _ _ -> pure ()
+emptyHook :: Hook db
+emptyHook = Hook $ \_ _ _ _ -> pure ()
 
 class GetHookName a where
   hookName :: a -> HookName
@@ -72,8 +73,8 @@ instance GetHookName JobHandle where
 genSocketHook
   :: Transport tp
   => L.Lock -> TVar (Maybe tp) -> TransportConfig tp
-  -> HookEvent -> HookName -> Double -> IO ()
-genSocketHook lock tph config (HookEvent evt) (HookName name) count = L.with lock $ do
+  -> db -> HookEvent -> HookName -> Double -> IO ()
+genSocketHook lock tph config _ (HookEvent evt) (HookName name) count = L.with lock $ do
   mtp <- readTVarIO tph
   case mtp of
     Nothing -> do
@@ -101,13 +102,28 @@ genSocketHook lock tph config (HookEvent evt) (HookName name) count = L.with loc
         logErr e = errorM "Periodic.Server.Hook" $ "Send event error " ++ show e
 
 
-socketHook :: String -> IO Hook
+genPersistHook
+  :: Persist db
+  => L.Lock
+  -> db -> HookEvent -> HookName -> Double -> IO ()
+genPersistHook lock db (HookEvent evt) (HookName name) count = L.with lock $ do
+  insertMetric db evt name $ floor (count * 1000)
+
+
+socketHook :: String -> IO (Hook db)
 socketHook hostPort = do
   h <- newTVarIO Nothing
   lock <- L.new
   return . Hook $ genSocketHook lock h $ socket hostPort
 
 
-genHook :: String -> IO Hook
-genHook ""       = return emptyHook
-genHook hostPort = socketHook hostPort
+persistHook :: Persist db => IO (Hook db)
+persistHook = do
+  lock <- L.new
+  return . Hook $ genPersistHook lock
+
+
+genHook :: Persist db => String -> IO (Hook db)
+genHook ""        = return emptyHook
+genHook "persist" = persistHook
+genHook hostPort  = socketHook hostPort

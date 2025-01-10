@@ -93,7 +93,7 @@ startServer
   => PersistConfig db
   -> (TransportConfig (STP serv) -> TransportConfig tp)
   -> S.ServerConfig serv
-  -> Hook
+  -> Hook db
   -> Int
   -> Int
   -> m ()

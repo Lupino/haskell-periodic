@@ -65,6 +65,7 @@ instance Persist Memory where
   funcList       = doFuncList
   minSchedAt     = doMinSchedAt
   countPending   = doCountPending
+  insertMetric   = doInsertMetric
 
 instance Exception (PersistException Memory)
 
@@ -240,3 +241,6 @@ memorySize :: Memory -> IO Int64
 memorySize Memory {..} = do
   sizes <- mapM IOMap.size =<< IOMap.elems jobList
   pure . fromIntegral $ sum sizes
+
+doInsertMetric :: Memory -> String -> String -> Int -> IO ()
+doInsertMetric _ _ _ _ = pure ()
