@@ -27,8 +27,8 @@ import           Metro.Utils               (setupLog)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
-                                            withLock_, workData, workDone_,
-                                            workFail, workload)
+                                            withLock_, workData, workDone,
+                                            workDone_, workFail, workload)
 import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
                                             startWorkerT, work)
 import           Periodic.Types            (FuncName (..), LockName (..),
@@ -53,21 +53,22 @@ import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
 
 
 data Options = Options
-    { host      :: String
-    , thread    :: Int
-    , lockCount :: Int
-    , lockName  :: Maybe LockName
-    , notify    :: Bool
-    , useName   :: Bool
-    , showHelp  :: Bool
-    , timeoutS  :: Int
-    , retrySecs :: Int64
-    , memLimit  :: Int64
-    }
+  { host      :: String
+  , thread    :: Int
+  , lockCount :: Int
+  , lockName  :: Maybe LockName
+  , notify    :: Bool
+  , useName   :: Bool
+  , showHelp  :: Bool
+  , timeoutS  :: Int
+  , retrySecs :: Int64
+  , memLimit  :: Int64
+  , skipFail  :: Bool
+  }
 
 options :: Maybe Int -> Maybe String -> Options
 options t h = Options
-  { host    = fromMaybe "unix:///tmp/periodic.sock" h
+  { host      = fromMaybe "unix:///tmp/periodic.sock" h
   , thread    = fromMaybe 1 t
   , lockCount = 1
   , lockName  = Nothing
@@ -77,6 +78,7 @@ options t h = Options
   , timeoutS  = -1
   , retrySecs = 0
   , memLimit  = 0
+  , skipFail  = False
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -88,6 +90,7 @@ parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (
 parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
 parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
+parseOptions ("--skip-fail":xs)    opt = parseOptions xs opt { skipFail = True }
 parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
 parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
 parseOptions ("--mem-limit":x:xs)  opt = parseOptions xs opt { memLimit = parseMemStr x }
@@ -112,6 +115,7 @@ printHelp = do
   putStrLn "     --no-name    Use one line workload instead of name"
   putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
   putStrLn "     --retry-secs Failed job retry in seconds"
+  putStrLn "     --skip-fail  Skip failed job, no retry"
   putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "     --buf-size   Pipe max buffer size in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "  -h --help       Display help message"
@@ -307,8 +311,8 @@ readPipe pipes = liftIO $ atomically $ do
   return pipe
 
 
-workPipeOut :: Transport tp => PipeOut -> Msgid -> Int64 -> JobT tp IO ()
-workPipeOut pipeout msgid retrySecs = do
+workPipeOut :: Transport tp => PipeOut -> Msgid -> Bool -> Int64 -> JobT tp IO ()
+workPipeOut pipeout msgid skipFail retrySecs = do
   out <- atomically $ do
     mqueue <- IOMapS.lookup msgid pipeout
     case mqueue of
@@ -318,11 +322,15 @@ workPipeOut pipeout msgid retrySecs = do
   case B.take 8 out of
     "WORKDATA" -> do
       void $ workData $ B.drop 9 out
-      workPipeOut pipeout msgid retrySecs
+      workPipeOut pipeout msgid skipFail retrySecs
     "WORKDONE" -> void $ workDone_ $ B.drop 9 out
     "WORKFAIL" ->
-      if retrySecs > 0 then void $ schedLater retrySecs
-                       else void workFail
+        if skipFail
+          then void workDone
+          else
+          if retrySecs > 0
+            then void $ schedLater retrySecs
+            else void workFail
     _          -> void $ workDone_ out
 
 
@@ -342,7 +350,7 @@ processPipeWorker Options{..} pipes = do
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   io <- liftIO $ checkPipeTimeout pipeIO onError tout
 
-  workPipeOut pipeOut msgid retrySecs
+  workPipeOut pipeOut msgid skipFail retrySecs
 
   IOMap.delete msgid pipeOut
 
