@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-23.4
+resolver: lts-23.24
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -81,4 +81,4 @@ extra-deps:
 # compiler-check: newer-minor
 
 nix:
-    packages: [zlib, postgresql]
+    packages: [zlib, postgresql, pkg-config]
