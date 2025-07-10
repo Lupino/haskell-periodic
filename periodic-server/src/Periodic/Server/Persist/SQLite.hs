@@ -18,6 +18,7 @@ import           Data.Int                (Int64)
 import           Data.Maybe              (listToMaybe)
 import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
+import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
@@ -51,6 +52,7 @@ instance Persist SQLite where
         createConfigTable db
         createJobTable db
         createFuncTable db
+        createMetricTable db
         allPending db
         commitTx db
         return $ SQLite db
@@ -112,6 +114,17 @@ createFuncTable db = void . exec db $ Utf8 $
   "CREATE TABLE IF NOT EXISTS funcs ("
     `append` " func CHAR(256) NOT NULL,"
     `append` " PRIMARY KEY (func))"
+
+
+createMetricTable :: Database -> IO ()
+createMetricTable db = void . exec db $ Utf8 $
+  "CREATE TABLE IF NOT EXISTS metrics ("
+  <> " id BIGSERIAL PRIMARY KEY,"
+  <> " event VARCHAR(50) NOT NULL,"
+  <> " name VARCHAR(150) NOT NULL,"
+  <> " duration_ms INT DEFAULT '0',"
+  <> " created_at INT DEFAULT '0'"
+  <> ")"
 
 allPending :: Database -> IO ()
 allPending db = void . exec db $ Utf8 "UPDATE jobs SET state=0"
@@ -296,4 +309,11 @@ stepMaybeInt stmt = do
     Row  -> Just . fromIntegral <$> columnInt64 stmt 0
 
 doInsertMetric :: Database -> String -> String -> Int -> IO ()
-doInsertMetric _ _ _ _ = pure ()
+doInsertMetric db event name durationMs = do
+  now <- getEpochTime
+  execStmt db sql $ \stmt -> do
+    void $ bindText  stmt 1 $ fromString event
+    void $ bindText  stmt 2 $ fromString name
+    void $ bindInt64 stmt 3 $ fromIntegral durationMs
+    void $ bindInt64 stmt 4 now
+  where sql = Utf8 "INSERT INTO metrics (event, name, duration_ms, created_at) VALUES (?, ?, ?, ?)"

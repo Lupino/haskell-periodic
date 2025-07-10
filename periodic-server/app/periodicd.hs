@@ -78,7 +78,7 @@ printHelp = do
   putStrLn "                       eg: cache+file://data.sqlite"
   putStrLn "                       eg: cache+postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password=''"
   putStrLn "     --hook            Event hook name or socket uri (optional: null)"
-  putStrLn "                       eg: persist save to postgresql table metrics"
+  putStrLn "                       eg: persist save to postgresql or sqlite table metrics"
   putStrLn "                       eg: udp://127.0.0.1:1000"
   putStrLn "                       eg: tcp://127.0.0.1:1000"
   putStrLn "     --max-cache-size  Max cache size only effect use cache (optional: 1000)"
