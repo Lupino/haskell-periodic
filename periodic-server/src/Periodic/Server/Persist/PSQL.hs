@@ -14,19 +14,22 @@ import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString)
+import qualified Data.ByteString         as B (init, tail)
 import           Data.ByteString.Base64  (decode, encode)
+import qualified Data.ByteString.Char8   as B (drop, split, take, unpack)
 import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Int                (Int64)
 import           Data.Maybe              (fromMaybe)
-import           Data.String             (IsString (..))
+import           Data.String             (IsString (..), fromString)
 import           Database.PSQL.Types     (From (..), FromField (..), Only (..),
                                           PSQLPool, Size (..), TableName,
-                                          ToField (..), asc, count,
+                                          TablePrefix, ToField (..), asc,
+                                          constraintPrimaryKey, count,
                                           createPSQLPool, createTable, delete,
-                                          insert, insertOrUpdate, none,
-                                          runPSQLPool, selectOneOnly,
-                                          selectOnly, selectOnly_, update,
-                                          withTransaction)
+                                          getTablePrefix, insert,
+                                          insertOrUpdate, none, runPSQLPool,
+                                          selectOneOnly, selectOnly,
+                                          selectOnly_, update, withTransaction)
 import qualified Database.PSQL.Types     as DB (PSQL)
 import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
@@ -59,15 +62,30 @@ instance FromField Job where
 instance ToField Job where
   toField = toField . encode . toBytes
 
-newtype PSQL = PSQL PSQLPool
+data PSQL = PSQL PSQLPool TablePrefix
 
 idleTime = 10
 
 runDB :: PSQL -> DB.PSQL a -> IO a
-runDB (PSQL pool) = runPSQLPool "" pool
+runDB (PSQL pool tablePrefix) = runPSQLPool tablePrefix pool
 
 runDB_ :: PSQL -> DB.PSQL Int64 -> IO ()
 runDB_ db = void . runDB db
+
+preparePath :: ByteString -> (Maybe ByteString, ByteString)
+preparePath = go . B.split ' '
+  where go :: [ByteString] -> (Maybe ByteString, ByteString)
+        go [] = (Nothing, "")
+        go (x:xs)
+          | B.take 7 x == "prefix=" = (Just (cleanPrefix $ B.drop 7 x), ys)
+          | otherwise = (y, x <> " " <> ys)
+          where (y, ys) = go xs
+
+        cleanPrefix :: ByteString -> ByteString
+        cleanPrefix bs
+          | B.take 1 bs == "'" = B.init (B.tail bs)
+          | B.take 1 bs == "\"" = B.init (B.tail bs)
+          | otherwise = bs
 
 instance Persist PSQL where
   data PersistConfig PSQL = PSQLPath ByteString
@@ -76,14 +94,17 @@ instance Persist PSQL where
   newPersist (PSQLPath path) = do
     infoM "Periodic.Server.Persist.PSQL" ("PSQL connected " ++ show path)
     maxResources <- (*2) <$> getNumCapabilities
-    pool <- createPSQLPool path Nothing idleTime maxResources
-    runPSQLPool "" pool $ withTransaction $ do
+    pool <- createPSQLPool dbpath Nothing idleTime maxResources
+    runPSQLPool tablePrefix pool $ withTransaction $ do
       void createConfigTable
       void createJobTable
       void createFuncTable
       void createMetricTable
       void allPending
-    return $ PSQL pool
+    return $ PSQL pool tablePrefix
+
+    where (mTablePrefix, dbpath) = preparePath path
+          tablePrefix = fromString . B.unpack $ fromMaybe "" mTablePrefix
 
   getOne         db st fn = runDB  db . doGetOne st fn
   insert         db st    = runDB_ db . doInsert st
@@ -125,29 +146,32 @@ metrics :: TableName
 metrics = "metrics"
 
 createConfigTable :: DB.PSQL Int64
-createConfigTable =
+createConfigTable = do
+  tablePrefix <- getTablePrefix
   createTable configs
     [ "name VARCHAR(256) NOT NULL"
     , "value INT DEFAULT 0"
-    , "CONSTRAINT config_pk PRIMARY KEY (name)"
+    , constraintPrimaryKey tablePrefix configs ["name"]
     ]
 
 createJobTable :: DB.PSQL Int64
-createJobTable =
+createJobTable = do
+  tablePrefix <- getTablePrefix
   createTable jobs
     [ "func VARCHAR(256) NOT NULL"
     , "name VARCHAR(256) NOT NULL"
     , "value text"
     , "state INT DEFAULT 0"
     , "sched_at INT DEFAULT 0"
-    , "CONSTRAINT job_pk PRIMARY KEY (func, name)"
+    , constraintPrimaryKey tablePrefix jobs ["func", "name"]
     ]
 
 createFuncTable :: DB.PSQL Int64
-createFuncTable =
+createFuncTable = do
+  tablePrefix <- getTablePrefix
   createTable funcs
     [ "func VARCHAR(256) NOT NULL"
-    , "CONSTRAINT func_pk PRIMARY KEY (func)"
+    , constraintPrimaryKey tablePrefix funcs ["func"]
     ]
 
 
