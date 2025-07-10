@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-23.24
+resolver: lts-23.26
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -51,6 +51,8 @@ flags: {}
 extra-package-dbs: []
 
 extra-deps:
+- git: https://github.com/buecking/hs-mcp.git
+  commit: e903b3e63ec74057d35aa9fe82613f165f2f7b9f
 - git: https://github.com/Lupino/metro.git
   commit: 01e84ebb4a4a1b1872cfacee7179b5e72d23b0e4
   subdirs:

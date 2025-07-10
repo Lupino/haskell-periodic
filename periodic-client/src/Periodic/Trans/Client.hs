@@ -22,13 +22,19 @@ module Periodic.Trans.Client
   , load
   , dump
   , shutdown
+
+  -- utils
+  , formatStatus
   ) where
 
 import           Control.Monad                (forever, void)
 import           Data.Binary                  (decode)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString              (ByteString)
+import qualified Data.ByteString.Char8        as B (lines, split, unpack)
 import           Data.ByteString.Lazy         (fromStrict)
+import           Data.List                    (transpose)
+import           Data.UnixTime
 import           Metro.Class                  (Transport, TransportConfig)
 import           Metro.Conn                   (initConnEnv, runConnT)
 import qualified Metro.Conn                   as Conn
@@ -47,6 +53,8 @@ import           Periodic.Types.ClientCommand
 import           Periodic.Types.Internal      (ConfigKey (..))
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
+import           System.IO.Unsafe             (unsafePerformIO)
+import qualified Text.PrettyPrint.Boxes       as T
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
@@ -101,6 +109,41 @@ status = getResult "" getRaw <$> request Nothing (packetREQ Status)
   where getRaw :: ServerCommand -> ByteString
         getRaw (Data bs) = bs
         getRaw _         = ""
+
+unpackBS :: [[ByteString]] -> [[String]]
+unpackBS = map (map B.unpack)
+
+formatTime :: [String] -> [String]
+formatTime []     = []
+formatTime [x]    = [formatUnixTimeLocal x]
+formatTime (x:xs) = x:formatTime xs
+
+formatUnixTimeLocal :: String -> String
+formatUnixTimeLocal =
+  B.unpack
+  . unsafePerformIO
+  . formatUnixTime "%Y-%m-%d %H:%M:%S"
+  . fromEpochTime
+  . fromIntegral
+  . read
+
+renderTable :: [String] -> [[String]] -> String
+renderTable header rows =
+  T.render
+  $ T.hsep 2 T.left
+  (map (T.vcat T.left . map T.text)
+  (transpose (header:rows)))
+
+
+formatStatus :: ByteString -> String
+formatStatus =
+  renderTable header
+  . map formatTime
+  . unpackBS
+  . map (B.split ',')
+  . B.lines
+  where header = ["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "LOCKED", "SCHEDAT"]
+
 
 configGet
   :: (MonadUnliftIO m, Transport tp)

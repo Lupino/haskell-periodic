@@ -9,11 +9,11 @@ import           Control.Monad             (void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.Binary               (decodeFile, encodeFile)
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Char8     as B (lines, putStrLn, readFile,
-                                                 split, unpack)
+import qualified Data.ByteString.Char8     as B (putStrLn, readFile)
 import           Data.Int                  (Int64)
-import           Data.List                 (isPrefixOf, transpose)
+import           Data.List                 (isPrefixOf)
 import           Data.Maybe                (fromMaybe)
+import           Data.String               (fromString)
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
 import           Metro.TP.Socket           (socket)
@@ -23,11 +23,6 @@ import           Periodic.Types            (Workload (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
 import           Text.Read                 (readMaybe)
-
-import           Data.String               (fromString)
-import           Data.UnixTime
-import           System.IO.Unsafe          (unsafePerformIO)
-import qualified Text.PrettyPrint.Boxes    as T
 import           UnliftIO                  (async, atomically, newEmptyTMVarIO,
                                             takeTMVar, wait)
 
@@ -347,24 +342,5 @@ doRecvJob (x:y:_) = do
 
 doStatus :: Transport tp => ClientT tp IO ()
 doStatus = do
-  st <- map formatTime . unpackBS . map (B.split ',') . B.lines <$> status
-  liftIO $ printTable (["FUNCTIONS", "WORKERS", "JOBS", "PROCESSING", "LOCKED", "SCHEDAT"]:st)
-
-unpackBS :: [[ByteString]] -> [[String]]
-unpackBS = map (map B.unpack)
-
-formatTime :: [String] -> [String]
-formatTime []     = []
-formatTime [x]    = [formatUnixTimeLocal x]
-formatTime (x:xs) = x:formatTime xs
-
-formatUnixTimeLocal :: String -> String
-formatUnixTimeLocal = B.unpack
-                    . unsafePerformIO
-                    . formatUnixTime "%Y-%m-%d %H:%M:%S"
-                    . fromEpochTime
-                    . fromIntegral
-                    . read
-
-printTable :: [[String]] -> IO ()
-printTable rows = T.printBox $ T.hsep 2 T.left (map (T.vcat T.left . map T.text) (transpose rows))
+  st <- formatStatus <$> status
+  liftIO $ putStrLn st

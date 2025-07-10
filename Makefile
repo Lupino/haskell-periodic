@@ -14,7 +14,7 @@ COMPILER ?= ghc984
 endif
 endif
 
-OUT = periodic periodic-run periodic-run-pipe periodic-http-bridge periodicd
+OUT = periodic periodic-mcp periodic-run periodic-run-pipe periodic-http-bridge periodicd
 BUNDLE_BIN = dist/bundle/bin
 BUNDLE_LIB = dist/bundle/lib/periodic
 BUNDLE_EXEC_PATH = @executable_path/../lib/periodic
@@ -34,6 +34,9 @@ dist/$(PLATFORM)/%: dist/$(PLATFORM)
 	chmod -w $@
 
 periodic:
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+
+periodic-mcp:
 	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
 
 periodic-run:
