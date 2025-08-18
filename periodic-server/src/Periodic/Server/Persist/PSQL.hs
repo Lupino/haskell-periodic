@@ -21,15 +21,16 @@ import           Data.ByteString.Lazy    (fromStrict)
 import           Data.Int                (Int64)
 import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..), fromString)
-import           Database.PSQL.Types     (From (..), FromField (..), Only (..),
-                                          PSQLPool, Size (..), TableName,
-                                          TablePrefix, ToField (..), asc,
+import           Database.PSQL.Types     (From, FromField (..), Only (..),
+                                          PSQLPool, Size, TableName,
+                                          TablePrefix, ToField (..),
                                           constraintPrimaryKey, count,
                                           createPSQLPool, createTable, delete,
                                           getTablePrefix, insert,
-                                          insertOrUpdate, none, runPSQLPool,
-                                          selectOneOnly, selectOnly,
-                                          selectOnly_, update, withTransaction)
+                                          insertOrUpdate, pageAsc, pageNone,
+                                          runPSQLPool, selectOneOnly,
+                                          selectOnly, selectOnly_, update,
+                                          withTransaction)
 import qualified Database.PSQL.Types     as DB (PSQL)
 import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
@@ -213,17 +214,18 @@ doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only fn)
 
 doGetRunningJob :: Int64 -> DB.PSQL [Job]
 doGetRunningJob ts =
-  selectOnly jobs "value" "sched_at < ?" (Only ts) 0 1000 (asc "sched_at")
+  selectOnly jobs "value" "sched_at < ?" (Only ts) (pageAsc 0 1000 "sched_at")
 
 doGetPendingJob :: FuncName -> Int64 -> From -> Size -> DB.PSQL [Job]
 doGetPendingJob fn ts f s =
   selectOnly jobs "value" "func =? AND state=? AND sched_at < ?"
-      (fn, Pending, ts) f s (asc "sched_at")
+  (fn, Pending, ts) (pageAsc f s "sched_at")
 
 doGetLockedJob :: FuncName -> Int -> DB.PSQL [Job]
 doGetLockedJob fn c = do
-  selectOnly jobs "value" "func=? AND state=?"
-    (fn, Locked) 0 (Size $ fromIntegral c) (asc "sched_at")
+  selectOnly jobs "value" "func=? AND state=?" (fn, Locked) (pageAsc 0 s "sched_at")
+
+  where s = fromIntegral c
 
 doCountPending :: FuncName -> Int64 -> DB.PSQL Int
 doCountPending fn ts =
@@ -231,10 +233,10 @@ doCountPending fn ts =
       (fn, Pending, ts)
 
 doDumpJob :: DB.PSQL [Job]
-doDumpJob = selectOnly_ jobs "value" 0 10000 none
+doDumpJob = selectOnly_ jobs "value" pageNone
 
 doFuncList :: DB.PSQL [FuncName]
-doFuncList = map FuncName <$> selectOnly_ funcs "func" 0 10000 none
+doFuncList = map FuncName <$> selectOnly_ funcs "func" pageNone
 
 doDelete :: FuncName -> JobName -> DB.PSQL Int64
 doDelete fn jn = delete jobs "func=? AND name=?" (fn, jn)

@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-23.26
+resolver: lts-24.0
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -52,15 +52,15 @@ extra-package-dbs: []
 
 extra-deps:
 - git: https://github.com/buecking/hs-mcp.git
-  commit: e903b3e63ec74057d35aa9fe82613f165f2f7b9f
+  commit: 6df508fe1b1f3f62d15e0b012233fa7536f8fceb
 - git: https://github.com/Lupino/metro.git
-  commit: 01e84ebb4a4a1b1872cfacee7179b5e72d23b0e4
+  commit: 6518b7e66e6f5acf6a6c8d28bed6ebcd184a73d5
   subdirs:
   - .
   - map-io
   - metro-socket
 - git: https://github.com/Lupino/yuntan-common.git
-  commit: 1b751c753d684bd654907f337a9ac6560e7889b3
+  commit: dd5b6bc3cc5bba153b249f92565b61dfe073d048
   subdirs:
   - psql-utils
 
