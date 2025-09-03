@@ -575,6 +575,7 @@ retryLater later job = do
   nextSchedAt <- (later +) <$> getEpochTime
   p <- asks sPersist
   liftIO $ P.insert p Pending $ setSchedAt nextSchedAt job
+  pushChanJob $ setSchedAt nextSchedAt job
 
 getJobDuration
   :: (MonadIO m, Persist db)
