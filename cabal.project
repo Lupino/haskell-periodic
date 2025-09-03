@@ -14,7 +14,7 @@ package postgresql-libpq
 source-repository-package
     type: git
     location: https://github.com/Lupino/metro.git
-    tag: 01e84ebb4a4a1b1872cfacee7179b5e72d23b0e4
+    tag: 6518b7e66e6f5acf6a6c8d28bed6ebcd184a73d5
     subdir: .
             map-io
             metro-socket
@@ -22,8 +22,13 @@ source-repository-package
 source-repository-package
     type: git
     location: https://github.com/Lupino/yuntan-common.git
-    tag: 1b751c753d684bd654907f337a9ac6560e7889b3
+    tag: dd5b6bc3cc5bba153b249f92565b61dfe073d048
     subdir: psql-utils
+
+source-repository-package
+    type: git
+    location: https://github.com/buecking/hs-mcp.git
+    tag: 6df508fe1b1f3f62d15e0b012233fa7536f8fceb
 
 allow-older: *
 allow-newer: *
