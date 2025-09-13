@@ -497,7 +497,6 @@ removeJob = removeJob_ "removed" . getHandle
 removeJob_ :: (MonadIO m, Persist db) => ByteString -> JobHandle -> SchedT db m ()
 removeJob_ reason jh = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("removeJob: " ++ show jh ++ " " ++ show reason)
-  t0 <- liftIO getUnixTime
   p <- asks sPersist
   liftIO $ P.delete p fn jn
 
@@ -505,7 +504,7 @@ removeJob_ reason jh = do
 
   pushResult jh "EOF" True
   pushResult jh reason False
-  getDuration t0 >>= runHook eventRemoveJob job
+  getJobDuration jh >>= runHook eventRemoveJob job
 
   where (fn, jn) = unHandle jh
         job = initJob fn jn
