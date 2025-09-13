@@ -37,7 +37,8 @@ module Periodic.Server.Scheduler
   , canRun
   ) where
 
-import           Control.Monad              (forever, replicateM_, unless, when)
+import           Control.Monad              (filterM, forever, replicateM_,
+                                             unless, void, when)
 import           Control.Monad.Reader.Class (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class  (MonadTrans)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
@@ -49,7 +50,7 @@ import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
 import qualified Data.List                  as L (delete, nub)
 import qualified Data.Map.Strict            as Map (filter, map)
-import           Data.Maybe                 (fromMaybe, isJust)
+import           Data.Maybe                 (fromMaybe, isJust, isNothing)
 import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
                                              diffUnixTime, getUnixTime)
 import           Foreign.C.Types            (CTime (..))
@@ -69,7 +70,7 @@ import           Periodic.Types             (Msgid, Nid)
 import           Periodic.Types.Internal    (LockName)
 import           Periodic.Types.Job
 import           System.Log.Logger          (debugM, errorM, infoM)
-import           UnliftIO                   hiding (poll)
+import           UnliftIO
 import           UnliftIO.Concurrent        (threadDelay)
 
 data Waiter = Waiter
@@ -130,6 +131,7 @@ data SchedEnv db = SchedEnv
     , sAssignJobTime :: IOMap JobHandle UnixTime
     , sMaxPoolSize   :: TVar Int
     , sSchedPoolList :: IOMap FuncName SchedPool
+    , sSchedTaskList :: IOMap FuncName (Async ())
     , sPushList      :: TQueue (TQueue Job)
     , sSchedList     :: TQueue (TQueue (Job, Nid, Msgid))
     , sTaskList      :: TVar [Async ()]
@@ -180,6 +182,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
   sSchedPoolList  <- IOMap.empty
+  sSchedTaskList  <- IOMap.empty
 
   sPushList  <- newTQueueIO
   sSchedList <- newTQueueIO
@@ -210,6 +213,7 @@ startSchedT pushTaskSize schedTaskSize = do
   runTask 60  revertLockedQueue
   runTask 60  pushPollJob
   runTask 100 purgeEmptyLock
+  runTask 60  purgeDeadTasks
 
   loadInt "timeout" sTaskTimeout
   loadInt "lock-timeout" sLockTimeout
@@ -256,7 +260,10 @@ keepalive :: Monad m => SchedT db m (TVar Int)
 keepalive = asks sKeepalive
 
 runTask :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m ()
-runTask delay m = do
+runTask delay = void . runTask_ delay
+
+runTask_ :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m (Async ())
+runTask_ delay m = do
   timer <- newTVarIO 0
   io <- async $ forever $ do
     when (delay > 0) $ do
@@ -276,6 +283,8 @@ runTask delay m = do
 
   taskList <- asks sTaskList
   atomically $ modifyTVar' taskList (io:)
+
+  pure io
 
   where scaleUS = 1000 * 1000
 
@@ -398,7 +407,7 @@ reSchedJob job = do
                 $ modifyTVar' sPollJob
                 $ L.nub . (fn:)
 
-          runTask 0 $ runSchedPool pool pushSchedJob $ do
+          io <- runTask_ 0 $ runSchedPool pool pushSchedJob $ do
             mFuncStat <- IOMapS.lookup fn sFuncStatList
             case mFuncStat of
               Nothing                  -> pure []
@@ -412,6 +421,7 @@ reSchedJob job = do
                     Just agent -> pure [agent]
 
           IOMap.insert fn pool sSchedPoolList
+          IOMap.insert fn io sSchedTaskList
           pure pool
         Just pool -> pure pool
 
@@ -551,6 +561,10 @@ dropFunc n = do
     case st of
       Just FuncStat{sWorker=0} -> do
         IOMap.delete n sFuncStatList
+        mio <- IOMap.lookup n sSchedTaskList
+        mapM_ cancel mio
+        IOMap.delete n sSchedTaskList
+        IOMap.delete n sSchedPoolList
         liftIO $ P.removeFuncName sPersist n
       _                        -> pure ()
 
@@ -785,6 +799,14 @@ getMaxLockCount minV = do
   lockList <- asks sLockList
   maximum . (minV:) . map maxCount <$> IOMap.elems lockList
 
+
+purgeDeadTasks :: MonadUnliftIO m => SchedT db m ()
+purgeDeadTasks = do
+  taskList <- asks sTaskList
+  atomically $ do
+    ios <- readTVar taskList
+    alive <- filterM (fmap isNothing . pollSTM) ios
+    writeTVar taskList alive
 
 status :: (MonadIO m, Persist db) => SchedT db m [FuncStat]
 status = do
