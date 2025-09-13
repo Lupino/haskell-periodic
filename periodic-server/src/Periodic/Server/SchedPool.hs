@@ -96,24 +96,26 @@ runSchedPool
   -> STM [(Nid, Msgid)]
   -> m ()
 runSchedPool pool@SchedPool {..} work prepareWork = do
-  (job, agents) <- atomically $ do
+  (job, jobT, agents) <- atomically $ do
     jobT <- takeTMVar poolerState
     job <- readTVar jobT
     if schedAlive job then do
       canDo <- readTVar $ schedDelay job
       if canDo then do
         agents <- prepareWork
-        pure (schedJob job, agents)
+        pure (schedJob job, jobT, agents)
       else retrySTM
-    else pure (schedJob job, [])
+    else pure (schedJob job, jobT, [])
 
   mapM_ (work job) agents
 
-  finishPoolerState pool
+  finishPoolerState pool jobT
 
 
-finishPoolerState :: MonadIO m => SchedPool -> m ()
-finishPoolerState SchedPool {..} = atomically $ do
+finishPoolerState :: MonadIO m => SchedPool -> TVar SchedJob -> m ()
+finishPoolerState SchedPool {..} sjob = atomically $ do
+  sj <- readTVar sjob
+  IOMapS.delete (getHandle $ schedJob sj) jobList
   takeTMVar waitingLock
   jobs <- readTVar waitingJob
   case jobs of
