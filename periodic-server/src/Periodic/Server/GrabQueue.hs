@@ -82,8 +82,5 @@ dropAgentList (GrabQueue s q) nid = atomically $ do
   writeTQueue s first
   foreverExit $ \exit -> do
     nid0 <- lift $ readTQueue s
-
-    if nid0 == nid then exit ()
-                   else lift $ writeTQueue s nid0
-
+    when (nid0 /= nid) $ lift $ writeTQueue s nid0
     when (nid0 == first) $ exit ()
