@@ -272,6 +272,8 @@ runTask delay m = do
       Left (e :: SomeException) ->
         liftIO $ errorM "Periodic.Server.Scheduler" $ "runTask error " ++ show e
 
+    when (delay == 0) $ threadDelay 1000
+
   taskList <- asks sTaskList
   atomically $ modifyTVar' taskList (io:)
 
