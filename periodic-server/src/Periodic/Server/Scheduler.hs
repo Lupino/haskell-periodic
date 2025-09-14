@@ -391,39 +391,44 @@ fixedSchedAt job = do
     return $ setSchedAt now job
   else return job
 
+createSchedPool :: (MonadUnliftIO m, Persist db) => FuncName -> SchedT db m SchedPool
+createSchedPool fn = do
+  SchedEnv{..} <- ask
+  pool <- newSchedPool sMaxBatchSize
+        $ modifyTVar' sPollJob
+        $ L.nub . (fn:)
+
+  io <- runTask_ 0 $ runSchedPool pool pushSchedJob $ do
+    mFuncStat <- IOMapS.lookup fn sFuncStatList
+    case mFuncStat of
+      Nothing                  -> pure []
+      Just FuncStat{sWorker=0} -> pure []
+      Just st -> do
+        if sBroadcast st then popAgentListSTM sGrabQueue fn
+        else do
+          mAgent <- popAgentSTM sGrabQueue fn
+          case mAgent of
+            Nothing    -> retrySTM
+            Just agent -> pure [agent]
+
+  Pool.setPoolerIO pool io
+  IOMap.insert fn pool sSchedPoolList
+  pure pool
+
+getSchedPool :: (MonadUnliftIO m, Persist db) => FuncName -> SchedT db m SchedPool
+getSchedPool fn = do
+  SchedEnv{..} <- ask
+  mPool <- IOMap.lookup fn sSchedPoolList
+  case mPool of
+    Nothing   -> createSchedPool fn
+    Just pool -> pure pool
+
 reSchedJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
 reSchedJob job = do
   next <- getNextPoll
   when (getSchedAt job < next) $ do
-    r <- canRun $ getFuncName job
-    when r $ do
-      SchedEnv{..} <- ask
-      mPool <- IOMap.lookup fn sSchedPoolList
-      pool <- case mPool of
-        Nothing -> do
-          pool <- newSchedPool sMaxBatchSize
-                $ modifyTVar' sPollJob
-                $ L.nub . (fn:)
-
-          io <- runTask_ 0 $ runSchedPool pool pushSchedJob $ do
-            mFuncStat <- IOMapS.lookup fn sFuncStatList
-            case mFuncStat of
-              Nothing                  -> pure []
-              Just FuncStat{sWorker=0} -> pure []
-              Just st -> do
-                if sBroadcast st then popAgentListSTM sGrabQueue fn
-                else do
-                  mAgent <- popAgentSTM sGrabQueue fn
-                  case mAgent of
-                    Nothing    -> retrySTM
-                    Just agent -> pure [agent]
-
-          Pool.setPoolerIO pool io
-          IOMap.insert fn pool sSchedPoolList
-          pure pool
-        Just pool -> pure pool
-
-      Pool.spawn pool job
+    r <- canRun fn
+    when r $ getSchedPool fn >>= flip Pool.spawn job
 
   where fn = getFuncName job
 
