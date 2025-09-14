@@ -11,13 +11,9 @@ module Periodic.Server.SchedPool
   ) where
 
 
-import           Control.Monad       (unless, when, (>=>))
-import           Control.Monad.ListM (takeWhileM)
+import           Control.Monad       (unless, when)
+import           Control.Monad.ListM (findM, takeWhileM)
 import           Data.Int            (Int64)
-import           Data.IOMap          (IOMap)
-import qualified Data.IOMap          as IOMap
-import qualified Data.IOMap.STM      as IOMapS
-import           Data.Map.Strict     (filterWithKey)
 import           Metro.Utils         (getEpochTime)
 import           Periodic.Types      (Msgid, Nid)
 import           Periodic.Types.Job
@@ -38,7 +34,6 @@ data SchedPool = SchedPool
   { waitingJob  :: TVar [TVar SchedJob]
   , maxWaitSize :: TVar Int
   , waitingLock :: TMVar ()
-  , jobList     :: IOMap JobHandle (TVar SchedJob)
   , onFree      :: STM ()
   , poolerState :: PoolerState
   }
@@ -52,20 +47,15 @@ newSchedPool
 newSchedPool maxWaitSize onFree = do
   waitingJob  <- newTVarIO []
   waitingLock <- newTMVarIO ()
-  jobList     <- IOMap.empty
   poolerState <- newEmptyTMVarIO
   pure SchedPool {..}
 
 
-getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
-getHandleList SchedPool {..} = atomically $ do
-  takeTMVar waitingLock
+getWaitingJob :: SchedPool -> STM [TVar SchedJob]
+getWaitingJob SchedPool {..} = do
   handles0 <- go
   handles1 <- readTVar waitingJob
-  handles <- mapM toHandle $ handles0 ++ handles1
-  IOMapS.modifyIOMap (filterWithKey (\k _ -> k `elem` handles)) jobList
-  putTMVar waitingLock ()
-  pure handles
+  pure $ handles0 ++ handles1
   where go :: STM [TVar SchedJob]
         go = do
           mJob <- tryReadTMVar poolerState
@@ -73,8 +63,21 @@ getHandleList SchedPool {..} = atomically $ do
             Nothing -> pure []
             Just j  -> pure [j]
 
+
+getHandleList :: MonadIO m => SchedPool -> m [JobHandle]
+getHandleList pool@SchedPool {..} = atomically $ do
+  takeTMVar waitingLock
+  handles <- mapM toHandle =<< getWaitingJob pool
+  putTMVar waitingLock ()
+  pure handles
+
+
 toHandle :: TVar SchedJob -> STM JobHandle
 toHandle sJob = getHandle . schedJob <$> readTVar sJob
+
+
+findJob :: JobHandle -> [TVar SchedJob] -> STM (Maybe (TVar SchedJob))
+findJob jh = findM (fmap (jh ==) . toHandle)
 
 
 getStateSchedAt :: PoolerState -> STM Int64
@@ -96,26 +99,24 @@ runSchedPool
   -> STM [(Nid, Msgid)]
   -> m ()
 runSchedPool pool@SchedPool {..} work prepareWork = do
-  (job, jobT, agents) <- atomically $ do
+  (job, agents) <- atomically $ do
     jobT <- takeTMVar poolerState
     job <- readTVar jobT
     if schedAlive job then do
       canDo <- readTVar $ schedDelay job
       if canDo then do
         agents <- prepareWork
-        pure (schedJob job, jobT, agents)
+        pure (schedJob job, agents)
       else retrySTM
-    else pure (schedJob job, jobT, [])
+    else pure (schedJob job, [])
 
   mapM_ (work job) agents
 
-  finishPoolerState pool jobT
+  finishPoolerState pool
 
 
-finishPoolerState :: MonadIO m => SchedPool -> TVar SchedJob -> m ()
-finishPoolerState SchedPool {..} sjob = atomically $ do
-  sj <- readTVar sjob
-  IOMapS.delete (getHandle $ schedJob sj) jobList
+finishPoolerState :: MonadIO m => SchedPool -> m ()
+finishPoolerState SchedPool {..} = atomically $ do
   takeTMVar waitingLock
   jobs <- readTVar waitingJob
   case jobs of
@@ -129,8 +130,9 @@ finishPoolerState SchedPool {..} sjob = atomically $ do
 
 
 unspawn :: MonadIO m => SchedPool -> Job -> m ()
-unspawn SchedPool {..} job = atomically $ do
-  mSchedJob <- IOMapS.lookup jh jobList
+unspawn pool job = atomically $ do
+  wJobs <- getWaitingJob pool
+  mSchedJob <- findJob jh wJobs
   case mSchedJob of
     Nothing -> pure ()
     Just sJob -> modifyTVar' sJob $ \v -> v
@@ -147,9 +149,7 @@ insertSchedJob SchedPool {..} s schedAt = do
   maxWait <- readTVar maxWaitSize
   let jobs = hJobs ++ [s] ++ drop (length hJobs) sJobs
       waitJobs = take maxWait jobs
-      dropJobs  = drop maxWait jobs
   writeTVar waitingJob $! waitJobs
-  mapM_ (toHandle >=> flip IOMapS.delete jobList) dropJobs
   putTMVar waitingLock ()
 
   where compSchedAt :: TVar SchedJob -> STM Bool
@@ -165,7 +165,8 @@ spawn pool@SchedPool {..} job = do
   now <- getEpochTime
   delay <- getDelay now
   atomically $ do
-    mSchedJob <- IOMapS.lookup jh jobList
+    wJobs <- getWaitingJob pool
+    mSchedJob <- findJob jh wJobs
     case mSchedJob of
       Just sJobT -> do
         sJob <- readTVar sJobT
@@ -181,7 +182,6 @@ spawn pool@SchedPool {..} job = do
           , schedDelay = delay
           , schedAlive = True
           }
-        IOMapS.insert jh sJob jobList
         lastSchedAt <- getStateSchedAt poolerState
         if lastSchedAt < 1000 || (lastSchedAt > now + 1 && lastSchedAt > schedAt) then do
           mJob <- tryTakeTMVar poolerState
