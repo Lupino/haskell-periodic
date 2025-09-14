@@ -131,7 +131,6 @@ data SchedEnv db = SchedEnv
     , sAssignJobTime :: IOMap JobHandle UnixTime
     , sMaxPoolSize   :: TVar Int
     , sSchedPoolList :: IOMap FuncName SchedPool
-    , sSchedTaskList :: IOMap FuncName (Async ())
     , sPushList      :: TQueue (TQueue Job)
     , sSchedList     :: TQueue (TQueue (Job, Nid, Msgid))
     , sTaskList      :: TVar [Async ()]
@@ -182,7 +181,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
   sSchedPoolList  <- IOMap.empty
-  sSchedTaskList  <- IOMap.empty
 
   sPushList  <- newTQueueIO
   sSchedList <- newTQueueIO
@@ -420,8 +418,8 @@ reSchedJob job = do
                     Nothing    -> retrySTM
                     Just agent -> pure [agent]
 
+          Pool.setPoolerIO pool io
           IOMap.insert fn pool sSchedPoolList
-          IOMap.insert fn io sSchedTaskList
           pure pool
         Just pool -> pure pool
 
@@ -561,9 +559,7 @@ dropFunc n = do
     case st of
       Just FuncStat{sWorker=0} -> do
         IOMap.delete n sFuncStatList
-        mio <- IOMap.lookup n sSchedTaskList
-        mapM_ cancel mio
-        IOMap.delete n sSchedTaskList
+        mapM_ Pool.cancelSchedPool =<< IOMap.lookup n sSchedPoolList
         IOMap.delete n sSchedPoolList
         liftIO $ P.removeFuncName sPersist n
       _                        -> pure ()

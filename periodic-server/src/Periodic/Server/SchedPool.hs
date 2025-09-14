@@ -8,6 +8,9 @@ module Periodic.Server.SchedPool
   , getLastSchedAt
   , unspawn
   , spawn
+
+  , setPoolerIO
+  , cancelSchedPool
   ) where
 
 
@@ -36,6 +39,7 @@ data SchedPool = SchedPool
   , waitingLock :: TMVar ()
   , onFree      :: STM ()
   , poolerState :: PoolerState
+  , poolerIO    :: TMVar (Async ())
   }
 
 
@@ -48,7 +52,15 @@ newSchedPool maxWaitSize onFree = do
   waitingJob  <- newTVarIO []
   waitingLock <- newTMVarIO ()
   poolerState <- newEmptyTMVarIO
+  poolerIO <- newEmptyTMVarIO
   pure SchedPool {..}
+
+
+setPoolerIO :: MonadIO m => SchedPool -> Async () -> m ()
+setPoolerIO SchedPool {..} = atomically . writeTMVar poolerIO
+
+cancelSchedPool :: MonadUnliftIO m => SchedPool -> m ()
+cancelSchedPool SchedPool {..} = mapM_ cancel =<< atomically (tryReadTMVar poolerIO)
 
 
 getWaitingJob :: SchedPool -> STM [TVar SchedJob]
