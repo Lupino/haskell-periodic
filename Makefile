@@ -27,7 +27,7 @@ dist/$(PLATFORM):
 	mkdir -p $@
 
 dist/$(PLATFORM)/%: dist/$(PLATFORM)
-	nix-build -A projectCross.$(PLATFORM).hsPkgs.$(PKG).components.exes.$(shell basename $@) --argstr compiler-nix-name $(COMPILER)
+	nix-build -A projectCross.$(PLATFORM).hsPkgs.$(PKG).components.exes.$(shell basename $@) --argstr compiler-nix-name $(COMPILER) # --arg enableProfiling true
 	cp -f result/bin/$(shell basename $@) $@
 	chmod +w $@
 	nix-shell --run "$(STRIP) -s $@" --argstr compiler-nix-name $(COMPILER) --arg crossPlatforms "ps: with ps; [$(PLATFORM)]"
