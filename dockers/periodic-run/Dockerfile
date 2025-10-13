@@ -1,10 +1,10 @@
-FROM alpine:3.22.1 as base
+FROM alpine:3.22.2 as base
 ENV VERSION v1.2.3.1
 RUN apk add --no-cache wget && \
     wget https://github.com/Lupino/haskell-periodic/releases/download/$VERSION/periodic-linux-$VERSION.tar.bz2 && \
     tar xvf periodic-linux-$VERSION.tar.bz2
 
-FROM alpine:3.22.1
+FROM alpine:3.22.2
 
 COPY --from=base periodic-run /usr/bin
 COPY --from=base periodic /usr/bin
