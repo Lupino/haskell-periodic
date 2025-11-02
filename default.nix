@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc984", enableProfiling ? false }:
+{ compiler-nix-name ? "ghc9122", enableProfiling ? false }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -9,6 +9,14 @@ let
   haskellNix = import sources.haskellNix { };
   # If haskellNix is not found run:
   #   niv add input-output-hk/haskell.nix -n haskellNix
+  # Import hackage index state from haskell.nix's hackage.nix
+  hackageIndexState = import (haskellNix.sources.hackage + "/index-state.nix");
+
+  # Get the latest index state by sorting the keys
+  allIndexStates = builtins.attrNames hackageIndexState;
+  sortedStates = builtins.sort (a: b: a > b) allIndexStates;
+  latestState = builtins.head sortedStates;
+
   # Import nixpkgs and pass the haskell.nix provided nixpkgsArgs
   overlays = haskellNix.overlays ++ [
     (self: super: {
@@ -20,7 +28,7 @@ let
     # haskell.nix provides access to the nixpkgs pins which are used by our CI,
     # hence you will be more likely to get cache hits when using these.
     # But you can also just use your own, e.g. '<nixpkgs>'.
-    haskellNix.sources.nixpkgs-unstable
+    haskellNix.sources.nixpkgs-2411
     # These arguments passed to nixpkgs, include some patches and also
     # the haskell.nix functionality itself as an overlay.
     (haskellNix.nixpkgsArgs // { inherit overlays; });
@@ -30,8 +38,9 @@ in pkgs.haskell-nix.cabalProject {
       src = ./.;
       name = "haskell-periodic";
     };
-    index-state = "2025-07-05T00:00:00Z";
-    index-sha256 = "99648971aa10993273b78022238e7fbe5756d8e68a5b7884f43c4fca202635f1";
+    # Use index state from hackage.nix
+    index-state = latestState;
+    index-sha256 = hackageIndexState.${latestState};
     sha256map = import ./nix/sha256map.nix;
     # Specify the GHC version to use.
     compiler-nix-name = compiler-nix-name;
