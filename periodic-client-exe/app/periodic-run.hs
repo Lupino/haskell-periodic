@@ -19,6 +19,7 @@ import           Data.List                  (find, isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
+import           Metro.TP.RSA               (rsa)
 import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
@@ -48,79 +49,87 @@ import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
 
 
 data Options = Options
-  { host        :: String
-  , thread      :: Int
-  , lockCount   :: Int
-  , lockName    :: Maybe LockName
-  , notify      :: Bool
-  , useData     :: Bool
-  , useName     :: Bool
-  , showHelp    :: Bool
-  , timeoutS    :: Int
-  , retrySecs   :: Int64
-  , memLimit    :: Int64
-  , useWorkData :: Bool
-  , skipFail    :: Bool
+  { host           :: String
+  , thread         :: Int
+  , lockCount      :: Int
+  , lockName       :: Maybe LockName
+  , notify         :: Bool
+  , useData        :: Bool
+  , useName        :: Bool
+  , showHelp       :: Bool
+  , timeoutS       :: Int
+  , retrySecs      :: Int64
+  , memLimit       :: Int64
+  , useWorkData    :: Bool
+  , skipFail       :: Bool
+  , rsaPrivatePath :: FilePath
+  , rsaPublicPath  :: FilePath
   }
 
 options :: Maybe Int -> Maybe String -> Options
 options t h = Options
-  { host        = fromMaybe "unix:///tmp/periodic.sock" h
-  , thread      = fromMaybe 1 t
-  , lockCount   = 1
-  , lockName    = Nothing
-  , notify      = False
-  , useData     = False
-  , useName     = True
-  , showHelp    = False
-  , timeoutS    = -1
-  , retrySecs   = 0
-  , memLimit    = 0
-  , useWorkData = False
-  , skipFail    = False
+  { host           = fromMaybe "unix:///tmp/periodic.sock" h
+  , thread         = fromMaybe 1 t
+  , lockCount      = 1
+  , lockName       = Nothing
+  , notify         = False
+  , useData        = False
+  , useName        = True
+  , showHelp       = False
+  , timeoutS       = -1
+  , retrySecs      = 0
+  , memLimit       = 0
+  , useWorkData    = False
+  , skipFail       = False
+  , rsaPublicPath  = "public_key.pem"
+  , rsaPrivatePath = ""
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
-parseOptions ("-H":x:xs)           opt = parseOptions xs opt { host      = x }
-parseOptions ("--host":x:xs)       opt = parseOptions xs opt { host      = x }
-parseOptions ("--thread":x:xs)     opt = parseOptions xs opt { thread = read x }
-parseOptions ("--lock-count":x:xs) opt = parseOptions xs opt { lockCount = read x }
-parseOptions ("--lock-name":x:xs)  opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
-parseOptions ("--help":xs)         opt = parseOptions xs opt { showHelp = True }
-parseOptions ("--broadcast":xs)    opt = parseOptions xs opt { notify = True }
-parseOptions ("--data":xs)         opt = parseOptions xs opt { useData = True }
-parseOptions ("--work-data":xs)    opt = parseOptions xs opt { useWorkData = True }
-parseOptions ("--no-name":xs)      opt = parseOptions xs opt { useName = False }
-parseOptions ("--skip-fail":xs)    opt = parseOptions xs opt { skipFail = True }
-parseOptions ("--timeout":x:xs)    opt = parseOptions xs opt { timeoutS = read x }
-parseOptions ("--retry-secs":x:xs) opt = parseOptions xs opt { retrySecs = read x }
-parseOptions ("--mem-limit":x:xs)  opt = parseOptions xs opt { memLimit = parseMemStr x }
-parseOptions ("-h":xs)             opt = parseOptions xs opt { showHelp = True }
-parseOptions []                    opt = (opt { showHelp = True }, "", "", [])
-parseOptions [_]                   opt = (opt { showHelp = True }, "", "", [])
-parseOptions (x:y:xs)              opt = (opt, FuncName $ B.pack x, y, xs)
+parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host      = x }
+parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host      = x }
+parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = read x }
+parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = read x }
+parseOptions ("--lock-name":x:xs)        opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
+parseOptions ("--broadcast":xs)          opt = parseOptions xs opt { notify = True }
+parseOptions ("--data":xs)               opt = parseOptions xs opt { useData = True }
+parseOptions ("--work-data":xs)          opt = parseOptions xs opt { useWorkData = True }
+parseOptions ("--no-name":xs)            opt = parseOptions xs opt { useName = False }
+parseOptions ("--skip-fail":xs)          opt = parseOptions xs opt { skipFail = True }
+parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = read x }
+parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = read x }
+parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
+parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
+parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
+parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
+parseOptions []                          opt = (opt { showHelp = True }, "", "", [])
+parseOptions [_]                         opt = (opt { showHelp = True }, "", "", [])
+parseOptions (x:y:xs)                    opt = (opt, FuncName $ B.pack x, y, xs)
 
 printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--skip-fail] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--skip-fail] [--rsa-private-path FILE --rsa-public-path FILE|PATH] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -H --host       Socket path [$PERIODIC_PORT]"
-  putStrLn "                  Eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --thread     Worker thread [$THREAD]"
-  putStrLn "     --lock-count Max lock count (optional: 1)"
-  putStrLn "     --lock-name  The lock name (optional: no lock)"
-  putStrLn "     --broadcast  Is broadcast worker"
-  putStrLn "     --data       Send result data to client"
-  putStrLn "     --work-data  Send work data and result data to client"
-  putStrLn "     --no-name    Ignore the job name"
-  putStrLn "     --timeout    Process wait timeout in seconds. use job timeout if net set."
-  putStrLn "     --retry-secs Failed job retry in seconds"
-  putStrLn "     --skip-fail  Skip failed job, no retry"
-  putStrLn "     --mem-limit  Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
-  putStrLn "  -h --help       Display help message"
+  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
+  putStrLn "                        Eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --thread           Worker thread [$THREAD]"
+  putStrLn "     --lock-count       Max lock count (optional: 1)"
+  putStrLn "     --lock-name        The lock name (optional: no lock)"
+  putStrLn "     --broadcast        Is broadcast worker"
+  putStrLn "     --data             Send result data to client"
+  putStrLn "     --work-data        Send work data and result data to client"
+  putStrLn "     --no-name          Ignore the job name"
+  putStrLn "     --timeout          Process wait timeout in seconds. use job timeout if net set."
+  putStrLn "     --retry-secs       Failed job retry in seconds"
+  putStrLn "     --skip-fail        Skip failed job, no retry"
+  putStrLn "     --mem-limit        Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
+  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
+  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
+  putStrLn "  -h --help             Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -139,7 +148,13 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  startWorkerT (socket host) $ doWork opts func cmd argv
+  case rsaPrivatePath of
+    "" -> startWorkerT (socket host) $ doWork opts func cmd argv
+    _ -> do
+      mGenTP <- rsa rsaPrivatePath rsaPublicPath True
+      case mGenTP of
+        Left err -> putStrLn $ "Error " ++ err
+        Right genTP -> startWorkerT (genTP $ socket host) $ doWork opts func cmd argv
 
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork opts@Options{..} func cmd argv = do

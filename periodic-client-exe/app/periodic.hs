@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -16,6 +17,7 @@ import           Data.Maybe                (fromMaybe)
 import           Data.String               (fromString)
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
+import           Metro.TP.RSA              (generateKeyPair, rsa)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Client
@@ -28,18 +30,19 @@ import           UnliftIO                  (async, atomically, newEmptyTMVarIO,
 
 
 data Command = Status
-    | Submit
-    | Run
-    | Recv
-    | Remove
-    | Drop
-    | Config
-    | Shutdown
-    | Dump
-    | Load
-    | Ping
-    | Help
-    deriving (Eq)
+  | Submit
+  | Run
+  | Recv
+  | Remove
+  | Drop
+  | Config
+  | Shutdown
+  | Dump
+  | Load
+  | Ping
+  | KeyGen
+  | Help
+  deriving (Eq)
 
 parseCommand :: String -> Command
 parseCommand "status"   = Status
@@ -53,28 +56,35 @@ parseCommand "shutdown" = Shutdown
 parseCommand "dump"     = Dump
 parseCommand "load"     = Load
 parseCommand "ping"     = Ping
+parseCommand "keygen"   = KeyGen
 parseCommand _          = Help
 
-newtype Options = Options
-    { host     :: String
-    }
+data Options = Options
+  { host           :: String
+  , rsaPrivatePath :: FilePath
+  , rsaPublicPath  :: FilePath
+  }
 
 options :: Maybe String -> Options
 options h = Options
-  { host    = fromMaybe "unix:///tmp/periodic.sock" h
+  { host           = fromMaybe "unix:///tmp/periodic.sock" h
+  , rsaPublicPath  = "public_key.pem"
+  , rsaPrivatePath = ""
   }
 
 parseOptions :: [String] -> Options -> (Command, Options, [String])
-parseOptions []              opt = (Help, opt, [])
-parseOptions ("-H":x:xs)     opt = parseOptions xs opt { host      = x }
-parseOptions ("--host":x:xs) opt = parseOptions xs opt { host      = x }
-parseOptions (x:xs)          opt = (parseCommand x, opt, xs)
+parseOptions []                          opt = (Help, opt, [])
+parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host           = x }
+parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host           = x }
+parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
+parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions (x:xs)                      opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
 printHelp = do
   putStrLn "periodic - Periodic task system client"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] command [options]"
+  putStrLn "Usage: periodic [--host|-H HOST] [--rsa-private-path FILE --rsa-public-path FILE|PATH] command [options]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "     status   Show status"
@@ -88,11 +98,14 @@ printHelp = do
   putStrLn "     dump     Dump jobs"
   putStrLn "     load     Load jobs"
   putStrLn "     ping     Ping server"
+  putStrLn "     keygen   Generate RSA key pair"
   putStrLn "     help     Shows a list of commands or help for one command"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -H --host     Socket path [$PERIODIC_PORT]"
-  putStrLn "                eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
+  putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
+  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -203,11 +216,22 @@ printDumpHelp = do
   putStrLn ""
   exitSuccess
 
+printKeyGenHelp :: IO ()
+printKeyGenHelp = do
+  putStrLn "periodic keygen - Generate RSA key pair"
+  putStrLn ""
+  putStrLn "Usage: periodic keygen file [-s|--size SIZE]"
+  putStrLn ""
+  putStrLn "Available options:"
+  putStrLn "  -s|--size  RSA key size (optional: 256)"
+  putStrLn ""
+  exitSuccess
+
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
 
-  (cmd, Options {..}, argv) <- flip parseOptions (options h) <$> getArgs
+  (cmd, opt@(Options {..}), argv) <- flip parseOptions (options h) <$> getArgs
 
   let argc = length argv
 
@@ -220,13 +244,28 @@ main = do
   when (cmd == Config && argc < 1) printConfigHelp
   when (cmd == Load && argc < 1) printLoadHelp
   when (cmd == Dump && argc < 1) printDumpHelp
+  when (cmd == KeyGen && argc < 1) printKeyGenHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
+  run opt cmd argv
+
+run :: Options -> Command -> [String] -> IO ()
+run _ KeyGen [] = printKeyGenHelp
+run _ KeyGen (x:xs) = generateKeyPair x (getKeySize xs)
+
+run Options {host, rsaPrivatePath = ""} cmd argv = do
   clientEnv <- open (socket host)
   runClientT clientEnv $ processCommand cmd argv
+run Options {host, rsaPrivatePath, rsaPublicPath} cmd argv = do
+  mGenTP <- rsa rsaPrivatePath rsaPublicPath True
+  case mGenTP of
+    Left err -> putStrLn $ "Error " ++ err
+    Right genTP -> do
+      clientEnv <- open (genTP $ socket host)
+      runClientT clientEnv $ processCommand cmd argv
 
 processCommand :: Transport tp => Command -> [String] -> ClientT tp IO ()
 processCommand Help _     = liftIO printHelp
@@ -241,6 +280,7 @@ processCommand Load xs    = doLoad xs
 processCommand Ping _     = void ping
 processCommand Dump xs    = doDump xs
 processCommand Shutdown _ = shutdown
+processCommand KeyGen _   = pure ()
 
 doRemoveJob :: Transport tp => [String] -> ClientT tp IO ()
 doRemoveJob (x:xs) = mapM_ (removeJob (fromString x) . fromString) xs
@@ -300,6 +340,9 @@ getTimeout def = safeRead def . getFlag ["--timeout"]
 
 getLater :: [String] -> Int64
 getLater = safeRead 0 . getFlag ["--later"]
+
+getKeySize :: [String] -> Int
+getKeySize = safeRead 256 . getFlag ["--size", "-s"]
 
 
 getFlag :: [String] -> [String] -> String

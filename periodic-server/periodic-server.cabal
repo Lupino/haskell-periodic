@@ -69,6 +69,7 @@ executable periodicd
                      , hslogger
                      , metro
                      , metro-socket
+                     , metro-transport-crypto
   other-modules:       Paths_periodic_server
   default-language:    Haskell2010
 

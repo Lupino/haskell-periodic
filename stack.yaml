@@ -41,6 +41,7 @@ packages:
 - periodic-client
 - periodic-server
 - periodic-client-exe
+# - ../metro/metro-transport-crypto
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 
@@ -54,11 +55,12 @@ extra-deps:
 - git: https://github.com/buecking/hs-mcp.git
   commit: 6df508fe1b1f3f62d15e0b012233fa7536f8fceb
 - git: https://github.com/Lupino/metro.git
-  commit: 6518b7e66e6f5acf6a6c8d28bed6ebcd184a73d5
+  commit: 72dd50f2455830db99619441334d58d5d7e84b03
   subdirs:
   - .
   - map-io
   - metro-socket
+  - metro-transport-crypto
 - git: https://github.com/Lupino/yuntan-common.git
   commit: dd5b6bc3cc5bba153b249f92565b61dfe073d048
   subdirs:

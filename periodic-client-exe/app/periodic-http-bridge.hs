@@ -19,6 +19,7 @@ import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
 import           Data.Version                    (showVersion)
 import           Metro.Class                     (Transport)
+import           Metro.TP.RSA                    (rsa)
 import           Metro.TP.Socket                 (socket)
 import           Network.HTTP.Types              (status204, status500)
 import           Network.Wai.Handler.Warp        (setHost, setPort)
@@ -35,32 +36,38 @@ import           Web.Scotty                      (ActionM, ScottyM, body,
 
 
 data Options = Options
-    { host     :: String
-    , httpHost :: String
-    , httpPort :: Int
-    , poolSize :: Int
-    , showHelp :: Bool
-    }
+  { host           :: String
+  , httpHost       :: String
+  , httpPort       :: Int
+  , poolSize       :: Int
+  , showHelp       :: Bool
+  , rsaPrivatePath :: FilePath
+  , rsaPublicPath  :: FilePath
+  }
 
 options :: Maybe String -> Options
 options h = Options
-  { host     = fromMaybe "unix:///tmp/periodic.sock" h
-  , httpHost = "127.0.0.1"
-  , httpPort = 8080
-  , poolSize = 10
-  , showHelp  = False
+  { host           = fromMaybe "unix:///tmp/periodic.sock" h
+  , httpHost       = "127.0.0.1"
+  , httpPort       = 8080
+  , poolSize       = 10
+  , showHelp       = False
+  , rsaPublicPath  = "public_key.pem"
+  , rsaPrivatePath = ""
   }
 
 parseOptions :: [String] -> Options -> Options
-parseOptions []                   opt = opt
-parseOptions ("-H":x:xs)          opt = parseOptions xs opt { host = x }
-parseOptions ("--host":x:xs)      opt = parseOptions xs opt { host = x }
-parseOptions ("--http-host":x:xs) opt = parseOptions xs opt { httpHost = x }
-parseOptions ("--http-port":x:xs) opt = parseOptions xs opt { httpPort = read x }
-parseOptions ("--pool-size":x:xs) opt = parseOptions xs opt { poolSize = read x }
-parseOptions ("--help":xs)        opt = parseOptions xs opt { showHelp = True }
-parseOptions ("-h":xs)            opt = parseOptions xs opt { showHelp = True }
-parseOptions (_:xs)               opt = parseOptions xs opt
+parseOptions []                          opt = opt
+parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host = x }
+parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host = x }
+parseOptions ("--http-host":x:xs)        opt = parseOptions xs opt { httpHost = x }
+parseOptions ("--http-port":x:xs)        opt = parseOptions xs opt { httpPort = read x }
+parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = read x }
+parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
+parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
+parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
+parseOptions (_:xs)                      opt = parseOptions xs opt
 
 printHelp :: IO ()
 printHelp = do
@@ -69,12 +76,14 @@ printHelp = do
   putStrLn "Usage: periodic [--host|-H HOST] [--http-host HOST] [--http-port PORT] [--pool-size SIZE]"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -H --host      Socket path [$PERIODIC_PORT]"
-  putStrLn "                 eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --http-host HTTP host (optional: 127.0.0.1)"
-  putStrLn "     --http-port HTTP port (optional: 8080)"
-  putStrLn "     --pool-size Connection pool size"
-  putStrLn "  -h --help       Display help message"
+  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
+  putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --http-host        HTTP host (optional: 127.0.0.1)"
+  putStrLn "     --http-port        HTTP port (optional: 8080)"
+  putStrLn "     --pool-size        Connection pool size"
+  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
+  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
+  putStrLn "  -h --help             Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -96,8 +105,17 @@ main = do
         { settings = setPort httpPort
                    $ setHost (Host httpHost) (settings def)}
 
-  clientEnv <- openPool (socket host) poolSize
-  scottyOpts sopts $ application clientEnv
+  case rsaPrivatePath of
+    "" -> do
+      clientEnv <- openPool (socket host) poolSize
+      scottyOpts sopts $ application clientEnv
+    _ -> do
+      mGenTP <- rsa rsaPrivatePath rsaPublicPath True
+      case mGenTP of
+        Left err -> putStrLn $ "Error " ++ err
+        Right genTP -> do
+          clientEnv <- openPool (genTP $ socket host) poolSize
+          scottyOpts sopts $ application clientEnv
 
 
 application :: Transport tp => ClientPoolEnv tp ->  ScottyM ()

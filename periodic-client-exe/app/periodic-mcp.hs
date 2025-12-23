@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Main where
+module Main
+  ( main
+  ) where
 
 import           Control.Monad             (when)
 import           Control.Monad.Trans.Class (lift)
@@ -17,6 +19,7 @@ import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as TE
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
+import           Metro.TP.RSA              (rsa)
 import           Metro.TP.Socket           (socket)
 import           Network.MCP.Server
 import           Network.MCP.Server.StdIO
@@ -29,26 +32,32 @@ import           System.Exit               (exitSuccess)
 
 
 data Options = Options
-    { host     :: String
-    , poolSize :: Int
-    , showHelp :: Bool
-    }
+  { host           :: String
+  , poolSize       :: Int
+  , showHelp       :: Bool
+  , rsaPrivatePath :: FilePath
+  , rsaPublicPath  :: FilePath
+  }
 
 options :: Maybe String -> Options
 options h = Options
   { host     = fromMaybe "unix:///tmp/periodic.sock" h
   , poolSize = 10
   , showHelp  = False
+  , rsaPublicPath  = "public_key.pem"
+  , rsaPrivatePath = ""
   }
 
 parseOptions :: [String] -> Options -> Options
-parseOptions []                   opt = opt
-parseOptions ("-H":x:xs)          opt = parseOptions xs opt { host = x }
-parseOptions ("--host":x:xs)      opt = parseOptions xs opt { host = x }
-parseOptions ("--pool-size":x:xs) opt = parseOptions xs opt { poolSize = read x }
-parseOptions ("--help":xs)        opt = parseOptions xs opt { showHelp = True }
-parseOptions ("-h":xs)            opt = parseOptions xs opt { showHelp = True }
-parseOptions (_:xs)               opt = parseOptions xs opt
+parseOptions []                          opt = opt
+parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host = x }
+parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host = x }
+parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = read x }
+parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
+parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
+parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
+parseOptions (_:xs)                      opt = parseOptions xs opt
 
 printHelp :: IO ()
 printHelp = do
@@ -57,10 +66,12 @@ printHelp = do
   putStrLn "Usage: periodic-mcp [--host|-H HOST] [--pool-size SIZE]"
   putStrLn ""
   putStrLn "Available options:"
-  putStrLn "  -H --host      Socket path [$PERIODIC_PORT]"
-  putStrLn "                 eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --pool-size Connection pool size"
-  putStrLn "  -h --help       Display help message"
+  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
+  putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
+  putStrLn "     --pool-size        Connection pool size"
+  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
+  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
+  putStrLn "  -h --help             Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -182,8 +193,18 @@ main = do
     putStrLn $ "Invalid host " ++ host
     printHelp
 
-  clientEnv <- openPool (socket host) poolSize
 
+  case rsaPrivatePath of
+    "" -> openPool (socket host) poolSize >>= run
+    _ -> do
+      mGenTP <- rsa rsaPrivatePath rsaPublicPath True
+      case mGenTP of
+        Left err    -> putStrLn $ "Error " ++ err
+        Right genTP -> openPool (genTP $ socket host) poolSize >>= run
+
+
+run :: Transport tp => ClientPoolEnv tp -> IO ()
+run clientEnv = do
   let serverInfo = Implementation
         { serverName = "periodic-mcp-server"
         , serverVersion = "1.0.0"
