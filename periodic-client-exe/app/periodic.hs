@@ -17,7 +17,8 @@ import           Data.Maybe                (fromMaybe)
 import           Data.String               (fromString)
 import           Data.Version              (showVersion)
 import           Metro.Class               (Transport)
-import           Metro.TP.RSA              (generateKeyPair, rsa)
+import           Metro.TP.RSA              (generateKeyPair)
+import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Client
@@ -63,6 +64,7 @@ data Options = Options
   { host           :: String
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
+  , rsaMode        :: RSA.RSAMode
   }
 
 options :: Maybe String -> Options
@@ -70,6 +72,7 @@ options h = Options
   { host           = fromMaybe "unix:///tmp/periodic.sock" h
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
+  , rsaMode        = RSA.AES
   }
 
 parseOptions :: [String] -> Options -> (Command, Options, [String])
@@ -78,13 +81,14 @@ parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host       
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host           = x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
 parseOptions (x:xs)                      opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
 printHelp = do
   putStrLn "periodic - Periodic task system client"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--rsa-private-path FILE --rsa-public-path FILE|PATH] command [options]"
+  putStrLn "Usage: periodic [--host|-H HOST] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES] command [options]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "     status   Show status"
@@ -106,6 +110,7 @@ printHelp = do
   putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
   putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
   putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
+  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -259,13 +264,10 @@ run _ KeyGen (x:xs) = generateKeyPair x (getKeySize xs)
 run Options {host, rsaPrivatePath = ""} cmd argv = do
   clientEnv <- open (socket host)
   runClientT clientEnv $ processCommand cmd argv
-run Options {host, rsaPrivatePath, rsaPublicPath} cmd argv = do
-  mGenTP <- rsa rsaPrivatePath rsaPublicPath True
-  case mGenTP of
-    Left err -> putStrLn $ "Error " ++ err
-    Right genTP -> do
-      clientEnv <- open (genTP $ socket host)
-      runClientT clientEnv $ processCommand cmd argv
+run Options {host, rsaPrivatePath, rsaPublicPath, rsaMode} cmd argv = do
+  genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
+  clientEnv <- open (genTP $ socket host)
+  runClientT clientEnv $ processCommand cmd argv
 
 processCommand :: Transport tp => Command -> [String] -> ClientT tp IO ()
 processCommand Help _     = liftIO printHelp

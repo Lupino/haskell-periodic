@@ -55,7 +55,7 @@ extra-deps:
 - git: https://github.com/buecking/hs-mcp.git
   commit: 6df508fe1b1f3f62d15e0b012233fa7536f8fceb
 - git: https://github.com/Lupino/metro.git
-  commit: 72dd50f2455830db99619441334d58d5d7e84b03
+  commit: 88b4280cb6ec92f59ef9ccaa0a49366f82207e22
   subdirs:
   - .
   - map-io

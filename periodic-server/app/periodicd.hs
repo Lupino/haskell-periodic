@@ -12,7 +12,7 @@ import           Data.Int                       (Int64)
 import           Data.Maybe                     (fromMaybe)
 import           Data.Version                   (showVersion)
 import           Metro.SocketServer             (socketServer)
-import           Metro.TP.RSA                   (rsa)
+import qualified Metro.TP.RSA                   as RSA (configServer)
 import           Metro.Utils                    (setupLog)
 import           Paths_periodic_server          (version)
 import           Periodic.Server                (startServer)
@@ -130,8 +130,5 @@ run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath = "
   startServer config id (socketServer host) hook pushTaskSize schedTaskSize
 run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath, rsaPublicPath} config = do
   hook <- genHook hookHostPort
-  mGenTP <- rsa rsaPrivatePath rsaPublicPath False
-  case mGenTP of
-    Left err -> putStrLn $ "Error " ++ err
-    Right genTP ->
-      startServer config genTP (socketServer host) hook pushTaskSize schedTaskSize
+  genTP <- RSA.configServer rsaPrivatePath rsaPublicPath
+  startServer config genTP (socketServer host) hook pushTaskSize schedTaskSize

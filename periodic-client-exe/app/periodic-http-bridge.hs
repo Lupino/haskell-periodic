@@ -19,7 +19,8 @@ import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
 import           Data.Version                    (showVersion)
 import           Metro.Class                     (Transport)
-import           Metro.TP.RSA                    (rsa)
+import qualified Metro.TP.RSA                    as RSA (RSAMode (AES),
+                                                         configClient)
 import           Metro.TP.Socket                 (socket)
 import           Network.HTTP.Types              (status204, status500)
 import           Network.Wai.Handler.Warp        (setHost, setPort)
@@ -43,6 +44,7 @@ data Options = Options
   , showHelp       :: Bool
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
+  , rsaMode        :: RSA.RSAMode
   }
 
 options :: Maybe String -> Options
@@ -54,6 +56,7 @@ options h = Options
   , showHelp       = False
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
+  , rsaMode        = RSA.AES
   }
 
 parseOptions :: [String] -> Options -> Options
@@ -65,6 +68,7 @@ parseOptions ("--http-port":x:xs)        opt = parseOptions xs opt { httpPort = 
 parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = read x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions (_:xs)                      opt = parseOptions xs opt
@@ -73,7 +77,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-http-bridge - Periodic task system client http bridge"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--http-host HOST] [--http-port PORT] [--pool-size SIZE]"
+  putStrLn "Usage: periodic-http-bridge [--host|-H HOST] [--http-host HOST] [--http-port PORT] [--pool-size SIZE] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
@@ -83,6 +87,7 @@ printHelp = do
   putStrLn "     --pool-size        Connection pool size"
   putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
   putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
+  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
   putStrLn "  -h --help             Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
@@ -110,12 +115,9 @@ main = do
       clientEnv <- openPool (socket host) poolSize
       scottyOpts sopts $ application clientEnv
     _ -> do
-      mGenTP <- rsa rsaPrivatePath rsaPublicPath True
-      case mGenTP of
-        Left err -> putStrLn $ "Error " ++ err
-        Right genTP -> do
-          clientEnv <- openPool (genTP $ socket host) poolSize
-          scottyOpts sopts $ application clientEnv
+      genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
+      clientEnv <- openPool (genTP $ socket host) poolSize
+      scottyOpts sopts $ application clientEnv
 
 
 application :: Transport tp => ClientPoolEnv tp ->  ScottyM ()

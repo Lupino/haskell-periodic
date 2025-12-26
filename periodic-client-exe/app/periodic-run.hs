@@ -19,7 +19,7 @@ import           Data.List                  (find, isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
-import           Metro.TP.RSA               (rsa)
+import qualified Metro.TP.RSA               as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
@@ -64,6 +64,7 @@ data Options = Options
   , skipFail       :: Bool
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
+  , rsaMode        :: RSA.RSAMode
   }
 
 options :: Maybe Int -> Maybe String -> Options
@@ -83,6 +84,7 @@ options t h = Options
   , skipFail       = False
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
+  , rsaMode        = RSA.AES
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
@@ -101,6 +103,7 @@ parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs =
 parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions []                          opt = (opt { showHelp = True }, "", "", [])
@@ -111,7 +114,7 @@ printHelp :: IO ()
 printHelp = do
   putStrLn "periodic-run - Periodic task system worker"
   putStrLn ""
-  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--skip-fail] [--rsa-private-path FILE --rsa-public-path FILE|PATH] funcname command [options]"
+  putStrLn "Usage: periodic-run [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--data] [--work-data] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--skip-fail] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES] funcname command [options]"
   putStrLn ""
   putStrLn "Available options:"
   putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
@@ -129,6 +132,7 @@ printHelp = do
   putStrLn "     --mem-limit        Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
   putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
   putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
+  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
   putStrLn "  -h --help             Display help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
@@ -151,10 +155,8 @@ main = do
   case rsaPrivatePath of
     "" -> startWorkerT (socket host) $ doWork opts func cmd argv
     _ -> do
-      mGenTP <- rsa rsaPrivatePath rsaPublicPath True
-      case mGenTP of
-        Left err -> putStrLn $ "Error " ++ err
-        Right genTP -> startWorkerT (genTP $ socket host) $ doWork opts func cmd argv
+      genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
+      startWorkerT (genTP $ socket host) $ doWork opts func cmd argv
 
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork opts@Options{..} func cmd argv = do
