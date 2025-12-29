@@ -49,6 +49,12 @@ in pkgs.haskell-nix.cabalProject {
          # Enable profiling globally for all packages if requested
          enableProfiling = enableProfiling;
 
+         # --- Windows Cross-Compilation Fix ---
+         # Resolve conflict between UCRT and MSVCRT by allowing multiple definitions
+         packages.periodic-client-exe.configureFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isWindows [
+           "--ghc-option=-optl-Wl,--allow-multiple-definition"
+         ];
+
          packages.periodic-server.configureFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isMusl [
            "--ghc-option=-optl=-lssl"
            "--ghc-option=-optl=-lcrypto"
