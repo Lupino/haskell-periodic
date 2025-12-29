@@ -1,6 +1,8 @@
 PLATFORM ?= musl64
 STRIP = strip
 PKG ?= periodic-client-exe
+SYSTEM = linux
+EXT =
 
 ifeq ($(PLATFORM),aarch64-multiplatform-musl)
 STRIP = aarch64-linux-gnu-strip
@@ -10,7 +12,14 @@ ifeq ($(PLATFORM),muslpi)
 STRIP = armv6l-unknown-linux-musleabihf-strip
 COMPILER ?= ghc884
 else
+ifeq ($(PLATFORM),mingwW64)
+STRIP = x86_64-w64-mingw32-strip
 COMPILER ?= ghc9122
+EXT = .exe
+SYSTEM = windows
+else
+COMPILER ?= ghc9122
+endif
 endif
 endif
 
@@ -27,32 +36,32 @@ dist/$(PLATFORM):
 	mkdir -p $@
 
 dist/$(PLATFORM)/%: dist/$(PLATFORM)
-	nix-build -A projectCross.$(PLATFORM).hsPkgs.$(PKG).components.exes.$(shell basename $@) --argstr compiler-nix-name $(COMPILER) # --arg enableProfiling true
+	nix-build -A projectCross.$(PLATFORM).hsPkgs.$(PKG).components.exes.$(shell basename $@ $(EXT)) --argstr compiler-nix-name $(COMPILER) # --arg enableProfiling true
 	cp -f result/bin/$(shell basename $@) $@
 	chmod +w $@
 	nix-shell --run "$(STRIP) -s $@" --argstr compiler-nix-name $(COMPILER) --arg crossPlatforms "ps: with ps; [$(PLATFORM)]"
 	chmod -w $@
 
 periodic:
-	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@$(EXT)
 
 periodic-mcp:
-	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@$(EXT)
 
 periodic-run:
-	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@$(EXT)
 
 periodic-run-pipe:
-	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@$(EXT)
 
 periodic-http-bridge:
-	PKG=periodic-client-exe make dist/$(PLATFORM)/$@
+	PKG=periodic-client-exe make dist/$(PLATFORM)/$@$(EXT)
 
 periodicd:
-	PKG=periodic-server make dist/$(PLATFORM)/$@
+	PKG=periodic-server make dist/$(PLATFORM)/$@$(EXT)
 
 package: $(OUT)
-	cd dist/$(PLATFORM) && tar cjvf ../periodic-linux-$(PLATFORM).tar.bz2 periodic*
+	cd dist/$(PLATFORM) && tar cjvf ../periodic-$(SYSTEM)-$(PLATFORM).tar.bz2 periodic*
 
 dist/bundle/bin/%: bin/%
 	@mkdir -p dist/bundle/bin
@@ -82,5 +91,6 @@ help:
 	@echo make PLATFORM=muslpi
 	@echo make PLATFORM=musl64
 	@echo make PLATFORM=aarch64-multiplatform-musl
+	@echo make PLATFORM=mingwW64
 	@echo make clean
 	@echo make update-sha256
