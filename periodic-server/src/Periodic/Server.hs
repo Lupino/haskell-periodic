@@ -19,8 +19,9 @@ import           Metro.Class                  (Servable (STP),
 import qualified Metro.Class                  as S (Servable (ServerConfig))
 import           Metro.Conn                   (receive_, runConnT, send)
 import           Metro.Node                   (NodeEnv1 (..), env, runNodeT1)
-import           Metro.Server                 (getMaxPoolSize, getNodeEnvList,
-                                               initServerEnv, runServerT,
+import           Metro.Server                 (getKeepalive, getMaxPoolSize,
+                                               getNodeEnvList, initServerEnv,
+                                               runServerT,
                                                setDefaultSessionTimeout,
                                                setKeepalive, setNodeMode,
                                                setOnCheckNodeState,
@@ -110,12 +111,12 @@ startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
     pushAgent grabQueue wFuncList nidV wMsgidList
     return $ Just (nidV, ClientConfig {..})
 
-  setDefaultSessionTimeout sEnv 100
-  setKeepalive sEnv 500
+  setDefaultSessionTimeout sEnv 60
+  setKeepalive sEnv 120
 
   schedEnv <- initSchedEnv dbconfig grabQueue
               (runServerT sEnv stopServerT)
-              (doAssignJob sEnv) (doPushData sEnv) hook (getMaxPoolSize sEnv)
+              (doAssignJob sEnv) (doPushData sEnv) hook (getKeepalive sEnv) (getMaxPoolSize sEnv)
 
   setOnNodeLeave sEnv $ \nid ClientConfig {..} ->
     runSchedT schedEnv $ do

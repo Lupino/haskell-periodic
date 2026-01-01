@@ -30,7 +30,6 @@ module Periodic.Server.Scheduler
   , dumpJob
   , status
   , shutdown
-  , keepalive
   , setConfigInt
   , getConfigInt
   , prepareWait
@@ -114,7 +113,7 @@ data SchedEnv db = SchedEnv
     -- max poll batch size
     , sMaxBatchSize  :: TVar Int
     -- client or worker keepalive
-    , sKeepalive     :: TVar Int
+    , sKeepalive     :: TVar Int64
     , sCleanup       :: IO ()
     , sFuncStatList  :: FuncStatList
     , sLocker        :: L.Lock
@@ -164,9 +163,10 @@ initSchedEnv
   -> (Nid -> Msgid -> Job -> IO Bool)
   -> (Nid -> Msgid -> ByteString -> IO ())
   -> Hook db
+  -> TVar Int64
   -> PoolSize
   -> m (SchedEnv db)
-initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolSize) = do
+initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook sKeepalive (PoolSize sMaxPoolSize) = do
   sFuncStatList   <- IOMap.empty
   sWaitList       <- IOMap.empty
   sLockList       <- IOMap.empty
@@ -176,7 +176,6 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook (PoolSize sMaxPoolS
   sTaskTimeout    <- newTVarIO 600
   sLockTimeout    <- newTVarIO 300
   sMaxBatchSize   <- newTVarIO 500
-  sKeepalive      <- newTVarIO 300
   sCleanup        <- toIO sC
   sPersist        <- liftIO $ P.newPersist config
   sAssignJobTime  <- IOMap.empty
@@ -219,18 +218,18 @@ startSchedT pushTaskSize schedTaskSize = do
   loadInt "max-batch-size" sMaxBatchSize
   loadInt "max-pool-size" sMaxPoolSize
 
-loadInt :: (MonadIO m, Persist db) => String -> TVar Int -> SchedT db m ()
+loadInt :: (MonadIO m, Persist db, Num a) => String -> TVar a -> SchedT db m ()
 loadInt name ref = do
   v <- liftIO . flip P.configGet name =<< asks sPersist
   case v of
     Nothing -> pure ()
-    Just v' -> atomically $ writeTVar ref v'
+    Just v' -> atomically $ writeTVar ref $ fromIntegral v'
 
-saveInt :: (MonadIO m, Persist db) => String -> Int -> TVar Int -> SchedT db m ()
+saveInt :: (MonadIO m, Persist db, Num a) => String -> Int -> TVar a -> SchedT db m ()
 saveInt name v ref = do
   p <- asks sPersist
   liftIO $ P.configSet p name v
-  atomically $ writeTVar ref v
+  atomically $ writeTVar ref $ fromIntegral v
 
 setConfigInt :: (MonadIO m, Persist db) => String -> Int -> SchedT db m ()
 setConfigInt key val = do
@@ -249,13 +248,10 @@ getConfigInt key = do
   case key of
     "timeout"        -> readTVarIO sTaskTimeout
     "lock-timeout"   -> readTVarIO sLockTimeout
-    "keepalive"      -> readTVarIO sKeepalive
+    "keepalive"      -> fromIntegral <$> readTVarIO sKeepalive
     "max-batch-size" -> readTVarIO sMaxBatchSize
     "max-pool-size"  -> readTVarIO sMaxPoolSize
     _                -> pure 0
-
-keepalive :: Monad m => SchedT db m (TVar Int)
-keepalive = asks sKeepalive
 
 runTask :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m ()
 runTask delay = void . runTask_ delay
