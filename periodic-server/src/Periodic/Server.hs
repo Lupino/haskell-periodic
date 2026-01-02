@@ -6,7 +6,8 @@ module Periodic.Server
   ) where
 
 
-import           Control.Monad                (void)
+import           Control.Monad                (unless, void, when)
+import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString              (ByteString)
 import           Data.ByteString.Lazy         (fromStrict)
@@ -18,7 +19,8 @@ import           Metro.Class                  (Servable (STP),
                                                setPacketId)
 import qualified Metro.Class                  as S (Servable (ServerConfig))
 import           Metro.Conn                   (receive_, runConnT, send)
-import           Metro.Node                   (NodeEnv1 (..), env, runNodeT1)
+import           Metro.Node                   (NodeEnv1 (..), env, runNodeT1,
+                                               stopNodeT, withSessionT_)
 import           Metro.Server                 (getKeepalive, getMaxPoolSize,
                                                getNodeEnvList, initServerEnv,
                                                runServerT,
@@ -29,7 +31,8 @@ import           Metro.Server                 (getKeepalive, getMaxPoolSize,
                                                setServerName, setSessionMode,
                                                stopServerT)
 import qualified Metro.Server                 as M (ServerEnv, startServer)
-import           Metro.Utils                  (getEpochTime)
+import qualified Metro.Session                as S (receive, send)
+import           Metro.Utils                  (foreverExit, getEpochTime)
 import           Periodic.Node                (sessionGen)
 import           Periodic.Server.Client       (handleSessionT)
 import           Periodic.Server.GrabQueue    (dropAgentList, newGrabQueue,
@@ -39,20 +42,26 @@ import           Periodic.Server.Persist      (Persist, PersistConfig)
 import           Periodic.Server.Scheduler    (failJob, initSchedEnv,
                                                removeFunc, runSchedT, shutdown,
                                                startSchedT)
-import           Periodic.Server.Types        (ClientConfig (..), Command,
+import           Periodic.Server.Types        (ClientConfig (..), Command (WC),
                                                ServerCommand (Data))
 import           Periodic.Types               (ClientType, Job, Msgid (..),
                                                Nid (..), Packet, getClientType,
-                                               getHandle, getTimeout, packetRES,
-                                               regPacketRES)
+                                               getHandle, getResult, getTimeout,
+                                               packetRES, regPacketRES)
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
+import           Periodic.Types.WorkerCommand (isJobAssigned)
 import           System.Entropy               (getEntropy)
-
-import           UnliftIO                     (MonadUnliftIO, newTVarIO,
-                                               readTVarIO, tryAny)
+import           System.Timeout               (timeout)
+import           UnliftIO                     (MonadUnliftIO, atomically,
+                                               newTVarIO, readTVarIO, tryAny,
+                                               writeTVar)
 
 type ServerEnv serv =
   M.ServerEnv serv ClientConfig Nid Msgid (Packet Command)
+
+isJobAssignedCmd :: Command -> Bool
+isJobAssignedCmd (WC cmd) = isJobAssigned cmd
+isJobAssignedCmd _        = False
 
 doAssignJob :: Transport tp => ServerEnv serv tp -> Nid -> Msgid -> Job -> IO Bool
 doAssignJob sEnv nid msgid job = do
@@ -60,21 +69,27 @@ doAssignJob sEnv nid msgid job = do
   case menv0 of
     Nothing   -> return False
     Just env0 -> do
-      r <- tryAny
-        $ runConnT (connEnv env0)
-        $ send
-        $ setPacketId msgid
-        $ packetRES (JobAssign job)
-      case r of
-        Left _  -> return False
-        Right _ -> do
-          env1 <- runNodeT1 env0 env
-          expiredAt <- (+tout) <$> getEpochTime
-          IOMap.insert jh expiredAt (wJobQueue env1)
-          return True
+      assigned <- newTVarIO False
+      void $ timeout soutS $ tryAny $ runNodeT1 env0 $ withSessionT_ (pure msgid) Nothing $ do
+        S.send (packetRES (JobAssign job))
+        foreverExit $ \exit -> do
+          ret <- lift $ getResult False isJobAssignedCmd <$> S.receive
+          atomically $ writeTVar assigned ret
+          when ret $ exit ()
+
+      r <- readTVarIO assigned
+      when r $ do
+        env1 <- runNodeT1 env0 env
+        expiredAt <- (+tout) <$> getEpochTime
+        IOMap.insert jh expiredAt (wJobQueue env1)
+
+      unless r $ runNodeT1 env0 stopNodeT
+
+      return r
 
   where jh = getHandle job
         tout = fromIntegral $ getTimeout job
+        soutS = 5 * 1000000
 
 doPushData :: Transport tp => ServerEnv serv tp -> Nid -> Msgid -> ByteString -> IO ()
 doPushData sEnv nid msgid w = do

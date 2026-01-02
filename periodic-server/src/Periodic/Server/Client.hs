@@ -101,6 +101,8 @@ handleWorkerSessionT ClientConfig {..} WC.GrabJob = do
        then pure ()
        else writeTVar wMsgidList $! msgid : msgidList
 
+  send $ packetRES Success
+
 handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   IOMap.delete jh wJobQueue
   lift $ doneJob jh w
@@ -154,6 +156,8 @@ handleWorkerSessionT _ (WC.Acquire n c jh) = do
 handleWorkerSessionT _ (WC.Release n jh) = do
   lift $ releaseLock n jh
   send $ packetRES Success
+
+handleWorkerSessionT ClientConfig {..} WC.JobAssigned = pure ()
 
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)

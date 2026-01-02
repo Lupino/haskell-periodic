@@ -100,6 +100,7 @@ instance Binary Command where
       31 -> CC <$> get
       -- 0x20 WC.WorkData
       32 -> WC <$> get
+      33 -> WC <$> get
       _  -> error $ "Error Command " ++ show cmd
 
   put (CC cmd) = put cmd

@@ -42,12 +42,12 @@ import           Metro.Class                  (RecvPacket (..), Transport,
 import           Metro.Conn                   (initConnEnv, runConnT)
 import qualified Metro.Conn                   as Conn
 import           Metro.Node                   (NodeMode (..), SessionMode (..),
-                                               initEnv1, newSessionEnv,
-                                               nextSessionId, runSessionT_,
+                                               initEnv1, nextSessionId,
                                                setDefaultSessionTimeout1,
                                                setNodeMode, setSessionMode,
-                                               startNodeT_, withEnv)
-import           Metro.Session                (send)
+                                               startNodeT_, withEnv,
+                                               withSessionT_)
+import           Metro.Session                (receive, send)
 import           Metro.Utils                  (getEpochTime)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
@@ -201,6 +201,12 @@ getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
 getAssignJob _               = Nothing
 
+sendGrab :: (Transport tp, MonadUnliftIO m) => Msgid -> JobT tp m Bool
+sendGrab msgid = do
+  withSessionT_ (pure msgid) (Just 10) $ do
+    send (packetREQ GrabJob)
+    getResult False isSuccess <$> receive
+
 nextGrab :: (Transport tp, MonadUnliftIO m) => GrabList -> JobT tp m ()
 nextGrab gl = do
   v <- Map.foldrWithKey' foldFunc Nothing gl
@@ -209,8 +215,7 @@ nextGrab gl = do
     Just (msgid, ts) -> do
       now <- getEpochTime
       when (ts + 300 < now) $ do
-        jobEnv <- newSessionEnv (Just (-1)) msgid
-        runSessionT_ jobEnv $ send (packetREQ GrabJob)
+        void $ sendGrab msgid
         Map.insert msgid now gl
 
   where foldFunc :: Msgid -> Int64 -> Maybe (Msgid, Int64) -> Maybe (Msgid, Int64)
@@ -237,6 +242,8 @@ work size = do
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()
 processJob WorkerEnv{..} ((sid, _), job) = do
+  withSessionT_ (pure sid) (Just 10) $ send (packetREQ JobAssigned)
+
   atomically $ do
     s <- readTVar tskSizeH
     maxSize <- readTVar maxSizeH
@@ -270,8 +277,7 @@ processJob WorkerEnv{..} ((sid, _), job) = do
     s <- readTVar tskSizeH
     writeTVar tskSizeH (s - 1)
 
-  jobEnv <- newSessionEnv (Just (-1)) sid
-  runSessionT_ jobEnv $ send (packetREQ GrabJob)
+  void $ sendGrab sid
 
 checkHealth
   :: (MonadUnliftIO m, Transport tp)

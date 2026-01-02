@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Periodic.Types.WorkerCommand
   ( WorkerCommand (..)
+  , isJobAssigned
   ) where
 
 import           Data.Int                (Int64)
@@ -26,6 +27,7 @@ data WorkerCommand = GrabJob
     | Acquire LockName Int JobHandle
     | Release LockName JobHandle
     | WorkData JobHandle ByteString
+    | JobAssigned
     deriving (Show)
 
 instance Binary WorkerCommand where
@@ -57,6 +59,7 @@ instance Binary WorkerCommand where
       32 -> do
         tn <- get
         WorkData tn . toStrict <$> getRemainingLazyByteString
+      33 -> pure JobAssigned
       _ -> error $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
@@ -96,6 +99,7 @@ instance Binary WorkerCommand where
     putWord8 32
     put tn
     putByteString w
+  put JobAssigned = putWord8 33
 
 instance Validatable WorkerCommand where
   validate (SchedLater jh _ step) = do
@@ -119,3 +123,7 @@ instance Validatable WorkerCommand where
     validate tn
     validateLength "WorkData" 0 maxBound $ B.length w
   validate _               = Right ()
+
+isJobAssigned :: WorkerCommand -> Bool
+isJobAssigned JobAssigned = True
+isJobAssigned _           = False
