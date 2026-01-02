@@ -75,20 +75,33 @@ parseOptions (_:xs)                      opt = parseOptions xs opt
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodic-http-bridge - Periodic task system client http bridge"
+  putStrLn "periodic-http-bridge - RESTful HTTP gateway for Periodic task system"
   putStrLn ""
-  putStrLn "Usage: periodic-http-bridge [--host|-H HOST] [--http-host HOST] [--http-port PORT] [--pool-size SIZE] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES]"
+  putStrLn "Usage: periodic-http-bridge [OPTIONS]"
   putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
-  putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --http-host        HTTP host (optional: 127.0.0.1)"
-  putStrLn "     --http-port        HTTP port (optional: 8080)"
-  putStrLn "     --pool-size        Connection pool size"
-  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
-  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
-  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
-  putStrLn "  -h --help             Display help message"
+  putStrLn "Global Options:"
+  putStrLn "  -H, --host <HOST>         Periodic server socket path or address"
+  putStrLn "                            (Default: unix:///tmp/periodic.sock, Env: $PERIODIC_PORT)"
+  putStrLn "      --pool-size <INT>     Periodic server connection pool size (Default: 10)"
+  putStrLn ""
+  putStrLn "HTTP Server Options:"
+  putStrLn "      --http-host <HOST>    HTTP server bind address (Default: 127.0.0.1)"
+  putStrLn "      --http-port <PORT>    HTTP server listen port (Default: 8080)"
+  putStrLn ""
+  putStrLn "Security Options:"
+  putStrLn "      --rsa-mode <MODE>     RSA mode: Plain, RSA, or AES (Default: AES)"
+  putStrLn "      --rsa-public-path <P> RSA public key file or directory"
+  putStrLn "      --rsa-private-path <P>RSA private key file path"
+  putStrLn ""
+  putStrLn "Help:"
+  putStrLn "  -h, --help                Display this help message"
+  putStrLn ""
+  putStrLn "Endpoints:"
+  putStrLn "  GET  /periodic/status/                        Get system statistics"
+  putStrLn "  POST /periodic/submit/:func_name/:job_name/   Submit a job (Async)"
+  putStrLn "  POST /periodic/run/:func_name/:job_name/      Execute a job (Sync)"
+  putStrLn "  POST /periodic/remove/:func_name/:job_name/   Remove a specific job"
+  putStrLn "  POST /periodic/drop/:func_name/               Drop a function"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -103,7 +116,7 @@ main = do
   when showHelp printHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
-    putStrLn $ "Invalid host " ++ host
+    putStrLn $ "Error: Invalid host address " ++ host
     printHelp
 
   let sopts = def
@@ -166,7 +179,7 @@ runJobHandler clientEnv = do
   case r of
     Nothing -> do
       WS.status status500
-      raw "error"
+      raw "Error: Job execution failed or timed out"
     Just bs -> raw $ LB.fromStrict bs
 
 dropFuncHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()

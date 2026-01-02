@@ -111,27 +111,35 @@ parseOptions (x:y:xs)                    opt = (opt, FuncName $ B.pack x, y, xs)
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodic-run-pipe - Periodic task system worker"
+  putStrLn "periodic-run-pipe - Periodic worker with persistent pipe communication"
   putStrLn ""
-  putStrLn "Usage: periodic-run-pipe [--host|-H HOST] [--thread THREAD] [--lock-name NAME] [--lock-count COUNT] [--broadcast] [--no-name] [--timeout NSECONDS] [--retry-secs NSECONDS] [--mem-limit MEMORY] [--buf-size SIZE] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES] funcname command [options]"
+  putStrLn "Usage: periodic-run-pipe [OPTIONS] <funcname> <command> [ARGS...]"
   putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
-  putStrLn "                        Eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --thread           Worker thread [$THREAD]"
-  putStrLn "     --lock-count       Max lock count (optional: 1)"
-  putStrLn "     --lock-name        The lock name (optional: no lock)"
-  putStrLn "     --broadcast        Is broadcast worker"
-  putStrLn "     --no-name          Use one line workload instead of name"
-  putStrLn "     --timeout          Process wait timeout in seconds. use job timeout if net set."
-  putStrLn "     --retry-secs       Failed job retry in seconds"
-  putStrLn "     --skip-fail        Skip failed job, no retry"
-  putStrLn "     --mem-limit        Process max memory limit in bytes (eg. 10k, 1m, 1g, 1024)"
-  putStrLn "     --buf-size         Pipe max buffer size in bytes (eg. 10k, 1m, 1g, 1024)"
-  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
-  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
-  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
-  putStrLn "  -h --help             Display help message"
+  putStrLn "Global Options:"
+  putStrLn "  -H, --host <HOST>         Socket path or address [$PERIODIC_PORT]"
+  putStrLn "                            (Default: unix:///tmp/periodic.sock)"
+  putStrLn "      --thread <INT>        Number of persistent runner processes [$THREAD] (Default: 1)"
+  putStrLn ""
+  putStrLn "Worker Options:"
+  putStrLn "      --lock-name <NAME>    Resource lock name (Default: no lock)"
+  putStrLn "      --lock-count <INT>    Max concurrent locks for the named lock (Default: 1)"
+  putStrLn "      --broadcast           Register as a broadcast worker (Fan-out mode)"
+  putStrLn "      --no-name             Pass workload data instead of job name to the pipe"
+  putStrLn ""
+  putStrLn "Performance & Control:"
+  putStrLn "      --timeout <INT>       Execution timeout (s). Use job default if not set"
+  putStrLn "      --retry-secs <INT>    Delay before retrying a failed job (s)"
+  putStrLn "      --skip-fail           Do not retry if the process fails"
+  putStrLn "      --mem-limit <MEM>     Max memory per runner (e.g., 1024, 1m, 1g)"
+  putStrLn "      --buf-size <MEM>      Max pipe buffer size (Default: 1024)"
+  putStrLn ""
+  putStrLn "Security Options:"
+  putStrLn "      --rsa-mode <MODE>     RSA mode: Plain, RSA, or AES (Default: AES)"
+  putStrLn "      --rsa-public-path <P> RSA public key file or directory"
+  putStrLn "      --rsa-private-path <P>RSA private key file path"
+  putStrLn ""
+  putStrLn "Help:"
+  putStrLn "  -h, --help                Display this help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -147,7 +155,7 @@ main = do
   when showHelp printHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
-    putStrLn $ "Invalid host " ++ host
+    putStrLn $ "Error: Invalid host " ++ host
     printHelp
 
   setupLog INFO
@@ -167,7 +175,7 @@ doWork opts@Options{..} func cmd argv = do
     case lockName of
       Nothing -> void $ addFunc func w
       Just n  -> void $ addFunc func $ withLock_ n lockCount w
-  liftIO $ putStrLn "Worker started."
+  liftIO $ putStrLn "Pipe Worker started."
   work thread
 
 parseMemStr :: String -> Int64
@@ -244,7 +252,7 @@ runPipeOut pipeout outh msgid@(Msgid wid) = do
 createPipeProcess :: Pipe -> Int64 -> String -> [String] -> IO ()
 createPipeProcess Pipe{..} maxMem cmd argv = do
   let cp = (proc cmd argv) {std_in = CreatePipe, std_out = CreatePipe}
-      onError err = errorM "periodic-run-pipe" $ "Error: " ++ err
+      onError err = errorM "periodic-run-pipe" $ "Process Error: " ++ err
 
   withCreateProcess cp $ \mb_inh mb_outh _ ph ->
     case (mb_inh, mb_outh) of
@@ -257,7 +265,7 @@ createPipeProcess Pipe{..} maxMem cmd argv = do
 
       (Just inh, Just outh) -> do
         welcome <- B.hGetLine outh
-        infoM "periodic-run-pipe" $ "Welcome: " ++ B.unpack welcome
+        infoM "periodic-run-pipe" $ "Pipe Runner Ready: " ++ B.unpack welcome
 
         atomically $ writeTVar pipeIO $ Just ph
         io <- async $ forever $ do
@@ -297,7 +305,7 @@ checkPipeTimeout _ _ 0 = pure Nothing
 checkPipeTimeout tIO onError t = do
   io <- async $ do
     threadDelay timeoutUs
-    onError $ "timeout after " ++ show t ++ "s"
+    onError $ "Execution timeout after " ++ show t ++ "s"
     io <- readTVarIO tIO
     mapM_ terminateProcess io
 
@@ -316,7 +324,7 @@ checkPipeMemory ph onError maxMem = do
         threadDelay 1000000 -- 1 seconds
         currMem <- getProcessMem pid
         when (currMem > maxMem) $ do
-          onError $ "overmemory used(" ++ show currMem ++ ") > max(" ++ show maxMem ++ ")"
+          onError $ "Memory limit exceeded: used(" ++ show currMem ++ ") > max(" ++ show maxMem ++ ")"
           terminateProcess ph
       return $ Just nio
 

@@ -86,31 +86,31 @@ parseOptions (x:xs)                      opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodic - Periodic task system client"
+  putStrLn "periodic - A distributed periodic task system client"
   putStrLn ""
-  putStrLn "Usage: periodic [--host|-H HOST] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES] command [options]"
+  putStrLn "Usage: periodic [GLOBAL_OPTIONS] COMMAND [ARGS]"
+  putStrLn ""
+  putStrLn "Global Options:"
+  putStrLn "  -H, --host <HOST>         Socket path or address [$PERIODIC_PORT]"
+  putStrLn "                            (Default: unix:///tmp/periodic.sock)"
+  putStrLn "      --rsa-mode <MODE>     Encryption mode: Plain, RSA, or AES (Default: AES)"
+  putStrLn "      --rsa-public-path <P> RSA public key file or directory"
+  putStrLn "      --rsa-private-path <P>RSA private key file path"
   putStrLn ""
   putStrLn "Commands:"
-  putStrLn "     status   Show status"
-  putStrLn "     submit   Submit job"
-  putStrLn "     run      Run job and output result"
-  putStrLn "     recv     Recv job work data once"
-  putStrLn "     remove   Remove job"
-  putStrLn "     drop     Drop function"
-  putStrLn "     config   Set or Get config"
-  putStrLn "     shutdown Shutdown periodicd"
-  putStrLn "     dump     Dump jobs"
-  putStrLn "     load     Load jobs"
-  putStrLn "     ping     Ping server"
-  putStrLn "     keygen   Generate RSA key pair"
-  putStrLn "     help     Shows a list of commands or help for one command"
-  putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
-  putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
-  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
-  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
+  putStrLn "  status      Show server and task statistics"
+  putStrLn "  submit      Submit a new job to the system"
+  putStrLn "  run         Execute a job and capture the output"
+  putStrLn "  recv        Receive specific job work data"
+  putStrLn "  remove      Remove jobs by name"
+  putStrLn "  drop        Delete a function and all its jobs"
+  putStrLn "  config      Get or set server-side configurations"
+  putStrLn "  shutdown    Safely shut down the periodic server"
+  putStrLn "  dump        Export jobs to a file"
+  putStrLn "  load        Import jobs from a file"
+  putStrLn "  ping        Test connection to the server"
+  putStrLn "  keygen      Generate a new RSA key pair"
+  putStrLn "  help        Show this help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -119,105 +119,106 @@ printHelp = do
 printWorkloadHelp :: IO ()
 printWorkloadHelp = do
   putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -w --workload WORKLOAD or @FILE"
+  putStrLn "Options:"
+  putStrLn "  -w, --workload <DATA|@FILE>  Job workload content or file path"
 
 printSubmitHelp :: IO ()
 printSubmitHelp = do
-  putStrLn "periodic submit - Submit job"
+  putStrLn "periodic submit - Submit a new job"
   putStrLn ""
-  putStrLn "Usage: periodic submit funcname jobname [-w|--workload WORKLOAD|@FILE] [--later 0] [--timeout 0]"
+  putStrLn "Usage: periodic submit <funcname> <jobname> [OPTIONS]"
   printWorkloadHelp
-  putStrLn "     --later    Sched job later"
-  putStrLn "     --timeout  Run job timeout"
+  putStrLn "      --later <INT>    Delay job execution (s) (Default: 0)"
+  putStrLn "      --timeout <INT>  Job execution timeout (s) (Default: 0)"
   putStrLn ""
   exitSuccess
 
 printRunHelp :: IO ()
 printRunHelp = do
-  putStrLn "periodic run - Run job and output result"
+  putStrLn "periodic run - Execute job and stream results"
   putStrLn ""
-  putStrLn "Usage: periodic run funcname jobname [-w|--workload WORKLOAD|@FILE] [--timeout 10]"
+  putStrLn "Usage: periodic run <funcname> <jobname> [OPTIONS]"
   printWorkloadHelp
-  putStrLn "     --timeout  Run job timeout"
+  putStrLn "      --timeout <INT>  Job execution timeout (s) (Default: 10)"
   putStrLn ""
   exitSuccess
 
 printRecvHelp :: IO ()
 printRecvHelp = do
-  putStrLn "periodic recv - Recv job work data once"
+  putStrLn "periodic recv - Receive job work data once"
   putStrLn ""
-  putStrLn "Usage: periodic run funcname jobname"
+  putStrLn "Usage: periodic recv <funcname> <jobname>"
   putStrLn ""
   exitSuccess
 
 printRemoveHelp :: IO ()
 printRemoveHelp = do
-  putStrLn "periodic remove - Remove job"
+  putStrLn "periodic remove - Remove jobs"
   putStrLn ""
-  putStrLn "Usage: periodic remove funcname jobname [jobname...]"
+  putStrLn "Usage: periodic remove <funcname> <jobname> [jobname...]"
   putStrLn ""
   exitSuccess
 
 printDropHelp :: IO ()
 printDropHelp = do
-  putStrLn "periodic drop - Drop function"
+  putStrLn "periodic drop - Delete a function"
   putStrLn ""
-  putStrLn "Usage: periodic drop funcname [funcname...]"
+  putStrLn "Usage: periodic drop <funcname> [funcname...]"
   putStrLn ""
   exitSuccess
 
 printConfigHelp :: IO ()
 printConfigHelp = do
-  putStrLn "periodic config - Set or get config"
+  putStrLn "periodic config - Get or set server configuration"
   putStrLn ""
-  putStrLn "Usage: periodic config command [options]"
+  putStrLn "Usage: periodic config <command> [ARGS]"
   putStrLn ""
   putStrLn "Commands:"
-  putStrLn "     get   Get config"
-  putStrLn "     set   Set config"
+  putStrLn "  get   Retrieve a configuration value"
+  putStrLn "  set   Update a configuration value"
   putStrLn ""
   exitSuccess
 
 printConfigKeyList :: IO ()
 printConfigKeyList = do
   putStrLn ""
-  putStrLn "Available keys:"
-  putStrLn "  timeout         - job process timeout"
-  putStrLn "  lock-timeout    - lock timeout"
-  putStrLn "  keepalive       - client keepalive"
-  putStrLn "  max-batch-size  - max poll batch size"
-  putStrLn "  max-pool-size   - max sched pool size"
+  putStrLn "Available configuration keys:"
+  putStrLn "  timeout         - Max job processing duration (s)"
+  putStrLn "  lock-timeout    - Resource lock acquisition timeout (s)"
+  putStrLn "  assign-wait     - Max wait time for job assignment (s)"
+  putStrLn "  keepalive       - Client-server keepalive interval (s)"
+  putStrLn "  max-batch-size  - Maximum number of jobs per poll"
+  putStrLn "  max-pool-size   - Maximum capacity of the scheduler pool"
   putStrLn ""
   exitSuccess
 
 printConfigGetHelp :: IO ()
 printConfigGetHelp = do
-  putStrLn "periodic config get - Get config"
+  putStrLn "periodic config get - Retrieve configuration"
   putStrLn ""
-  putStrLn "Usage: periodic config get key"
+  putStrLn "Usage: periodic config get <key>"
   printConfigKeyList
 
 printConfigSetHelp :: IO ()
 printConfigSetHelp = do
-  putStrLn "periodic config set - Set config"
+  putStrLn "periodic config set - Update configuration"
   putStrLn ""
-  putStrLn "Usage: periodic config set key val"
+  putStrLn "Usage: periodic config set <key> <val>"
   printConfigKeyList
 
 printLoadHelp :: IO ()
 printLoadHelp = do
-  putStrLn "periodic load - Load jobs"
+  putStrLn "periodic load - Import jobs"
   putStrLn ""
-  putStrLn "Usage: periodic load file"
+  putStrLn "Usage: periodic load <file>"
   putStrLn ""
   exitSuccess
 
 printDumpHelp :: IO ()
 printDumpHelp = do
-  putStrLn "periodic dump - Dump jobs"
+  putStrLn "periodic dump - Export jobs"
   putStrLn ""
-  putStrLn "Usage: periodic dump file"
+  putStrLn "Usage: periodic dump <file>"
   putStrLn ""
   exitSuccess
 
@@ -225,10 +226,10 @@ printKeyGenHelp :: IO ()
 printKeyGenHelp = do
   putStrLn "periodic keygen - Generate RSA key pair"
   putStrLn ""
-  putStrLn "Usage: periodic keygen file [-s|--size SIZE]"
+  putStrLn "Usage: periodic keygen <file> [OPTIONS]"
   putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -s|--size  RSA key size (optional: 256)"
+  putStrLn "Options:"
+  putStrLn "  -s, --size <INT>  RSA key bit length (Default: 256)"
   putStrLn ""
   exitSuccess
 
@@ -252,7 +253,7 @@ main = do
   when (cmd == KeyGen && argc < 1) printKeyGenHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
-    putStrLn $ "Invalid host " ++ host
+    putStrLn $ "Error: Invalid host " ++ host
     printHelp
 
   run opt cmd argv
@@ -370,7 +371,7 @@ doRunJob (x:y:xs) = do
   where t = getTimeout 10 xs
 
         putR :: Maybe ByteString -> IO ()
-        putR Nothing   = putStrLn "Error: run job failed"
+        putR Nothing   = putStrLn "Error: Run job failed"
         putR (Just bs) = B.putStrLn $ "Result: " <> bs
 
         putD :: ByteString -> IO ()

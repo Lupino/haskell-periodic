@@ -42,9 +42,9 @@ data Options = Options
 
 options :: Maybe String -> Options
 options h = Options
-  { host     = fromMaybe "unix:///tmp/periodic.sock" h
-  , poolSize = 10
-  , showHelp  = False
+  { host           = fromMaybe "unix:///tmp/periodic.sock" h
+  , poolSize       = 10
+  , showHelp       = False
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
   , rsaMode        = RSA.AES
@@ -64,18 +64,22 @@ parseOptions (_:xs)                      opt = parseOptions xs opt
 
 printHelp :: IO ()
 printHelp = do
-  putStrLn "periodic-mcp - Periodic task system client mcp server"
+  putStrLn "periodic-mcp - MCP server bridge for the Periodic task system"
   putStrLn ""
-  putStrLn "Usage: periodic-mcp [--host|-H HOST] [--pool-size SIZE] [--rsa-private-path FILE --rsa-public-path FILE|PATH --rsa-mode Plain|RSA|AES]"
+  putStrLn "Usage: periodic-mcp [OPTIONS]"
   putStrLn ""
-  putStrLn "Available options:"
-  putStrLn "  -H --host             Socket path [$PERIODIC_PORT]"
-  putStrLn "                        eg: tcp://:5000 (optional: unix:///tmp/periodic.sock) "
-  putStrLn "     --pool-size        Connection pool size"
-  putStrLn "     --rsa-private-path RSA private key file path (optional: null)"
-  putStrLn "     --rsa-public-path  RSA public key file path or dir (optional: public_key.pem)"
-  putStrLn "     --rsa-mode         RSA mode Plain RSA AES (optional: AES)"
-  putStrLn "  -h --help             Display help message"
+  putStrLn "Global Options:"
+  putStrLn "  -H, --host <HOST>         Socket path or address [$PERIODIC_PORT]"
+  putStrLn "                            (Default: unix:///tmp/periodic.sock)"
+  putStrLn "      --pool-size <INT>     Connection pool size (Default: 10)"
+  putStrLn ""
+  putStrLn "Security Options:"
+  putStrLn "      --rsa-mode <MODE>     RSA mode: Plain, RSA, or AES (Default: AES)"
+  putStrLn "      --rsa-public-path <P> RSA public key file or directory"
+  putStrLn "      --rsa-private-path <P>RSA private key file path"
+  putStrLn ""
+  putStrLn "Help:"
+  putStrLn "  -h, --help                Display this help message"
   putStrLn ""
   putStrLn $ "Version: v" ++ showVersion version
   putStrLn ""
@@ -96,13 +100,13 @@ stringResult :: String -> CallToolResult
 stringResult = textResult . T.pack
 
 maybeBoolResult :: Maybe Bool -> CallToolResult
-maybeBoolResult Nothing      = textResult "No input provided"
-maybeBoolResult (Just True)  = textResult "True"
-maybeBoolResult (Just False) = textResult "False"
+maybeBoolResult Nothing      = textResult "Error: Required arguments missing"
+maybeBoolResult (Just True)  = textResult "Success"
+maybeBoolResult (Just False) = textResult "Operation failed"
 
 maybeBSResult :: Maybe (Maybe ByteString) -> CallToolResult
-maybeBSResult Nothing          = textResult "No input provided"
-maybeBSResult (Just Nothing)   = textResult "No result"
+maybeBSResult Nothing          = textResult "Error: Required arguments missing"
+maybeBSResult (Just Nothing)   = textResult "Job executed but returned no data"
 maybeBSResult (Just (Just bs)) = textResult $ TE.decodeUtf8 bs
 
 
@@ -154,7 +158,7 @@ toolCallHandler CallToolRequest {callToolName = "remove", callToolArguments = ar
   return $ maybeBoolResult r
 
 toolCallHandler CallToolRequest {callToolName = name } =
-  return . textResult $ "Unknown tool: " <> name
+  return . textResult $ "Error: Unknown tool name - " <> name
 
 
 funcAndNameSchema :: Value
@@ -163,9 +167,11 @@ funcAndNameSchema = object
   , "properties" .= object
     [ "func" .= object
       [ "type" .= ("string" :: String)
+      , "description" .= ("The name of the function/worker" :: String)
       ]
     , "name" .= object
       [ "type" .= ("string" :: String)
+      , "description" .= ("The unique name of the job" :: String)
       ]
     ]
   , "required" .= ([ "func", "name" ]::[String])
@@ -178,6 +184,7 @@ funcSchema = object
   , "properties" .= object
     [ "func" .= object
       [ "type" .= ("string" :: String)
+      , "description" .= ("The name of the function to be dropped" :: String)
       ]
     ]
   , "required" .= ([ "func" ]::[String])
@@ -194,7 +201,7 @@ main = do
   when showHelp printHelp
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
-    putStrLn $ "Invalid host " ++ host
+    putStrLn $ "Error: Invalid host " ++ host
     printHelp
 
 
@@ -217,32 +224,32 @@ run clientEnv = do
         , promptsCapability = Nothing
         }
 
-  server <- createServer serverInfo serverCapabilities "Periodic task system."
+  server <- createServer serverInfo serverCapabilities "Bridge for managing Periodic task system via MCP."
 
   registerTools server
     [ Tool
       { toolName = "status"
-      , toolDescription = Just "Show status"
+      , toolDescription = Just "Fetch periodic system statistics and job status."
       , toolInputSchema = Null
       }
     , Tool
       { toolName = "drop"
-      , toolDescription = Just "Drop function"
+      , toolDescription = Just "Delete a function and all its associated jobs from the server."
       , toolInputSchema = funcSchema
       }
     , Tool
       { toolName = "submit"
-      , toolDescription = Just "Submit job"
+      , toolDescription = Just "Submit a new job for background/asynchronous execution."
       , toolInputSchema = funcAndNameSchema
       }
     , Tool
       { toolName = "run"
-      , toolDescription = Just "Run job"
+      , toolDescription = Just "Execute a job immediately and return the resulting output."
       , toolInputSchema = funcAndNameSchema
       }
     , Tool
       { toolName = "remove"
-      , toolDescription = Just "Remove job"
+      , toolDescription = Just "Remove a specific job from a function."
       , toolInputSchema = funcAndNameSchema
       }
     ]
