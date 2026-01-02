@@ -51,6 +51,7 @@ import           Periodic.Types               (ClientType, Job, Msgid (..),
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
 import           Periodic.Types.WorkerCommand (isJobAssigned)
 import           System.Entropy               (getEntropy)
+import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
 import           UnliftIO                     (MonadUnliftIO, atomically,
                                                newTVarIO, readTVarIO, tryAny,
@@ -63,19 +64,29 @@ isJobAssignedCmd :: Command -> Bool
 isJobAssignedCmd (WC cmd) = isJobAssigned cmd
 isJobAssignedCmd _        = False
 
-doAssignJob :: Transport tp => ServerEnv serv tp -> Nid -> Msgid -> Job -> IO Bool
-doAssignJob sEnv nid msgid job = do
+doAssignJob :: Transport tp => ServerEnv serv tp -> Int -> Nid -> Msgid -> Job -> IO Bool
+doAssignJob sEnv wait nid msgid job = do
   menv0 <- IOMap.lookup nid $ getNodeEnvList sEnv
   case menv0 of
     Nothing   -> return False
     Just env0 -> do
       assigned <- newTVarIO False
-      void $ timeout soutS $ tryAny $ runNodeT1 env0 $ withSessionT_ (pure msgid) Nothing $ do
+      mr <- timeout waitS
+         $ tryAny
+         $ runNodeT1 env0
+         $ withSessionT_ (pure msgid) Nothing
+         $ do
+
         S.send (packetRES (JobAssign job))
         foreverExit $ \exit -> do
           ret <- lift $ getResult False isJobAssignedCmd <$> S.receive
           atomically $ writeTVar assigned ret
           when ret $ exit ()
+
+      case mr of
+        Nothing         -> errorM "Periodic.Server" "Job assignment timed out. Consider increasing the 'assign-wait' configuration value to allow more time."
+        Just (Left err) -> errorM "Periodic.Server" $ "Job assignment error: " ++ show err
+        _               -> pure ()
 
       r <- readTVarIO assigned
       when r $ do
@@ -89,7 +100,7 @@ doAssignJob sEnv nid msgid job = do
 
   where jh = getHandle job
         tout = fromIntegral $ getTimeout job
-        soutS = 5 * 1000000
+        waitS = wait * 1000000
 
 doPushData :: Transport tp => ServerEnv serv tp -> Nid -> Msgid -> ByteString -> IO ()
 doPushData sEnv nid msgid w = do

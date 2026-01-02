@@ -108,6 +108,8 @@ type LockList = IOMap LockName LockInfo
 data SchedEnv db = SchedEnv
     -- the task do timeout
     { sTaskTimeout   :: TVar Int
+    -- assign wait
+    , sAssignWait    :: TVar Int
     -- lock timeout
     , sLockTimeout   :: TVar Int
     -- max poll batch size
@@ -124,7 +126,7 @@ data SchedEnv db = SchedEnv
     , sWaitList      :: WaitList
     , sLockList      :: LockList
     , sPersist       :: db
-    , sAssignJob     :: Nid -> Msgid -> Job -> IO Bool
+    , sAssignJob     :: Int -> Nid -> Msgid -> Job -> IO Bool
     , sPushData      :: Nid -> Msgid -> ByteString -> IO ()
     , sHook          :: Hook db
     , sAssignJobTime :: IOMap JobHandle UnixTime
@@ -160,26 +162,27 @@ initSchedEnv
   => P.PersistConfig db
   -> GrabQueue
   -> m ()
-  -> (Nid -> Msgid -> Job -> IO Bool)
+  -> (Int -> Nid -> Msgid -> Job -> IO Bool)
   -> (Nid -> Msgid -> ByteString -> IO ())
   -> Hook db
   -> TVar Int64
   -> PoolSize
   -> m (SchedEnv db)
 initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook sKeepalive (PoolSize sMaxPoolSize) = do
-  sFuncStatList   <- IOMap.empty
-  sWaitList       <- IOMap.empty
-  sLockList       <- IOMap.empty
-  sLocker         <- L.new
-  sPollJob        <- newTVarIO []
-  sChanList       <- newTQueueIO
-  sTaskTimeout    <- newTVarIO 600
-  sLockTimeout    <- newTVarIO 300
-  sMaxBatchSize   <- newTVarIO 500
-  sCleanup        <- toIO sC
-  sPersist        <- liftIO $ P.newPersist config
-  sAssignJobTime  <- IOMap.empty
-  sSchedPoolList  <- IOMap.empty
+  sFuncStatList  <- IOMap.empty
+  sWaitList      <- IOMap.empty
+  sLockList      <- IOMap.empty
+  sLocker        <- L.new
+  sPollJob       <- newTVarIO []
+  sChanList      <- newTQueueIO
+  sTaskTimeout   <- newTVarIO 600
+  sLockTimeout   <- newTVarIO 300
+  sAssignWait    <- newTVarIO 2
+  sMaxBatchSize  <- newTVarIO 500
+  sCleanup       <- toIO sC
+  sPersist       <- liftIO $ P.newPersist config
+  sAssignJobTime <- IOMap.empty
+  sSchedPoolList <- IOMap.empty
 
   sPushList  <- newTQueueIO
   sSchedList <- newTQueueIO
@@ -214,6 +217,7 @@ startSchedT pushTaskSize schedTaskSize = do
 
   loadInt "timeout" sTaskTimeout
   loadInt "lock-timeout" sLockTimeout
+  loadInt "assign-wait" sAssignWait
   loadInt "keepalive" sKeepalive
   loadInt "max-batch-size" sMaxBatchSize
   loadInt "max-pool-size" sMaxPoolSize
@@ -236,7 +240,7 @@ setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
     "timeout"        -> saveInt "timeout" val sTaskTimeout
-    "lock-timeout"   -> saveInt "lock-timeout" val sLockTimeout
+    "assign-wait"    -> saveInt "assign-wait" val sAssignWait
     "keepalive"      -> saveInt "keepalive" val sKeepalive
     "max-batch-size" -> saveInt "max-batch-size" val sMaxBatchSize
     "max-pool-size"  -> saveInt "max-pool-size" val sMaxPoolSize
@@ -248,6 +252,7 @@ getConfigInt key = do
   case key of
     "timeout"        -> readTVarIO sTaskTimeout
     "lock-timeout"   -> readTVarIO sLockTimeout
+    "assign-wait"    -> readTVarIO sAssignWait
     "keepalive"      -> fromIntegral <$> readTVarIO sKeepalive
     "max-batch-size" -> readTVarIO sMaxBatchSize
     "max-pool-size"  -> readTVarIO sMaxPoolSize
@@ -462,11 +467,12 @@ schedJob :: (MonadIO m, Persist db) => Job -> Nid -> Msgid -> SchedT db m ()
 schedJob job nid msgid = do
   assignJob <- asks sAssignJob
   tout <- fmap (getJobTimeout job) . readTVarIO =<< asks sTaskTimeout
+  waitTime <- readTVarIO =<< asks sAssignWait
   assignJobTime <- asks sAssignJobTime
   persist <- asks sPersist
   t <- liftIO getUnixTime
   IOMap.insert jh t assignJobTime
-  r <- liftIO $ assignJob nid msgid $ setTimeout tout job
+  r <- liftIO $ assignJob waitTime nid msgid $ setTimeout tout job
   if r then pure ()
        else do
          liftIO $ P.updateState persist Pending fn jn
