@@ -29,7 +29,7 @@ import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
 import           Text.Read                 (readMaybe)
 import           UnliftIO                  (async, atomically, cancel,
-                                            newEmptyTMVarIO, takeTMVar,
+                                            newEmptyTMVarIO, takeTMVar, timeout,
                                             tryIO, wait)
 
 
@@ -379,7 +379,12 @@ doRunJob (x:y:xs) = do
   atomically $ takeTMVar waiter
   liftIO . putR
     =<< runJob (fromString x) (fromString y) w t
-  wait io
+  mRet <- timeout ((max t 1 + 5) * 1000000) (wait io)
+  case mRet of
+    Nothing -> do
+      cancel io
+      liftIO $ putStrLn "Warning: Timed out waiting for data stream to close"
+    Just _  -> pure ()
 
   where t = getTimeout 10 xs
 
