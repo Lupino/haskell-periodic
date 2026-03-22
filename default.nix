@@ -1,4 +1,4 @@
-{ compiler-nix-name ? "ghc9122", enableProfiling ? false }:
+{ compiler-nix-name ? "ghc9141", enableProfiling ? false }:
 let
   # Read in the Niv sources
   sources = import ./nix/sources.nix {};
@@ -63,5 +63,8 @@ in pkgs.haskell-nix.cabalProject {
            "--ghc-option=-optl=-L${pkgs.postgresql.lib.out}/lib"
            "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
          ];
+         # Ensure os-string backed APIs are exposed consistently in this toolchain.
+         packages.directory.flags.os-string = true;
+         packages.process.flags.os-string = true;
       })];
   }
