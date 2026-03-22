@@ -16,8 +16,9 @@ import           Data.Maybe     (catMaybes)
 import           Metro.Utils    (foreverExit, lift)
 import           Periodic.Types (FuncName, Msgid, Nid)
 import           UnliftIO       (MonadIO, STM, TQueue, TVar, atomically,
-                                 newTQueueIO, readTQueue, readTVar, unGetTQueue,
-                                 writeTQueue, writeTVar)
+                                 newTQueueIO, readTQueue, readTVar,
+                                 tryReadTQueue, unGetTQueue, writeTQueue,
+                                 writeTVar)
 
 data GrabItem = GrabItem
   { msgidList :: TVar [Msgid]
@@ -78,9 +79,12 @@ popAgentListSTM gq@(GrabQueue _ s) fn = do
 dropAgentList :: MonadIO m => GrabQueue -> Nid -> m ()
 dropAgentList (GrabQueue s q) nid = atomically $ do
   IOMapS.delete nid q
-  first <- readTQueue s
-  writeTQueue s first
-  foreverExit $ \exit -> do
-    nid0 <- lift $ readTQueue s
-    when (nid0 /= nid) $ lift $ writeTQueue s nid0
-    when (nid0 == first) $ exit ()
+  mFirst <- tryReadTQueue s
+  case mFirst of
+    Nothing    -> pure ()
+    Just first -> do
+      writeTQueue s first
+      foreverExit $ \exit -> do
+        nid0 <- lift $ readTQueue s
+        when (nid0 /= nid) $ lift $ writeTQueue s nid0
+        when (nid0 == first) $ exit ()
