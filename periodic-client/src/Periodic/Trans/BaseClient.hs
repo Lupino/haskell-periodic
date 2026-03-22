@@ -30,7 +30,8 @@ import           Metro.Node                   (getEnv1, request, stopNodeT,
 import qualified Metro.Session                as S (receive, send)
 import           Metro.Utils                  (foreverExit, getEpochTime)
 import           Periodic.Node
-import           Periodic.Types               (Packet, getResult, packetREQ)
+import           Periodic.Types               (Packet, getPacketData, getResult,
+                                               packetREQ)
 import           Periodic.Types.ClientCommand
 import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
@@ -86,15 +87,23 @@ recvJobData_
   :: (MonadUnliftIO m, Transport tp)
   => Maybe (TMVar ())
   -> (ByteString -> m ())
-  ->  Job -> BaseClientT u tp m ()
+  -> Job -> BaseClientT u tp m ()
 recvJobData_ mwaiter cb j = withSessionT Nothing $ do
   S.send (packetREQ (RecvData j))
   foreverExit $ \exit -> do
     ret <- lift S.receive
-    case getServerData ret of
-      Nothing    -> atomically $ mapM_ (`tryPutTMVar` ()) mwaiter
-      Just "EOF" -> exit ()
-      Just dat   -> lift $ lift $ cb dat
+    case ret of
+      Nothing -> do
+        atomically $ mapM_ (`tryPutTMVar` ()) mwaiter
+        exit ()
+      Just pkt ->
+        case getPacketData pkt of
+          Success -> atomically $ mapM_ (`tryPutTMVar` ()) mwaiter
+          Data "EOF" -> exit ()
+          Data dat   -> lift $ lift $ cb dat
+          _ -> do
+            atomically $ mapM_ (`tryPutTMVar` ()) mwaiter
+            exit ()
 
 recvJobData
   :: (MonadUnliftIO m, Transport tp)
