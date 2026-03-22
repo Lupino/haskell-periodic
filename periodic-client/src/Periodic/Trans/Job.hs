@@ -28,7 +28,6 @@ module Periodic.Trans.Job
 import           Control.Monad                (void, when)
 import           Data.ByteString              (ByteString, empty)
 import           Data.Int                     (Int64)
-import           Data.Maybe                   (fromJust)
 import           Metro.Class                  (Transport)
 import           Metro.Node                   (env, request)
 import           Periodic.Node
@@ -45,31 +44,35 @@ import           UnliftIO                     hiding (timeout)
 type JobT = BaseClientT (Maybe Job)
 type JobEnv = SessionEnv (Maybe Job) ServerCommand
 
-job :: Monad m => JobT tp m Job
-job = fromJust <$> env
+job :: MonadIO m => JobT tp m Job
+job = do
+  mj <- env
+  case mj of
+    Just j  -> pure j
+    Nothing -> liftIO $ ioError $ userError "Missing job context in JobT"
 
-name :: (FromBS a, Show a, Monad m) => JobT tp m a
+name :: (FromBS a, Show a, MonadIO m) => JobT tp m a
 name = fromBS . unJN <$> name_
 
-name_ :: Monad m => JobT tp m JobName
+name_ :: MonadIO m => JobT tp m JobName
 name_ = getName <$> job
 
-func :: (FromBS a, Show a, Monad m) => JobT tp m a
+func :: (FromBS a, Show a, MonadIO m) => JobT tp m a
 func = fromBS . unFN <$> func_
 
-func_ :: Monad m => JobT tp m FuncName
+func_ :: MonadIO m => JobT tp m FuncName
 func_ = getFuncName <$> job
 
-workload :: (FromBS a, Show a, Monad m) => JobT tp m a
+workload :: (FromBS a, Show a, MonadIO m) => JobT tp m a
 workload = fromBS . unWL <$> workload_
 
-workload_ :: Monad m => JobT tp m Workload
+workload_ :: MonadIO m => JobT tp m Workload
 workload_ = getWorkload <$> job
 
-count :: Monad m => JobT tp m Int
+count :: MonadIO m => JobT tp m Int
 count = getCount <$> job
 
-timeout :: Monad m => JobT tp m Int
+timeout :: MonadIO m => JobT tp m Int
 timeout = getTimeout <$> job
 
 workDone
