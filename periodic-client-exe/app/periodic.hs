@@ -8,9 +8,11 @@ module Main
 
 import           Control.Monad             (void, when)
 import           Control.Monad.IO.Class    (liftIO)
-import           Data.Binary               (decodeFile, encodeFile)
+import           Data.Binary               (decodeFileOrFail, encodeFile)
+import           Data.Binary.Get           (ByteOffset)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (putStrLn, readFile)
+import qualified Data.ByteString.Lazy      as LB (ByteString, null)
 import           Data.Int                  (Int64)
 import           Data.List                 (isPrefixOf)
 import           Data.Maybe                (fromMaybe)
@@ -22,12 +24,13 @@ import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Trans.Client
-import           Periodic.Types            (Workload (..))
+import           Periodic.Types            (Job, Workload (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
 import           Text.Read                 (readMaybe)
-import           UnliftIO                  (async, atomically, newEmptyTMVarIO,
-                                            takeTMVar, wait)
+import           UnliftIO                  (async, atomically, cancel,
+                                            newEmptyTMVarIO, takeTMVar,
+                                            tryIO, wait)
 
 
 data Command = Status
@@ -306,15 +309,26 @@ doConfig _ = liftIO printConfigHelp
 
 doLoad :: Transport tp => [String] -> ClientT tp IO ()
 doLoad [fn] = do
-  jobs <- liftIO $ decodeFile fn
-  void $ load jobs
+  er <- liftIO $ tryIO (decodeFileOrFail fn :: IO (Either (ByteOffset, String) (LB.ByteString, ByteOffset, [Job])))
+  case er of
+    Left _  -> liftIO $ putStrLn "Error: Failed to read dump file"
+    Right r ->
+      case r of
+        Left _             -> liftIO $ putStrLn "Error: Failed to decode dump file"
+        Right (rest, _, jobs) ->
+          if LB.null rest
+            then void $ load jobs
+            else liftIO $ putStrLn "Error: Invalid dump file (trailing bytes)"
 
 doLoad _ = liftIO printLoadHelp
 
 doDump :: Transport tp => [String] -> ClientT tp IO ()
 doDump [fn] = do
   jobs <- dump
-  liftIO $ encodeFile fn jobs
+  r <- liftIO $ tryIO (encodeFile fn jobs)
+  case r of
+    Left _  -> liftIO $ putStrLn "Error: Failed to write dump file"
+    Right _ -> pure ()
 
 doDump _ = liftIO printDumpHelp
 
