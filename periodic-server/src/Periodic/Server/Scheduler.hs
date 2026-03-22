@@ -696,7 +696,7 @@ acquireLock_ name count jh = do
               if item `elem` acquired then pure True
               else if item `elem` locked then pure False
               else
-                if length acquired < maxCount then do
+                if length acquired < newCount then do
                   IOMapS.insert name info
                     { acquired = acquired ++ [item]
                     , maxCount = newCount
@@ -748,7 +748,13 @@ releaseLock_ name jh = do
                 , locked   = xs
                 } lockList
               pure $ Just x
-        else pure Nothing
+        else
+          if item `elem` locked then do
+            IOMapS.insert name info
+              { locked = L.delete item locked
+              } lockList
+            pure Nothing
+          else pure Nothing
 
   case h of
     Nothing -> pure ()
