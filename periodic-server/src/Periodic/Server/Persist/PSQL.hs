@@ -14,14 +14,14 @@ import           Control.Monad           (void)
 import           Data.Binary             (decodeOrFail)
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString)
-import qualified Data.ByteString         as B (init, tail)
+import qualified Data.ByteString         as B (init, length, tail)
 import           Data.ByteString.Base64  (decode, encode)
 import qualified Data.ByteString.Char8   as B (drop, split, take, unpack)
-import           Data.ByteString.Lazy    (fromStrict)
+import qualified Data.ByteString.Lazy    as BL (fromStrict, null)
 import           Data.Int                (Int64)
 import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..), fromString)
-import           Database.PSQL.Types     (From, FromField (..), Only (..),
+import           Database.PSQL           (From, FromField (..), Only (..),
                                           PSQLPool, Size, TableName,
                                           TablePrefix, ToField (..),
                                           constraintPrimaryKey, count,
@@ -31,7 +31,7 @@ import           Database.PSQL.Types     (From, FromField (..), Only (..),
                                           runPSQLPool, selectOneOnly,
                                           selectOnly, selectOnly_, update,
                                           withTransaction)
-import qualified Database.PSQL.Types     as DB (PSQL)
+import qualified Database.PSQL           as DB (PSQL)
 import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
                                           State (..), loopFetchData)
@@ -79,13 +79,14 @@ preparePath = go . B.split ' '
         go [] = (Nothing, "")
         go (x:xs)
           | B.take 7 x == "prefix=" = (Just (cleanPrefix $ B.drop 7 x), ys)
+          | B.length ys == 0 = (y, x)
           | otherwise = (y, x <> " " <> ys)
           where (y, ys) = go xs
 
         cleanPrefix :: ByteString -> ByteString
         cleanPrefix bs
-          | B.take 1 bs == "'" = B.init (B.tail bs)
-          | B.take 1 bs == "\"" = B.init (B.tail bs)
+          | B.length bs >= 2 && B.take 1 bs == "'" && B.take 1 (B.drop (B.length bs - 1) bs) == "'" = B.init (B.tail bs)
+          | B.length bs >= 2 && B.take 1 bs == "\"" && B.take 1 (B.drop (B.length bs - 1) bs) == "\"" = B.init (B.tail bs)
           | otherwise = bs
 
 instance Persist PSQL where
@@ -214,7 +215,7 @@ doInsertFuncName fn = insertOrUpdate funcs ["func"] [] [] (Only fn)
 
 doGetRunningJob :: Int64 -> DB.PSQL [Job]
 doGetRunningJob ts =
-  selectOnly jobs "value" "sched_at < ?" (Only ts) (pageAsc 0 1000 "sched_at")
+  selectOnly jobs "value" "state=? AND sched_at < ?" (Running, ts) (pageAsc 0 1000 "sched_at")
 
 doGetPendingJob :: FuncName -> Int64 -> From -> Size -> DB.PSQL [Job]
 doGetPendingJob fn ts f s =
@@ -268,9 +269,11 @@ decodeJob bs =
   case decode bs of
     Left e -> Left e
     Right bs0 ->
-      case decodeOrFail (fromStrict bs0) of
+      case decodeOrFail (BL.fromStrict bs0) of
         Left e            -> Left $ show e
-        Right (_, _, job) -> Right job
+        Right (rest, _, job)
+          | BL.null rest -> Right job
+          | otherwise    -> Left "decodeJob trailing bytes"
 
 doInsertMetric :: String -> String -> Int -> DB.PSQL ()
 doInsertMetric event name durationMs = do

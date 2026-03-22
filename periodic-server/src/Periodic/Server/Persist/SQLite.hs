@@ -13,7 +13,7 @@ import           Data.Binary             (decodeOrFail)
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString, append)
 import qualified Data.ByteString.Char8   as B (pack)
-import           Data.ByteString.Lazy    (fromStrict)
+import qualified Data.ByteString.Lazy    as BL (fromStrict, null)
 import           Data.Int                (Int64)
 import           Data.Maybe              (listToMaybe)
 import           Data.String             (IsString (..))
@@ -158,7 +158,10 @@ doInsertFuncName db = execFN db sql
 
 doGetRunningJob :: Database -> Int64 -> IO [Job]
 doGetRunningJob db ts = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
-  where sql = Utf8 $ "SELECT value FROM jobs WHERE sched_at<" `append` B.pack (show ts)
+  where sql = Utf8 $ "SELECT value FROM jobs WHERE state="
+                   `append` stateName Running
+                   `append` " AND sched_at<"
+                   `append` B.pack (show ts)
 
 doGetPendingJob :: Database -> FuncName -> Int64 -> Int -> IO [Job]
 doGetPendingJob db fn ts c =
@@ -277,9 +280,11 @@ bindFnAndJn fn (JobName jn) stmt = do
 
 mkFoldFunc :: (Job -> a -> a) -> ByteString -> a -> a
 mkFoldFunc f bs acc =
-  case decodeOrFail (fromStrict bs) of
+  case decodeOrFail (BL.fromStrict bs) of
     Left _            -> acc
-    Right (_, _, job) -> f job acc
+    Right (rest, _, job)
+      | BL.null rest -> f job acc
+      | otherwise    -> acc
 
 foldStmt :: (ByteString -> a -> a) -> a -> Statement -> IO a
 foldStmt f acc stmt = do
