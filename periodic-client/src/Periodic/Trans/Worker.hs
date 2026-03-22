@@ -28,8 +28,8 @@ import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
 import           Data.Binary                  (Binary)
-import           Data.Binary.Get              (getWord32be, runGet)
-import           Data.ByteString.Lazy         (fromStrict)
+import           Data.Binary.Get              (getWord32be, runGetOrFail)
+import qualified Data.ByteString.Lazy         as BL (fromStrict, null)
 import           Data.Int                     (Int64)
 import           Data.IOMap                   (IOMap)
 import qualified Data.IOMap                   as Map (delete, empty,
@@ -113,7 +113,10 @@ startWorkerT config m = do
     Conn.receive_
 
   let nid = case getClientType r of
-              Data v -> runGet getWord32be $ fromStrict v
+              Data v ->
+                case runGetOrFail getWord32be (BL.fromStrict v) of
+                  Right (rest, _, nidV) | BL.null rest -> nidV
+                  _                                    -> 0
               _      -> 0
 
   taskList <- Map.empty

@@ -28,11 +28,11 @@ module Periodic.Trans.Client
   ) where
 
 import           Control.Monad                (forever, void)
-import           Data.Binary                  (decode)
-import           Data.Binary.Get              (getWord32be, runGet)
+import           Data.Binary                  (decodeOrFail)
+import           Data.Binary.Get              (getWord32be, runGetOrFail)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (lines, split, unpack)
-import           Data.ByteString.Lazy         (fromStrict)
+import qualified Data.ByteString.Lazy         as BL (fromStrict, null)
 import           Data.List                    (transpose)
 import           Data.UnixTime
 import           Metro.Class                  (Transport, TransportConfig)
@@ -75,7 +75,10 @@ open config = do
     Conn.receive_
 
   let nid = case getClientType r of
-              Data v -> runGet getWord32be $ fromStrict v
+              Data v ->
+                case runGetOrFail getWord32be (BL.fromStrict v) of
+                  Right (rest, _, nidV) | BL.null rest -> nidV
+                  _                                    -> 0
               _      -> 0
 
   clientEnv <- initEnv1 mapEnv connEnv () (Nid nid) True sessionGen
@@ -167,7 +170,12 @@ load jobs = getResult False isSuccess <$> request Nothing (packetREQ (Load jobs)
 dump :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m [Job]
 dump = getResult [] getV <$> request Nothing (packetREQ Dump)
   where getV :: ServerCommand -> [Job]
-        getV (Data bs) = decode $ fromStrict bs
+        getV (Data bs) =
+          case decodeOrFail (BL.fromStrict bs) of
+            Right (rest, _, jobs)
+              | BL.null rest -> jobs
+              | otherwise    -> []
+            Left _ -> []
         getV _         = []
 
 shutdown :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m ()
