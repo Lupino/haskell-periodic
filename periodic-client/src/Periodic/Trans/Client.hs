@@ -55,6 +55,7 @@ import           Periodic.Types.Job
 import           Periodic.Types.ServerCommand
 import           System.IO.Unsafe             (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes       as T
+import           Text.Read                    (readMaybe)
 import           UnliftIO
 import           UnliftIO.Concurrent          (threadDelay)
 
@@ -119,13 +120,15 @@ formatTime [x]    = [formatUnixTimeLocal x]
 formatTime (x:xs) = x:formatTime xs
 
 formatUnixTimeLocal :: String -> String
-formatUnixTimeLocal =
-  B.unpack
-  . unsafePerformIO
-  . formatUnixTime "%Y-%m-%d %H:%M:%S"
-  . fromEpochTime
-  . fromIntegral
-  . read
+formatUnixTimeLocal s =
+  case readMaybe s of
+    Nothing -> s
+    Just v ->
+      B.unpack
+      $ unsafePerformIO
+      $ formatUnixTime "%Y-%m-%d %H:%M:%S"
+      $ fromEpochTime
+      $ fromIntegral (v :: Int)
 
 renderTable :: [String] -> [[String]] -> String
 renderTable header rows =
