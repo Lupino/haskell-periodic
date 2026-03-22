@@ -18,14 +18,13 @@ module Periodic.Types.Packet
   , recvRegPacket
   ) where
 
-import           Data.Binary             (Binary (..), decode, decodeOrFail,
-                                          encode)
+import           Data.Binary             (Binary (..), decodeOrFail, encode)
 import           Data.Binary.Get         (getByteString, getWord32be)
 import           Data.Binary.Put         (putByteString, putWord32be)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B (drop, empty, length)
 import           Data.ByteString.Builder (toLazyByteString, word32BE)
-import           Data.ByteString.Lazy    (fromStrict, toStrict)
+import qualified Data.ByteString.Lazy    as BL (fromStrict, null, toStrict)
 import           Metro.Class             (GetPacketId (..), RecvPacket (..),
                                           SendPacket (..), SetPacketId (..))
 import           Periodic.CRC32          (CRC32 (..), digest)
@@ -53,7 +52,7 @@ magicLength = 4
 
 discoverMagic :: Monad m => ByteString -> (Int -> m ByteString) -> m (Magic, ByteString)
 discoverMagic "\0REQ" _ = return (REQ, "\0REQ")
-discoverMagic "\0RES" _ = return (REQ, "\0RES")
+discoverMagic "\0RES" _ = return (RES, "\0RES")
 discoverMagic prev recv = do
   bs <- (prev <>) <$> recv 1
   if B.length bs > magicLength then discoverMagic (B.drop (B.length bs - magicLength) bs) recv
@@ -96,26 +95,31 @@ instance Binary a => Binary (Packet a) where
     Packet magic crc (Msgid pid) <$> get
   put (Packet magic _ (Msgid pid) body) = do
     put magic
-    putBS $ enc pid <> toStrict (encode body)
-    where enc = toStrict . toLazyByteString . word32BE
+    putBS $ enc pid <> BL.toStrict (encode body)
+    where enc = BL.toStrict . toLazyByteString . word32BE
 
 commonRecvPacket :: (MonadIO m, Binary pkt) => (pkt -> CRC32) -> (ByteString -> m ()) -> (Int -> m ByteString) -> m pkt
 commonRecvPacket f putBack recv = do
     (_, magicbs) <- discoverMagic B.empty recv
     hbs <- recv 4
     crcbs <- recv 4
-    case decode (fromStrict hbs) of
-      PacketLength len -> do
+    case decodeOrFail (BL.fromStrict hbs) of
+      Left (_, _, e0) -> do
+        putBack $ magicbs <> hbs <> crcbs
+        throwIO $ PacketDecodeError $ "Packet header: " <> e0
+      Right (_, _, PacketLength len) -> do
         bs <- recv len
         let putBackAndThrow e = do
-              putBack $ hbs <> crcbs <> bs
+              putBack $ magicbs <> hbs <> crcbs <> bs
               throwIO e
 
-        case decodeOrFail (fromStrict $ magicbs <> hbs <> crcbs <> bs) of
+        case decodeOrFail (BL.fromStrict $ magicbs <> hbs <> crcbs <> bs) of
           Left (_, _, e1)   -> putBackAndThrow $ PacketDecodeError $ "Packet: " <> e1
-          Right (_, _, pkt) ->
-            if digest bs == f pkt then return pkt
-                                  else putBackAndThrow CRCNotMatch
+          Right (rest, _, pkt) ->
+            if not (BL.null rest)
+              then putBackAndThrow $ PacketDecodeError "Packet: trailing bytes after decode"
+              else if digest bs == f pkt then return pkt
+                                         else putBackAndThrow CRCNotMatch
 
 recvRawPacket :: (MonadIO m, Binary a) => (ByteString -> m ()) -> (Int -> m ByteString) -> m (Packet a)
 recvRawPacket = commonRecvPacket packetCRC
@@ -162,7 +166,7 @@ instance Binary a => Binary (RegPacket a) where
     RegPacket magic crc <$> get
   put (RegPacket magic _ body) = do
     put magic
-    putBS $ toStrict (encode body)
+    putBS $ BL.toStrict (encode body)
 
 recvRegPacket :: (MonadIO m, Binary a) => (ByteString -> m ()) -> (Int -> m ByteString) -> m (RegPacket a)
 recvRegPacket = commonRecvPacket regCRC
