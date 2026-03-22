@@ -29,6 +29,7 @@ import           Periodic.Trans.ClientPool
 import           Periodic.Types            (FuncName (..), JobName (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitSuccess)
+import           Text.Read                 (readMaybe)
 
 
 data Options = Options
@@ -54,10 +55,10 @@ parseOptions :: [String] -> Options -> Options
 parseOptions []                          opt = opt
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host = x }
-parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = read x }
+parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = safeRead (poolSize opt) x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions (_:xs)                      opt = parseOptions xs opt
@@ -257,3 +258,6 @@ run clientEnv = do
   registerToolCallHandler server $ runClientPoolT clientEnv . toolCallHandler
 
   runServerWithSTDIO server
+
+safeRead :: Read a => a -> String -> a
+safeRead def s = fromMaybe def $ readMaybe s

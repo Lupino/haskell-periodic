@@ -44,6 +44,7 @@ import           System.Process            (CreateProcess (std_in, std_out),
                                             StdStream (CreatePipe), getPid,
                                             proc, readProcess, terminateProcess,
                                             waitForProcess, withCreateProcess)
+import           Text.Read                 (readMaybe)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel,
                                             newEmptyTMVarIO, newTQueueIO,
@@ -91,19 +92,19 @@ options t h = Options
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host      = x }
-parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = read x }
-parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = read x }
+parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = safeRead (thread opt) x }
+parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = safeRead (lockCount opt) x }
 parseOptions ("--lock-name":x:xs)        opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)          opt = parseOptions xs opt { notify = True }
 parseOptions ("--no-name":xs)            opt = parseOptions xs opt { useName = False }
 parseOptions ("--skip-fail":xs)          opt = parseOptions xs opt { skipFail = True }
-parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = read x }
-parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = read x }
+parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = safeRead (timeoutS opt) x }
+parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = safeRead (retrySecs opt) x }
 parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions []                          opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                         opt = (opt { showHelp = True }, "", "", [])
@@ -148,7 +149,7 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  t <- fmap read <$> lookupEnv "THREAD"
+  t <- fmap (safeRead 1) <$> lookupEnv "THREAD"
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 
@@ -180,23 +181,25 @@ doWork opts@Options{..} func cmd argv = do
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0
-parseMemStr [x] = read [x]
+parseMemStr [x] = safeRead 0 [x]
 parseMemStr str = floor $ go (init str) (last str)
   where go :: String -> Char -> Float
-        go num 'k' = read num * 1024
-        go num 'm' = read num * 1024 * 1024
-        go num 'g' = read num * 1024 * 1024 * 1024
-        go num 'K' = read num * 1024
-        go num 'M' = read num * 1024 * 1024
-        go num 'G' = read num * 1024 * 1024 * 1024
-        go num c   = read (num ++ [c])
+        go num 'k' = safeRead 0 num * 1024
+        go num 'm' = safeRead 0 num * 1024 * 1024
+        go num 'g' = safeRead 0 num * 1024 * 1024 * 1024
+        go num 'K' = safeRead 0 num * 1024
+        go num 'M' = safeRead 0 num * 1024 * 1024
+        go num 'G' = safeRead 0 num * 1024 * 1024 * 1024
+        go num c   = safeRead 0 (num ++ [c])
 
 parseMemLine :: String -> (Pid, Int64)
-parseMemLine str = (read x :: Pid, parseMemStr y)
-  where [x, y] = words str
+parseMemLine str =
+  case words str of
+    [x, y] -> (safeRead 0 x :: Pid, parseMemStr y)
+    _      -> (0, 0)
 
 parseMemMap :: String -> [(Pid, Int64)]
-parseMemMap = map parseMemLine . drop 1 . lines
+parseMemMap = filter ((> 0) . fst) . map parseMemLine . drop 1 . lines
 
 getMemMap :: IO [(Pid, Int64)]
 getMemMap = parseMemMap <$> readProcess "ps" ["-eo", "pid,rss"] ""
@@ -380,3 +383,5 @@ processPipeWorker Options{..} pipes = do
   IOMap.delete msgid pipeOut
 
   mapM_ cancel io
+safeRead :: Read a => a -> String -> a
+safeRead def s = fromMaybe def $ readMaybe s

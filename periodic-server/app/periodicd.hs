@@ -24,6 +24,7 @@ import           Periodic.Server.Persist.SQLite (useSQLite)
 import           System.Environment             (getArgs, lookupEnv)
 import           System.Exit                    (exitSuccess)
 import           System.Log                     (Priority (..))
+import           Text.Read                      (readMaybe)
 
 data Options = Options
   { host           :: String
@@ -61,13 +62,16 @@ parseOptions ("--path":x:xs)             opt = parseOptions xs opt { storePath  
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp      = True }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp      = True }
 parseOptions ("--hook":x:xs)             opt = parseOptions xs opt { hookHostPort  = x }
-parseOptions ("--log":x:xs)              opt = parseOptions xs opt { logLevel      = read x }
-parseOptions ("--max-cache-size":x:xs)   opt = parseOptions xs opt { maxCacheSize  = read x }
-parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSize  = read x }
-parseOptions ("--sched-task-size":x:xs)  opt = parseOptions xs opt { schedTaskSize = read x }
+parseOptions ("--log":x:xs)              opt = parseOptions xs opt { logLevel      = safeRead (logLevel opt) x }
+parseOptions ("--max-cache-size":x:xs)   opt = parseOptions xs opt { maxCacheSize  = safeRead (maxCacheSize opt) x }
+parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSize  = safeRead (pushTaskSize opt) x }
+parseOptions ("--sched-task-size":x:xs)  opt = parseOptions xs opt { schedTaskSize = safeRead (schedTaskSize opt) x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath = x }
 parseOptions (_:xs)                      opt = parseOptions xs opt
+
+safeRead :: Read a => a -> String -> a
+safeRead old = fromMaybe old . readMaybe
 
 printHelp :: IO ()
 printHelp = do

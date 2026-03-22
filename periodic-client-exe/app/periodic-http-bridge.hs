@@ -29,6 +29,7 @@ import           Periodic.Trans.ClientPool
 import           Periodic.Types.Job
 import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitSuccess)
+import           Text.Read                       (readMaybe)
 import qualified Web.Scotty                      as WS (status)
 import           Web.Scotty                      (ActionM, ScottyM, body,
                                                   captureParam, catch, get,
@@ -64,11 +65,11 @@ parseOptions []                          opt = opt
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host = x }
 parseOptions ("--http-host":x:xs)        opt = parseOptions xs opt { httpHost = x }
-parseOptions ("--http-port":x:xs)        opt = parseOptions xs opt { httpPort = read x }
-parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = read x }
+parseOptions ("--http-port":x:xs)        opt = parseOptions xs opt { httpPort = safeRead (httpPort opt) x }
+parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = safeRead (poolSize opt) x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions (_:xs)                      opt = parseOptions xs opt
@@ -192,3 +193,6 @@ statusHandler :: Transport tp => ClientPoolEnv tp -> ActionM ()
 statusHandler clientEnv = do
   r <- liftIO $ runClientPoolT clientEnv status
   raw $ LB.fromStrict r
+
+safeRead :: Read a => a -> String -> a
+safeRead def s = fromMaybe def $ readMaybe s

@@ -81,7 +81,7 @@ parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host       
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host           = x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = read x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
 parseOptions (x:xs)                      opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()
@@ -328,8 +328,7 @@ doSubmitJob (x:y:xs) = do
         t = getTimeout 0 xs
 
 safeRead :: Read a => a -> String -> a
-safeRead def "" = def
-safeRead def s  = fromMaybe def $ readMaybe s
+safeRead def s = fromMaybe def $ readMaybe s
 
 getWorkload :: [String] -> IO Workload
 getWorkload argv =
