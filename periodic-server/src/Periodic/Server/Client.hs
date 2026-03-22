@@ -170,7 +170,8 @@ handleSessionT = do
       fromConn Conn.close -- close client
     Just pkt ->
       case getPacketData pkt of
-        SC _   -> pure ()
+        SC Unknown -> send $ packetRES Unknown
+        SC _       -> pure ()
         CC cmd -> handleClientSessionT cmd
         WC cmd -> do
           env0 <- env
