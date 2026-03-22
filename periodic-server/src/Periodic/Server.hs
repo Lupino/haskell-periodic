@@ -127,15 +127,20 @@ startServer
 startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
   grabQueue <- newGrabQueue
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv0 -> do
-    (_ :: ClientType) <- getClientType <$> runConnT connEnv0 receive_
-    nid <- getEntropy 4
-    runConnT connEnv0 $ send (regPacketRES $ Data nid)
-    let nidV = Nid $! runGet getWord32be $ fromStrict nid
-    wFuncList  <- newTVarIO []
-    wJobQueue  <- IOMap.empty
-    wMsgidList <- newTVarIO []
-    pushAgent grabQueue wFuncList nidV wMsgidList
-    return $ Just (nidV, ClientConfig {..})
+    mClientType <- tryAny $ getClientType <$> runConnT connEnv0 receive_
+    case mClientType of
+      Left err -> do
+        errorM "Periodic.Server" $ "Client registration decode error: " ++ show err
+        pure Nothing
+      Right (_ :: ClientType) -> do
+        nid <- getEntropy 4
+        runConnT connEnv0 $ send (regPacketRES $ Data nid)
+        let nidV = Nid $! runGet getWord32be $ fromStrict nid
+        wFuncList  <- newTVarIO []
+        wJobQueue  <- IOMap.empty
+        wMsgidList <- newTVarIO []
+        pushAgent grabQueue wFuncList nidV wMsgidList
+        pure $ Just (nidV, ClientConfig {..})
 
   setDefaultSessionTimeout sEnv 60
   setKeepalive sEnv 120
