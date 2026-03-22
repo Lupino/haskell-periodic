@@ -46,12 +46,14 @@ import           System.Process            (CreateProcess (std_in, std_out),
                                             waitForProcess, withCreateProcess)
 import           Text.Read                 (readMaybe)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
-                                            async, atomically, cancel,
+                                            async, atomically, cancel, catchAny,
+                                            finally,
                                             newEmptyTMVarIO, newTQueueIO,
                                             newTVarIO, putTMVar, readTQueue,
-                                            readTVarIO, takeTMVar, tryPutTMVar,
-                                            tryTakeTMVar, writeTQueue,
-                                            writeTVar)
+                                            readTVarIO, retrySTM, takeTMVar,
+                                            tryIO, tryPutTMVar, tryReadTQueue,
+                                            tryTakeTMVar, writeTQueue, writeTVar)
+import qualified UnliftIO                  as U (timeout)
 
 
 data Options = Options
@@ -232,21 +234,23 @@ newPipe =
 
 runPipeOut :: PipeOut -> Handle -> Msgid -> IO ()
 runPipeOut pipeout outh msgid@(Msgid wid) = do
-  out <- B.hGetLine outh
-
-  if B.take mlen out == mwid then do
-    let dat = B.drop (mlen + 1) out
-    atomically $ do
-      mqueue <- IOMapS.lookup msgid pipeout
-      mapM_ (`writeTQueue` dat) mqueue
-    case B.take 8 dat of
-      "WORKDATA" -> do
+  eout <- tryIO $ B.hGetLine outh
+  case eout of
+    Left _ -> pure ()
+    Right out -> do
+      if B.take (mlen + 1) out == mwid <> " " then do
+        let dat = B.drop (mlen + 1) out
+        atomically $ do
+          mqueue <- IOMapS.lookup msgid pipeout
+          mapM_ (`writeTQueue` dat) mqueue
+        case B.take 8 dat of
+          "WORKDATA" -> do
+            runPipeOut pipeout outh msgid
+          _ -> pure ()
+      else do
+        B.putStrLn out
+        when (B.null out) $ threadDelay 10000 -- 10ms
         runPipeOut pipeout outh msgid
-      _ -> pure ()
-  else do
-    B.putStrLn out
-    when (B.null out) $ threadDelay 10000 -- 10ms
-    runPipeOut pipeout outh msgid
 
   where mwid = B.pack (show wid)
         mlen = B.length mwid
@@ -254,6 +258,7 @@ runPipeOut pipeout outh msgid@(Msgid wid) = do
 
 createPipeProcess :: Pipe -> Int64 -> String -> [String] -> IO ()
 createPipeProcess Pipe{..} maxMem cmd argv = do
+  atomically $ writeTVar pipeIO Nothing
   let cp = (proc cmd argv) {std_in = CreatePipe, std_out = CreatePipe}
       onError err = errorM "periodic-run-pipe" $ "Process Error: " ++ err
 
@@ -267,31 +272,40 @@ createPipeProcess Pipe{..} maxMem cmd argv = do
         terminateProcess ph
 
       (Just inh, Just outh) -> do
-        welcome <- B.hGetLine outh
-        infoM "periodic-run-pipe" $ "Pipe Runner Ready: " ++ B.unpack welcome
+        mWelcome <- U.timeout (10 * 1000000) (tryIO $ B.hGetLine outh)
+        case mWelcome of
+          Nothing -> do
+            onError "Runner startup timeout waiting for ready line"
+            terminateProcess ph
+          Just (Left _) -> do
+            onError "Runner failed before ready line was received"
+            terminateProcess ph
+          Just (Right welcome) -> do
+            infoM "periodic-run-pipe" $ "Pipe Runner Ready: " ++ B.unpack welcome
 
-        atomically $ writeTVar pipeIO $ Just ph
-        io <- async $ forever $ do
+            atomically $ writeTVar pipeIO $ Just ph
+            io <- async $ forever $ do
 
-          void $ atomically $ tryPutTMVar pipeInWait True
-          (msgid@(Msgid wid), bs) <- atomically $ takeTMVar pipeIn
+              void $ atomically $ tryPutTMVar pipeInWait True
+              (msgid@(Msgid wid), bs) <- atomically $ takeTMVar pipeIn
 
-          let mwid = B.pack (show wid)
+              let mwid = B.pack (show wid)
 
-          B.hPutStrLn inh (mwid <> " " <> bs)
-          hFlush inh
+              B.hPutStrLn inh (mwid <> " " <> bs)
+              hFlush inh
 
-          runPipeOut pipeOut outh msgid
+              runPipeOut pipeOut outh msgid
 
-        io1 <- checkPipeMemory ph onError maxMem
+            io1 <- checkPipeMemory ph onError maxMem
 
-        void $ waitForProcess ph
-        void $ atomically $ tryTakeTMVar pipeInWait
+            void $ waitForProcess ph
+            atomically $ writeTVar pipeIO Nothing
+            void $ atomically $ tryTakeTMVar pipeInWait
 
-        cancel io
-        mapM_ cancel io1
-        hClose outh
-        IOMap.modifyIOMap (const Map.empty) pipeOut
+            cancel io
+            mapM_ cancel io1
+            hClose outh
+            IOMap.modifyIOMap (const Map.empty) pipeOut
 
 
 createRunner :: TQueue Pipe -> Int64 -> String -> [String] -> IO (Async ())
@@ -299,7 +313,9 @@ createRunner pipes maxMem cmd argv = do
   pipe <- newPipe
   atomically $ writeTQueue pipes pipe
   async $ forever $ do
-    createPipeProcess pipe maxMem cmd argv
+    catchAny
+      (createPipeProcess pipe maxMem cmd argv)
+      (\e -> errorM "periodic-run-pipe" $ "Runner crashed: " ++ show e)
     threadDelay 1000000 -- 1s
 
 
@@ -345,7 +361,15 @@ workPipeOut pipeout msgid skipFail retrySecs = do
     mqueue <- IOMapS.lookup msgid pipeout
     case mqueue of
       Nothing    -> pure "WORKFAIL"
-      Just queue -> readTQueue queue
+      Just queue -> do
+        mOut <- tryReadTQueue queue
+        case mOut of
+          Just v  -> pure v
+          Nothing -> do
+            mqueue' <- IOMapS.lookup msgid pipeout
+            case mqueue' of
+              Nothing -> pure "WORKFAIL"
+              Just _  -> retrySTM
 
   case B.take 8 out of
     "WORKDATA" -> do
@@ -378,10 +402,9 @@ processPipeWorker Options{..} pipes = do
   tout <- if timeoutS > -1 then pure timeoutS else timeout
   io <- liftIO $ checkPipeTimeout pipeIO onError tout
 
-  workPipeOut pipeOut msgid skipFail retrySecs
+  workPipeOut pipeOut msgid skipFail retrySecs `finally` do
+    IOMap.delete msgid pipeOut
+    mapM_ cancel io
 
-  IOMap.delete msgid pipeOut
-
-  mapM_ cancel io
 safeRead :: Read a => a -> String -> a
 safeRead def s = fromMaybe def $ readMaybe s
