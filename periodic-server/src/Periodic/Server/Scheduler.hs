@@ -240,6 +240,7 @@ setConfigInt key val = do
   SchedEnv {..} <- ask
   case key of
     "timeout"        -> saveInt "timeout" val sTaskTimeout
+    "lock-timeout"   -> saveInt "lock-timeout" val sLockTimeout
     "assign-wait"    -> saveInt "assign-wait" val sAssignWait
     "keepalive"      -> saveInt "keepalive" val sKeepalive
     "max-batch-size" -> saveInt "max-batch-size" val sMaxBatchSize
