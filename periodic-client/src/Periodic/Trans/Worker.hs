@@ -255,7 +255,13 @@ processJob WorkerEnv{..} ((sid, _), job) = do
 
   nextGrab grabList
 
-  withEnv (Just job) $ do
+  let finishJob = do
+        atomically $ do
+          s <- readTVar tskSizeH
+          writeTVar tskSizeH (s - 1)
+        void $ sendGrab sid
+
+  withEnv (Just job) (do
     f <- func_
     task <- Map.lookup f taskList
     case task of
@@ -275,12 +281,7 @@ processJob WorkerEnv{..} ((sid, _), job) = do
                           , show e
                           ]
           void workFail
-
-  atomically $ do
-    s <- readTVar tskSizeH
-    writeTVar tskSizeH (s - 1)
-
-  void $ sendGrab sid
+    ) `finally` finishJob
 
 checkHealth
   :: (MonadUnliftIO m, Transport tp)
