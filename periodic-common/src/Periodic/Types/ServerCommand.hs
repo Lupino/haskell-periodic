@@ -45,7 +45,7 @@ instance Binary ServerCommand where
         pure $ Acquired $ v == 1
       29 -> pure NoWorker
       30 -> Data . toStrict <$> getRemainingLazyByteString
-      _  -> error $ "Error ServerCommand" ++ show tp
+      _  -> fail $ "Error ServerCommand " ++ show tp
 
   put Noop            = putWord8 0
   put (JobAssign job) = do
