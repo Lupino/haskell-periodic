@@ -65,6 +65,7 @@ data Options = Options
   , useName        :: Bool
   , showHelp       :: Bool
   , timeoutS       :: Int
+  , readyTimeoutS  :: Int
   , retrySecs      :: Int64
   , memLimit       :: Int64
   , skipFail       :: Bool
@@ -83,6 +84,7 @@ options t h = Options
   , useName        = True
   , showHelp       = False
   , timeoutS       = -1
+  , readyTimeoutS  = 10
   , retrySecs      = 0
   , memLimit       = 0
   , skipFail       = False
@@ -102,6 +104,7 @@ parseOptions ("--broadcast":xs)          opt = parseOptions xs opt { notify = Tr
 parseOptions ("--no-name":xs)            opt = parseOptions xs opt { useName = False }
 parseOptions ("--skip-fail":xs)          opt = parseOptions xs opt { skipFail = True }
 parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = safeRead (timeoutS opt) x }
+parseOptions ("--ready-timeout":x:xs)    opt = parseOptions xs opt { readyTimeoutS = safeRead (readyTimeoutS opt) x }
 parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = safeRead (retrySecs opt) x }
 parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
@@ -131,6 +134,7 @@ printHelp = do
   putStrLn ""
   putStrLn "Performance & Control:"
   putStrLn "      --timeout <INT>       Execution timeout (s). Use job default if not set"
+  putStrLn "      --ready-timeout <INT> Runner startup ready timeout (s). 0 disables timeout (Default: 10)"
   putStrLn "      --retry-secs <INT>    Delay before retrying a failed job (s)"
   putStrLn "      --skip-fail           Do not retry if the process fails"
   putStrLn "      --mem-limit <MEM>     Max memory per runner (e.g., 1024, 1m, 1g)"
@@ -171,7 +175,7 @@ main = do
 doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork opts@Options{..} func cmd argv = do
   pipes <- newTQueueIO
-  liftIO $ replicateM_ thread $ void $ createRunner pipes memLimit cmd argv
+  liftIO $ replicateM_ thread $ void $ createRunner pipes memLimit readyTimeoutS cmd argv
   let w = processPipeWorker opts pipes
   if notify then void $ broadcast func w
   else
@@ -256,8 +260,8 @@ runPipeOut pipeout outh msgid@(Msgid wid) = do
         mlen = B.length mwid
 
 
-createPipeProcess :: Pipe -> Int64 -> String -> [String] -> IO ()
-createPipeProcess Pipe{..} maxMem cmd argv = do
+createPipeProcess :: Pipe -> Int64 -> Int -> String -> [String] -> IO ()
+createPipeProcess Pipe{..} maxMem readyTout cmd argv = do
   atomically $ writeTVar pipeIO Nothing
   let cp = (proc cmd argv) {std_in = CreatePipe, std_out = CreatePipe}
       onError err = errorM "periodic-run-pipe" $ "Process Error: " ++ err
@@ -272,10 +276,12 @@ createPipeProcess Pipe{..} maxMem cmd argv = do
         terminateProcess ph
 
       (Just inh, Just outh) -> do
-        mWelcome <- U.timeout (10 * 1000000) (tryIO $ B.hGetLine outh)
+        mWelcome <- if readyTout <= 0
+          then Just <$> tryIO (B.hGetLine outh)
+          else U.timeout (readyTout * 1000000) (tryIO $ B.hGetLine outh)
         case mWelcome of
           Nothing -> do
-            onError "Runner startup timeout waiting for ready line"
+            onError $ "Runner startup timeout after " ++ show readyTout ++ "s waiting for ready line"
             terminateProcess ph
           Just (Left _) -> do
             onError "Runner failed before ready line was received"
@@ -308,13 +314,13 @@ createPipeProcess Pipe{..} maxMem cmd argv = do
             IOMap.modifyIOMap (const Map.empty) pipeOut
 
 
-createRunner :: TQueue Pipe -> Int64 -> String -> [String] -> IO (Async ())
-createRunner pipes maxMem cmd argv = do
+createRunner :: TQueue Pipe -> Int64 -> Int -> String -> [String] -> IO (Async ())
+createRunner pipes maxMem readyTout cmd argv = do
   pipe <- newPipe
   atomically $ writeTQueue pipes pipe
   async $ forever $ do
     catchAny
-      (createPipeProcess pipe maxMem cmd argv)
+      (createPipeProcess pipe maxMem readyTout cmd argv)
       (\e -> errorM "periodic-run-pipe" $ "Runner crashed: " ++ show e)
     threadDelay 1000000 -- 1s
 
