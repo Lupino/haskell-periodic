@@ -105,12 +105,12 @@ commonRecvPacket f putBack recv = do
     crcbs <- recv 4
     case decodeOrFail (BL.fromStrict hbs) of
       Left (_, _, e0) -> do
-        putBack $ magicbs <> hbs <> crcbs
+        putBack $ hbs <> crcbs
         throwIO $ PacketDecodeError $ "Packet header: " <> e0
       Right (_, _, PacketLength len) -> do
         bs <- recv len
         let putBackAndThrow e = do
-              putBack $ magicbs <> hbs <> crcbs <> bs
+              putBack $ hbs <> crcbs <> bs
               throwIO e
 
         case decodeOrFail (BL.fromStrict $ magicbs <> hbs <> crcbs <> bs) of
