@@ -303,7 +303,10 @@ doConfig ["get", k] = do
 doConfig ("get":_:_) = liftIO printConfigGetHelp
 doConfig ["set"] = liftIO printConfigSetHelp
 doConfig ["set", _] = liftIO printConfigSetHelp
-doConfig ["set", k, v] = void $ configSet k (read v)
+doConfig ["set", k, v] =
+  case readMaybe v of
+    Nothing -> liftIO printConfigSetHelp
+    Just v' -> void $ configSet k v'
 doConfig ("set":_:_:_) = liftIO printConfigSetHelp
 doConfig _ = liftIO printConfigHelp
 
