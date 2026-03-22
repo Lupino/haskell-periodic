@@ -15,7 +15,7 @@ instance Binary ClientType where
     case tp of
       1 -> pure TypeClient
       2 -> pure TypeWorker
-      _ -> error $ "Error ClientType " ++ show tp
+      _ -> fail $ "Error ClientType " ++ show tp
 
   put TypeClient = putWord8 1
   put TypeWorker = putWord8 2

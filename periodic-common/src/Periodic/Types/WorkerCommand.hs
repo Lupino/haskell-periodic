@@ -60,7 +60,7 @@ instance Binary WorkerCommand where
         tn <- get
         WorkData tn . toStrict <$> getRemainingLazyByteString
       33 -> pure JobAssigned
-      _ -> error $ "Error WorkerCommand " ++ show tp
+      _ -> fail $ "Error WorkerCommand " ++ show tp
 
   put GrabJob = putWord8 1
   put (SchedLater jh later step) = do

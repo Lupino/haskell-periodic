@@ -44,7 +44,7 @@ instance Binary ClientCommand where
       19 -> Load <$> get
       25 -> RunJob <$> get
       31 -> RecvData <$> get
-      _  -> error $ "Error ClientCommand " ++ show tp
+      _  -> fail $ "Error ClientCommand " ++ show tp
 
   put (SubmitJob job) = do
     putWord8 13
