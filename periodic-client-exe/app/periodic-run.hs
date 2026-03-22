@@ -10,7 +10,7 @@ import           Control.DeepSeq            (rnf)
 import           Control.Monad              (forever, unless, void, when)
 import           Control.Monad.IO.Class     (liftIO)
 import           Data.ByteString            (ByteString)
-import qualified Data.ByteString.Char8      as B (drop, empty, hGetLine, null,
+import qualified Data.ByteString.Char8      as B (drop, empty, hGetLine,
                                                   pack, take)
 import qualified Data.ByteString.Lazy       as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
@@ -213,21 +213,15 @@ finishProcess onError t mem ph = do
   return retval
 
 
-runPipeOut :: TVar (Maybe Bool) -> TQueue ByteString -> Handle -> IO ()
+runPipeOut :: TVar Bool -> TQueue ByteString -> Handle -> IO ()
 runPipeOut waiter queue outh = do
-  out <- B.hGetLine outh
-  atomically $ writeTQueue queue out
+  eout <- tryIO $ B.hGetLine outh
+  case eout of
+    Left _ -> atomically $ writeTVar waiter True
+    Right out -> do
+      atomically $ writeTQueue queue out
 
-  when (B.null out) $ do
-    atomically $ do
-      w <- readTVar waiter
-      case w of
-        Nothing -> pure ()
-        Just _  -> writeTVar waiter $ Just True
-
-    threadDelay 10000 -- 10ms
-
-  runPipeOut waiter queue outh
+      runPipeOut waiter queue outh
 
 
 workPipeOut :: Transport tp => TQueue ByteString -> TVar ByteString -> JobT tp IO ()
@@ -275,15 +269,12 @@ processWorker Options{..} cmd argv = do
       (Just inh, Just outh) -> do
         if useWorkData then do
           writeIn inh
-          waiter <- newTVarIO Nothing
+          waiter <- newTVarIO False
           io <- async $ runPipeOut waiter queue outh
           code <- finishProcess onError tout memLimit ph
-          atomically $ writeTVar waiter (Just False)
           atomically $ do
-            mv <- readTVar waiter
-            case mv of
-              Nothing -> pure ()
-              Just v  -> unless v retrySTM
+            finished <- readTVar waiter
+            unless finished retrySTM
 
           cancel io
           hClose outh
