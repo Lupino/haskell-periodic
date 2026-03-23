@@ -72,12 +72,16 @@ type ClientT = BaseClientT ()
 runClientT :: (MonadUnliftIO m, Transport tp) => ClientEnv tp -> ClientT tp m a -> m a
 runClientT env@ClientEnv {..} m = do
   cenv <- readTVarIO clientEnvVar
-  r <- tryAny (runNodeT cenv m)
-  case r of
+  firstTry <- tryAny (runNodeT cenv m)
+  case firstTry of
     Right v  -> pure v
     Left err -> do
       reconnectClientEnv env
-      throwIO err
+      cenv' <- readTVarIO clientEnvVar
+      secondTry <- tryAny (runNodeT cenv' m)
+      case secondTry of
+        Right v'   -> pure v'
+        Left _err' -> throwIO err
 
 open
   :: (MonadUnliftIO m, Transport tp)
