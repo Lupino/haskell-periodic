@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module Periodic.Trans.Client
   ( ClientT
@@ -6,6 +7,7 @@ module Periodic.Trans.Client
   , open
   , close
   , runClientT
+  , closeClientEnv
 
   , ping
   , submitJob_
@@ -27,7 +29,7 @@ module Periodic.Trans.Client
   , formatStatus
   ) where
 
-import           Control.Monad                (forever, void)
+import           Control.Monad                (unless, void)
 import           Data.Binary                  (decodeOrFail)
 import           Data.Binary.Get              (getWord32be, runGetOrFail)
 import           Data.ByteString              (ByteString)
@@ -57,18 +59,66 @@ import           System.IO.Unsafe             (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes       as T
 import           Text.Read                    (readMaybe)
 import           UnliftIO
-import           UnliftIO.Concurrent          (threadDelay)
+import           UnliftIO.STM                 (TVar, atomically, newTVarIO,
+                                               readTVarIO, writeTVar)
 
-type ClientEnv = BaseClientEnv ()
+data ClientEnv tp = ClientEnv
+  { clientConfig        :: TransportConfig tp
+  , clientEnvVar        :: TVar (BaseClientEnv () tp)
+  , clientReconnectLock :: MVar ()
+  }
 type ClientT = BaseClientT ()
 
-runClientT :: Monad m => ClientEnv tp -> ClientT tp m a -> m a
-runClientT = runNodeT
+runClientT :: (MonadUnliftIO m, Transport tp) => ClientEnv tp -> ClientT tp m a -> m a
+runClientT env@ClientEnv {..} m = do
+  cenv <- readTVarIO clientEnvVar
+  r <- tryAny (runNodeT cenv m)
+  case r of
+    Right v  -> pure v
+    Left err -> do
+      reconnectClientEnv env
+      throwIO err
 
 open
   :: (MonadUnliftIO m, Transport tp)
   => TransportConfig tp -> m (ClientEnv tp)
 open config = do
+  cenv <- openClientEnv config
+  cenvVar <- newTVarIO cenv
+  reconnectLock <- newMVar ()
+  pure $ ClientEnv
+    { clientConfig = config
+    , clientEnvVar = cenvVar
+    , clientReconnectLock = reconnectLock
+    }
+
+closeClientEnv :: Transport tp => ClientEnv tp -> IO ()
+closeClientEnv ClientEnv {..} = do
+  cenv <- readTVarIO clientEnvVar
+  void $ tryAny (runNodeT cenv close)
+
+reconnectClientEnv :: (MonadUnliftIO m, Transport tp) => ClientEnv tp -> m ()
+reconnectClientEnv ClientEnv {..} = withMVar clientReconnectLock $ \_ -> do
+  cenv <- readTVarIO clientEnvVar
+  healthy <- isClientHealthy cenv
+  unless healthy $ do
+    void $ tryAny (runNodeT cenv close)
+    cenv' <- openClientEnv clientConfig
+    atomically $ writeTVar clientEnvVar cenv'
+
+isClientHealthy
+  :: (MonadUnliftIO m, Transport tp)
+  => BaseClientEnv () tp -> m Bool
+isClientHealthy cenv = do
+  ret <- tryAny (timeout 3000000 (runNodeT cenv ping))
+  pure $ case ret of
+    Right (Just True) -> True
+    _                 -> False
+
+openClientEnv
+  :: (MonadUnliftIO m, Transport tp)
+  => TransportConfig tp -> m (BaseClientEnv () tp)
+openClientEnv config = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
     Conn.send $ regPacketREQ TypeClient
@@ -81,16 +131,12 @@ open config = do
                   _                                    -> 0
               _      -> 0
 
-  clientEnv <- initEnv1 mapEnv connEnv () (Nid nid) True sessionGen
-  setDefaultSessionTimeout1 clientEnv 100
+  cenv <- initEnv1 mapEnv connEnv () (Nid nid) True sessionGen
+  setDefaultSessionTimeout1 cenv 100
 
-  runClientT clientEnv $ do
-    void . async $ forever $ do
-      threadDelay $ 100 * 1000 * 1000
-      checkHealth
-
+  runNodeT cenv $
     void $ async $ startNodeT defaultSessionHandler
-  return clientEnv
+  pure cenv
 
   where mapEnv =
           setNodeMode Multi

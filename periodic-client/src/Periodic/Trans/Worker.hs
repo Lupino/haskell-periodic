@@ -23,7 +23,7 @@ module Periodic.Trans.Worker
   ) where
 
 
-import           Control.Monad                (forever, replicateM, void, when)
+import           Control.Monad                (forever, replicateM, unless, void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
@@ -106,7 +106,21 @@ runWorkerT workerEnv = flip runReaderT workerEnv . unWorkerT
 startWorkerT
   :: (MonadUnliftIO m, Transport tp)
   => TransportConfig tp -> WorkerT tp m () -> m ()
-startWorkerT config m = do
+startWorkerT config m = forever $ do
+  e <- tryAny (startWorkerT_ config m)
+  case e of
+    Left err -> liftIO $ errorM "Periodic.Trans.Worker"
+      $ "Worker disconnected, retrying in 3s. Error: " ++ show err
+    Right _ ->
+      liftIO $ errorM "Periodic.Trans.Worker" "Worker disconnected, retrying in 3s."
+  threadDelay reconnectDelayUs
+
+  where reconnectDelayUs = 3 * 1000 * 1000
+
+startWorkerT_
+  :: (MonadUnliftIO m, Transport tp)
+  => TransportConfig tp -> WorkerT tp m () -> m ()
+startWorkerT_ config m = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
     Conn.send $ regPacketREQ TypeWorker
@@ -135,7 +149,7 @@ startWorkerT config m = do
     void $ async $ startNodeT_ (filterPacketM jobList) defaultSessionHandler
     runWorkerT wEnv $ do
       void . async $ forever $ do
-        threadDelay $ 100 * 1000 * 1000
+        threadDelay healthCheckIntervalUs
         checkHealth
       void . async . runJobT $ processJobQueue wEnv
       m
@@ -143,6 +157,7 @@ startWorkerT config m = do
   where mapEnv =
           setNodeMode Multi
           . setSessionMode SingleAction
+        healthCheckIntervalUs = 5 * 1000 * 1000
 
 filterPacketM :: MonadIO m => JobList -> Packet ServerCommand -> m Bool
 filterPacketM jl rpkt = do
@@ -218,7 +233,9 @@ nextGrab gl = do
     Just (msgid, ts) -> do
       now <- getEpochTime
       when (ts + 300 < now) $ do
-        void $ sendGrab msgid
+        ok <- sendGrab msgid
+        unless ok $
+          throwString "sendGrab failed: server connection may be broken"
         Map.insert msgid now gl
 
   where foldFunc :: Msgid -> Int64 -> Maybe (Msgid, Int64) -> Maybe (Msgid, Int64)
