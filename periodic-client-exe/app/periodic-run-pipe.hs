@@ -45,15 +45,15 @@ import           System.Process            (CreateProcess (std_in, std_out),
                                             proc, readProcess, terminateProcess,
                                             waitForProcess, withCreateProcess)
 import           Text.Read                 (readMaybe)
+import qualified UnliftIO                  as U (timeout)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel, catchAny,
-                                            finally,
-                                            newEmptyTMVarIO, newTQueueIO,
-                                            newTVarIO, putTMVar, readTQueue,
-                                            readTVarIO, retrySTM, takeTMVar,
-                                            tryIO, tryPutTMVar, tryReadTQueue,
-                                            tryTakeTMVar, writeTQueue, writeTVar)
-import qualified UnliftIO                  as U (timeout)
+                                            finally, newEmptyTMVarIO,
+                                            newTQueueIO, newTVarIO, putTMVar,
+                                            readTQueue, readTVarIO, retrySTM,
+                                            takeTMVar, tryIO, tryPutTMVar,
+                                            tryReadTQueue, tryTakeTMVar,
+                                            writeTQueue, writeTVar)
 
 
 data Options = Options
@@ -166,17 +166,18 @@ main = do
     printHelp
 
   setupLog INFO
+
+  pipes <- newTQueueIO
+  liftIO $ replicateM_ thread $ createRunner pipes memLimit readyTimeoutS cmd argv
+
   case rsaPrivatePath of
-    "" -> startWorkerT (socket host) $ doWork opts func cmd argv
+    "" -> startWorkerT (socket host) $ doWork pipes opts func
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      startWorkerT (genTP $ socket host) $ doWork opts func cmd argv
+      startWorkerT (genTP $ socket host) $ doWork pipes opts func
 
-doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
-doWork opts@Options{..} func cmd argv = do
-  pipes <- newTQueueIO
-  liftIO $ replicateM_ thread $ void $ createRunner pipes memLimit readyTimeoutS cmd argv
-  let w = processPipeWorker opts pipes
+doWork :: Transport tp => TQueue Pipe -> Options -> FuncName -> WorkerT tp IO ()
+doWork pipes opts@Options{..} func = do
   if notify then void $ broadcast func w
   else
     case lockName of
@@ -184,6 +185,7 @@ doWork opts@Options{..} func cmd argv = do
       Just n  -> void $ addFunc func $ withLock_ n lockCount w
   liftIO $ putStrLn "Pipe Worker started."
   work thread
+  where w = processPipeWorker opts pipes
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0
