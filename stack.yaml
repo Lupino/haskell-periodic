@@ -62,7 +62,7 @@ extra-deps:
   - metro-socket
   - metro-transport-crypto
 - git: https://github.com/Lupino/yuntan-common.git
-  commit: 45d09076d78602276d85ec97bd5ad26ad4f2855f
+  commit: 3ca2761a7653b81a38a8669aedcbe790219391ec
   subdirs:
   - psql-utils
 
