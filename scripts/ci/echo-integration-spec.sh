@@ -116,6 +116,89 @@ EOF
   cleanup
 }
 
+run_rsa_modes_suite() {
+  rm -f /tmp/periodic.sock
+  rm -f periodic-rsa-test_*.pem
+
+  stack exec periodic -- keygen periodic-rsa-test
+  RSA_PRIVATE_KEY="periodic-rsa-test_private_key.pem"
+  RSA_PUBLIC_KEY="periodic-rsa-test_public_key.pem"
+
+  stack exec periodicd -- \
+    --rsa-private-path "$RSA_PRIVATE_KEY" \
+    --rsa-public-path "$RSA_PUBLIC_KEY" \
+    > periodicd-rsa.log 2>&1 &
+  SERVER_PID=$!
+  WORKER_PID=""
+
+  stop_worker() {
+    if [ -n "$WORKER_PID" ]; then
+      kill "$WORKER_PID" 2>/dev/null || true
+      wait "$WORKER_PID" 2>/dev/null || true
+      WORKER_PID=""
+    fi
+  }
+
+  cleanup() {
+    stop_worker
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+    rm -f /tmp/periodic.sock
+  }
+  trap cleanup RETURN
+
+  for i in $(seq 1 20); do
+    if stack exec periodic -- \
+      --rsa-mode AES \
+      --rsa-private-path "$RSA_PRIVATE_KEY" \
+      --rsa-public-path "$RSA_PUBLIC_KEY" \
+      ping >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  stack exec periodic -- \
+    --rsa-mode AES \
+    --rsa-private-path "$RSA_PRIVATE_KEY" \
+    --rsa-public-path "$RSA_PUBLIC_KEY" \
+    ping >/dev/null
+
+  for mode in Plain RSA AES; do
+    mode_tag="$(echo "$mode" | tr '[:upper:]' '[:lower:]')"
+    log_file="periodic-run-rsa-${mode_tag}.log"
+    func_name="echo-rsa-func-${mode_tag}"
+    job_name="echo-rsa-job-${mode_tag}"
+
+    stack exec periodic-run -- \
+      --data \
+      --rsa-mode "$mode" \
+      --rsa-private-path "$RSA_PRIVATE_KEY" \
+      --rsa-public-path "$RSA_PUBLIC_KEY" \
+      "$func_name" echo > "$log_file" 2>&1 &
+    WORKER_PID=$!
+
+    for i in $(seq 1 20); do
+      if grep -F "Worker started." "$log_file" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+
+    OUTPUT="$(stack exec periodic -- \
+      --rsa-mode "$mode" \
+      --rsa-private-path "$RSA_PRIVATE_KEY" \
+      --rsa-public-path "$RSA_PUBLIC_KEY" \
+      run "$func_name" "$job_name")"
+    echo "$OUTPUT"
+    echo "$OUTPUT" | grep -F "Result: ${job_name}"
+
+    stop_worker
+  done
+
+  trap - RETURN
+  cleanup
+}
+
 run_suite ":memory:" "memory" "periodic-memory.sqlite"
 run_suite "file://periodic-sqlite.sqlite" "sqlite" "periodic-sqlite.sqlite"
 
@@ -124,3 +207,5 @@ if [ -n "${PERIODIC_TEST_POSTGRES_URI:-}" ]; then
 else
   echo "Skipping postgres suite: PERIODIC_TEST_POSTGRES_URI is not set"
 fi
+
+run_rsa_modes_suite

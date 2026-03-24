@@ -64,5 +64,5 @@ jobs:
 
       - name: Stack echo integration tests
         env:
-          PERIODIC_TEST_POSTGRES_URI: postgres://postgres:postgres@127.0.0.1:5432/periodic_test
+          PERIODIC_TEST_POSTGRES_URI: postgres://host='127.0.0.1' port=5432 dbname='periodic_test' user='postgres' password='postgres'
         run: bash ./scripts/ci/echo-integration-spec.sh
