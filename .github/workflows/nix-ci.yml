@@ -3,27 +3,80 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
+    paths:
+      - '.github/workflows/nix-ci.yml'
+      - 'default.nix'
+      - 'shell.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'cabal.project'
+      - 'cabal.project.freeze'
+      - 'stack.yaml'
+      - 'stack.yaml.lock'
+      - 'Makefile'
+      - 'periodic-*/**'
   pull_request:
     branches: [ main, develop ]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/nix-ci.yml'
+      - 'default.nix'
+      - 'shell.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'cabal.project'
+      - 'cabal.project.freeze'
+      - 'stack.yaml'
+      - 'stack.yaml.lock'
+      - 'Makefile'
+      - 'periodic-*/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  quick-build:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v31
-      with:
-        nix_path: nixpkgs=channel:nixos-unstable
+      uses: DeterminateSystems/nix-installer-action@v21
 
-    - name: Setup Cachix
-      uses: cachix/cachix-action@v17
+    - name: Setup Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v13
       with:
-        name: lupino  # Replace with your Cachix cache name
-        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'  # Optional: for private cache
+        use-flakehub: disabled
+        use-gha-cache: enabled
 
-    - name: Build with Nix
+    - name: Fast build (non-static, native)
+      run: |
+        nix-build -A hsPkgs.periodic-client-exe.components.exes.periodic --argstr compiler-nix-name ghc9141
+        nix-build -A hsPkgs.periodic-server.components.exes.periodicd --argstr compiler-nix-name ghc9141
+
+  static-package:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [quick-build]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v21
+
+    - name: Setup Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v13
+      with:
+        use-flakehub: disabled
+        use-gha-cache: enabled
+
+    - name: Full static package build (release-like)
       run: make
