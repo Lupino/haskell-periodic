@@ -94,9 +94,13 @@ printHelp = do
   putStrLn "  -p, --path <URI>      Backend storage URI [$PERIODIC_PATH]"
   putStrLn "                        - :memory: (In-memory storage)"
   putStrLn "                        - file://data.sqlite (SQLite)"
-  putStrLn "                        - postgres://user:pass@host:port/db (PostgreSQL)"
+#ifndef mingw32_HOST_OS
+  putStrLn "                        - postgres://host='127.0.0.1' port=5432 dbname='periodicd' user='postgres' password='' prefix='' (PostgreSQL)"
+#endif
   putStrLn "                        - cache+file://... (SQLite with memory cache)"
+#ifndef mingw32_HOST_OS
   putStrLn "                        - cache+postgres://... (PostgreSQL with memory cache)"
+#endif
 #ifdef mingw32_HOST_OS
   putStrLn "                        * Windows build does not include PostgreSQL support"
 #endif
