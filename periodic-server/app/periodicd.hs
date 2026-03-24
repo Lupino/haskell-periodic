@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -19,10 +20,16 @@ import           Periodic.Server.Hook           (genHook)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
 import           Periodic.Server.Persist.Cache  (useCache)
 import           Periodic.Server.Persist.Memory (useMemory)
+#ifndef mingw32_HOST_OS
 import           Periodic.Server.Persist.PSQL   (usePSQL)
+#endif
 import           Periodic.Server.Persist.SQLite (useSQLite)
 import           System.Environment             (getArgs, lookupEnv)
+#ifdef mingw32_HOST_OS
+import           System.Exit                    (exitFailure, exitSuccess)
+#else
 import           System.Exit                    (exitSuccess)
+#endif
 import           System.Log                     (Priority (..))
 import           Text.Read                      (readMaybe)
 
@@ -90,6 +97,9 @@ printHelp = do
   putStrLn "                        - postgres://user:pass@host:port/db (PostgreSQL)"
   putStrLn "                        - cache+file://... (SQLite with memory cache)"
   putStrLn "                        - cache+postgres://... (PostgreSQL with memory cache)"
+#ifdef mingw32_HOST_OS
+  putStrLn "                        * Windows build does not include PostgreSQL support"
+#endif
   putStrLn ""
   putStrLn "Event Hook & Logging:"
   putStrLn "      --hook <STR|URI>  Metrics and event notification hook (Default: null)"
@@ -125,16 +135,26 @@ main = do
 
   setupLog logLevel
 
+#ifndef mingw32_HOST_OS
   if take 11 storePath == "postgres://" then
     run opts (usePSQL $ drop 11 storePath)
+#else
+  if take 11 storePath == "postgres://" then
+    failPostgreSQLOnWindows
+#endif
   else if take 7 storePath == "file://" then
     run opts (useSQLite $ drop 7 storePath)
   else if storePath == ":memory:" then
     run opts useMemory
   else if take 13 storePath == "cache+file://" then
     run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath)
+#ifndef mingw32_HOST_OS
   else if take 17 storePath == "cache+postgres://" then
     run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath)
+#else
+  else if take 17 storePath == "cache+postgres://" then
+    failPostgreSQLOnWindows
+#endif
   else
     run opts (useSQLite storePath)
 
@@ -146,3 +166,11 @@ run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath, rs
   hook <- genHook hookHostPort
   genTP <- RSA.configServer rsaPrivatePath rsaPublicPath
   startServer config genTP (socketServer host) hook pushTaskSize schedTaskSize
+
+#ifdef mingw32_HOST_OS
+failPostgreSQLOnWindows :: IO ()
+failPostgreSQLOnWindows = do
+  putStrLn "PostgreSQL backend is not available in this Windows build."
+  putStrLn "Please use :memory:, file://..., or cache+file://..."
+  exitFailure
+#endif

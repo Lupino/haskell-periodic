@@ -21,7 +21,6 @@ library
                      , Periodic.Server.FuncStat
                      , Periodic.Server.Persist
                      , Periodic.Server.Persist.SQLite
-                     , Periodic.Server.Persist.PSQL
                      , Periodic.Server.Persist.Memory
                      , Periodic.Server.Persist.Cache
                      , Periodic.Server.Client
@@ -51,9 +50,12 @@ library
                      , base64-bytestring
 
                      , metro-socket
-                     , psql-utils
                      , unix-time
                      , monadlist
+
+  if !os(windows)
+    exposed-modules:   Periodic.Server.Persist.PSQL
+    build-depends:     psql-utils
 
   default-language:    Haskell2010
 

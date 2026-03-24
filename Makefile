@@ -23,10 +23,7 @@ endif
 endif
 endif
 
-OUT = periodic periodic-mcp periodic-run periodic-run-pipe periodic-http-bridge
-ifneq ($(PLATFORM),mingwW64)
-OUT += periodicd
-endif
+OUT = periodic periodic-mcp periodic-run periodic-run-pipe periodic-http-bridge periodicd
 
 BUNDLE_BIN = dist/bundle/bin
 BUNDLE_LIB = dist/bundle/lib/periodic
