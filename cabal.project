@@ -23,7 +23,7 @@ source-repository-package
 source-repository-package
     type: git
     location: https://github.com/Lupino/yuntan-common.git
-    tag: 45d09076d78602276d85ec97bd5ad26ad4f2855f
+    tag: 3ca2761a7653b81a38a8669aedcbe790219391ec
     subdir: psql-utils
 
 source-repository-package
