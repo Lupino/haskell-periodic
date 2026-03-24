@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
     paths:
     - '.github/workflows/stack-ci.yml'
+    - 'scripts/ci/**'
     - 'stack.yaml'
     - 'stack.yaml.lock'
     - 'periodic-*/**'
@@ -13,6 +14,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
     - '.github/workflows/stack-ci.yml'
+    - 'scripts/ci/**'
     - 'stack.yaml'
     - 'stack.yaml.lock'
     - 'periodic-*/**'
@@ -20,6 +22,20 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: periodic_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d periodic_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -47,105 +63,6 @@ jobs:
         run: stack --no-terminal test
 
       - name: Stack echo integration tests
-        run: |
-          set -euo pipefail
-
-          cat > echo-pipe.sh <<'EOF'
-          #!/usr/bin/env bash
-          echo ready
-          while read -r msgid arg; do
-            echo "${arg}" >> pipe-events.log
-            echo "${msgid} ${arg}"
-          done
-          EOF
-          chmod +x echo-pipe.sh
-          : > pipe-events.log
-
-          stack exec periodicd > periodicd.log 2>&1 &
-          SERVER_PID=$!
-          WORKER_PID=""
-
-          stop_worker() {
-            if [ -n "$WORKER_PID" ]; then
-              kill "$WORKER_PID" 2>/dev/null || true
-              wait "$WORKER_PID" 2>/dev/null || true
-              WORKER_PID=""
-            fi
-          }
-
-          cleanup() {
-            stop_worker
-            kill "$SERVER_PID" 2>/dev/null || true
-            wait "$SERVER_PID" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          for i in $(seq 1 20); do
-            if stack exec periodic -- ping >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-          stack exec periodic -- ping >/dev/null
-
-          # Test 1: run action with periodic-run --data
-          stack exec periodic-run -- --data echo-run-func echo > periodic-run.log 2>&1 &
-          WORKER_PID=$!
-          for i in $(seq 1 20); do
-            if grep -F "Worker started." periodic-run.log >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          OUTPUT="$(stack exec periodic -- run echo-run-func echo)"
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -F "Result: echo"
-          stop_worker
-
-          # Test 2: submit action with periodic-run
-          stack exec periodic-run -- echo-submit-func echo > periodic-run.log 2>&1 &
-          WORKER_PID=$!
-          for i in $(seq 1 20); do
-            if grep -F "Worker started." periodic-run.log >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          stack exec periodic -- submit echo-submit-func echo-submit
-
-          for i in $(seq 1 20); do
-            if grep -Fx "echo-submit" periodic-run.log >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-          grep -Fx "echo-submit" periodic-run.log
-          stop_worker
-
-          # Test 3: run + submit actions with periodic-run-pipe
-          stack exec periodic-run-pipe -- echo-pipe-func ./echo-pipe.sh > periodic-run-pipe.log 2>&1 &
-          WORKER_PID=$!
-
-          for i in $(seq 1 20); do
-            if grep -F "Pipe Worker started." periodic-run-pipe.log >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          OUTPUT="$(stack exec periodic -- run echo-pipe-func echo-pipe-run)"
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -F "Result: echo-pipe-run"
-
-          stack exec periodic -- submit echo-pipe-func echo-pipe-submit
-
-          for i in $(seq 1 20); do
-            if grep -Fx "echo-pipe-submit" pipe-events.log >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          grep -Fx "echo-pipe-submit" pipe-events.log
+        env:
+          PERIODIC_TEST_POSTGRES_URI: postgres://postgres:postgres@127.0.0.1:5432/periodic_test
+        run: bash ./scripts/ci/echo-integration-spec.sh
