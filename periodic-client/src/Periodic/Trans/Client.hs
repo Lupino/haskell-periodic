@@ -69,6 +69,10 @@ type ClientT = BaseClientT ()
 
 runClientT :: (MonadUnliftIO m, Transport tp) => ClientEnv tp -> ClientT tp m a -> m a
 runClientT env@ClientEnv {..} m = do
+  -- The pooled client may be silently disconnected while idle.
+  -- Reconnect proactively before running a request so callers do not
+  -- keep receiving non-exception failures from a stale connection.
+  reconnectClientEnv env
   cenv <- readTVarIO clientEnvVar
   firstTry <- tryAny (runNodeT cenv m)
   case firstTry of
