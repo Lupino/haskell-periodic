@@ -59,8 +59,6 @@ import           System.IO.Unsafe             (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes       as T
 import           Text.Read                    (readMaybe)
 import           UnliftIO
-import           UnliftIO.STM                 (TVar, atomically, newTVarIO,
-                                               readTVarIO, writeTVar)
 
 data ClientEnv tp = ClientEnv
   { clientConfig        :: TransportConfig tp
