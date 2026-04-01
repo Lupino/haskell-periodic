@@ -8,7 +8,7 @@ module Main
 
 
 import           Control.Concurrent        (threadDelay)
-import           Control.Monad             (forever, void, when)
+import           Control.Monad             (forever, unless, void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetLine, hPutStrLn,
@@ -61,10 +61,10 @@ import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             finally, newEmptyTMVarIO,
                                             newTQueueIO, newTVarIO, putTMVar,
                                             readTQueue, readTVar, readTVarIO,
-                                            retrySTM, takeTMVar, tryIO,
-                                            tryPutTMVar, tryReadTQueue,
-                                            tryTakeTMVar,
-                                            writeTQueue, writeTVar)
+                                            retrySTM, takeTMVar, throwString,
+                                            tryIO, tryPutTMVar, tryReadTQueue,
+                                            tryTakeTMVar, writeTQueue,
+                                            writeTVar)
 
 
 data Options = Options
@@ -180,6 +180,8 @@ main = do
 
   shuttingDown <- newTVarIO False
 
+  installShutdownSignalHandlers "periodic-run-pipe" shuttingDown
+
   pipes <- newTQueueIO
   runners <- liftIO $ mapM (\_ -> createRunner pipes memLimit readyTimeoutS cmd argv) [1 .. thread]
 
@@ -191,13 +193,15 @@ main = do
 
 doWork :: Transport tp => TVar Bool -> TQueue Pipe -> [Async ()] -> Options -> FuncName -> WorkerT tp IO ()
 doWork shuttingDown pipes runners opts@Options{..} func = do
-  liftIO $ installShutdownSignalHandlers "periodic-run-pipe" shuttingDown
   let w = processPipeWorker opts pipes
-  if notify then void $ broadcast func w
-  else
-    case lockName of
-      Nothing -> void $ addFunc func w
-      Just n  -> void $ addFunc func $ withLock_ n lockCount w
+  registered <-
+    if notify then broadcast func w
+    else
+      case lockName of
+        Nothing -> addFunc func w
+        Just n  -> addFunc func $ withLock_ n lockCount w
+  unless registered $
+    throwString "pipe worker register failed: server did not accept CanDo/Broadcast"
   liftIO $ putStrLn "Pipe Worker started."
   shutdownAsync <- async $ do
       waitForShutdownRequest shuttingDown

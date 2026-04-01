@@ -11,8 +11,8 @@ import           Control.DeepSeq            (rnf)
 import           Control.Monad              (forever, unless, void, when)
 import           Control.Monad.IO.Class     (liftIO)
 import           Data.ByteString            (ByteString)
-import qualified Data.ByteString.Char8      as B (drop, empty, hGetLine,
-                                                  pack, take)
+import qualified Data.ByteString.Char8      as B (drop, empty, hGetLine, pack,
+                                                  take)
 import qualified Data.ByteString.Lazy       as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
 import           Data.Int                   (Int64)
@@ -26,10 +26,9 @@ import           Paths_periodic_client_exe  (version)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workData, workDone,
                                              workDone_, workFail, workload)
-import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
-                                             close, removeFunc,
-                                             runningTaskCount, startWorkerT,
-                                             waitIdle, work)
+import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast, close,
+                                             removeFunc, runningTaskCount,
+                                             startWorkerT, waitIdle, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
 import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
@@ -52,13 +51,13 @@ import           System.Process             (CreateProcess (std_in, std_out),
 import           Text.Read                  (readMaybe)
 import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
                                              async, atomically, cancel,
-                                             evaluate, finally, mask, newEmptyMVar,
-                                             newTQueueIO, newTVarIO,
-                                             onException, putMVar, readTQueue,
-                                             readTVar, readTVarIO, retrySTM,
-                                             takeMVar, throwIO, try, tryIO,
-                                             wait, writeTQueue,
-                                             writeTVar)
+                                             evaluate, finally, mask,
+                                             newEmptyMVar, newTQueueIO,
+                                             newTVarIO, onException, putMVar,
+                                             readTQueue, readTVar, readTVarIO,
+                                             retrySTM, takeMVar, throwIO,
+                                             throwString, try, tryIO, wait,
+                                             writeTQueue, writeTVar)
 
 
 data Options = Options
@@ -176,6 +175,7 @@ main = do
     printHelp
 
   shuttingDown <- newTVarIO False
+  installShutdownSignalHandlers "periodic-run" shuttingDown
 
   case rsaPrivatePath of
     "" -> startWorkerT (socket host) $ doWork shuttingDown opts func cmd argv
@@ -185,22 +185,24 @@ main = do
 
 doWork :: Transport tp => TVar Bool -> Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
 doWork shuttingDown opts@Options{..} func cmd argv = do
-  liftIO $ installShutdownSignalHandlers "periodic-run" shuttingDown
   let w = processWorker opts cmd argv
-  if notify then void $ broadcast func w
-  else
-    case lockName of
-      Nothing -> void $ addFunc func w
-      Just n  -> void $ addFunc func $ withLock_ n lockCount w
+  registered <-
+    if notify then broadcast func w
+    else
+      case lockName of
+        Nothing -> addFunc func w
+        Just n  -> addFunc func $ withLock_ n lockCount w
+  unless registered $
+    throwString "worker register failed: server did not accept CanDo/Broadcast"
   liftIO $ putStrLn "Worker started."
   shutdownAsync <- async $ do
-      waitForShutdownRequest shuttingDown
-      rt <- runningTaskCount
-      liftIO $ errorM "periodic-run" $ "Got shutdown signal, state: shuttingDown=True, runningTasks=" ++ show rt
-      void $ removeFunc func
-      waitIdle
-      close
-      liftIO exitNow
+    waitForShutdownRequest shuttingDown
+    rt <- runningTaskCount
+    liftIO $ errorM "periodic-run" $ "Got shutdown signal, state: shuttingDown=True, runningTasks=" ++ show rt
+    void $ removeFunc func
+    waitIdle
+    close
+    liftIO exitNow
   work thread `finally` cancel shutdownAsync
 
 finishProcess :: (String -> IO ()) ->  Int -> Int64 -> ProcessHandle -> IO ExitCode

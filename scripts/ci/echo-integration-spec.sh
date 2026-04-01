@@ -1,6 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+wait_for_run_result() {
+  local func_name="$1"
+  local input="$2"
+  local attempts="${3:-20}"
+  for _ in $(seq 1 "$attempts"); do
+    output="$(stack exec periodic -- run "$func_name" "$input" 2>/dev/null || true)"
+    if echo "$output" | grep -F "Result: ${input}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_run_result_rsa() {
+  local mode="$1"
+  local private_key="$2"
+  local public_key="$3"
+  local func_name="$4"
+  local input="$5"
+  local attempts="${6:-20}"
+  for _ in $(seq 1 "$attempts"); do
+    output="$(stack exec periodic -- \
+      --rsa-mode "$mode" \
+      --rsa-private-path "$private_key" \
+      --rsa-public-path "$public_key" \
+      run "$func_name" "$input" 2>/dev/null || true)"
+    if echo "$output" | grep -F "Result: ${input}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_log_line() {
+  local logfile="$1"
+  local line="$2"
+  local attempts="${3:-20}"
+  for _ in $(seq 1 "$attempts"); do
+    if grep -Fx "$line" "$logfile" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 run_suite() {
   backend_uri="$1"
   tag="$2"
@@ -53,12 +101,7 @@ EOF
   # Test 1: run action with periodic-run --data
   stack exec periodic-run -- --data "echo-run-func-${tag}" echo > "periodic-run-${tag}.log" 2>&1 &
   WORKER_PID=$!
-  for i in $(seq 1 20); do
-    if grep -F "Worker started." "periodic-run-${tag}.log" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 1
-  done
+  wait_for_run_result "echo-run-func-${tag}" "warmup-run-${tag}" 20
 
   OUTPUT="$(stack exec periodic -- run "echo-run-func-${tag}" echo)"
   echo "$OUTPUT"
@@ -68,12 +111,8 @@ EOF
   # Test 2: submit action with periodic-run
   stack exec periodic-run -- "echo-submit-func-${tag}" echo > "periodic-run-${tag}.log" 2>&1 &
   WORKER_PID=$!
-  for i in $(seq 1 20); do
-    if grep -F "Worker started." "periodic-run-${tag}.log" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 1
-  done
+  stack exec periodic -- submit "echo-submit-func-${tag}" "warmup-submit-${tag}"
+  wait_for_log_line "periodic-run-${tag}.log" "warmup-submit-${tag}" 20
 
   stack exec periodic -- submit "echo-submit-func-${tag}" "echo-submit-${tag}"
 
@@ -90,12 +129,7 @@ EOF
   stack exec periodic-run-pipe -- "echo-pipe-func-${tag}" "./echo-pipe-${tag}.sh" > "periodic-run-pipe-${tag}.log" 2>&1 &
   WORKER_PID=$!
 
-  for i in $(seq 1 20); do
-    if grep -F "Pipe Worker started." "periodic-run-pipe-${tag}.log" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 1
-  done
+  wait_for_run_result "echo-pipe-func-${tag}" "warmup-pipe-${tag}" 20
 
   OUTPUT="$(stack exec periodic -- run "echo-pipe-func-${tag}" "echo-pipe-run-${tag}")"
   echo "$OUTPUT"
@@ -177,12 +211,7 @@ run_rsa_modes_suite() {
       "$func_name" echo > "$log_file" 2>&1 &
     WORKER_PID=$!
 
-    for i in $(seq 1 20); do
-      if grep -F "Worker started." "$log_file" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 1
-    done
+    wait_for_run_result_rsa "$mode" "$RSA_PRIVATE_KEY" "$RSA_PUBLIC_KEY" "$func_name" "warmup-rsa-${mode_tag}" 20
 
     OUTPUT="$(stack exec periodic -- \
       --rsa-mode "$mode" \
