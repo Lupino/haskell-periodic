@@ -24,8 +24,7 @@ import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Exec.Util         (exitNow, getProcessMem,
                                              installShutdownSignalHandlers,
-                                             isValidHost,
-                                             parseMemStr,
+                                             isValidHost, parseMemStr,
                                              strictReadArg,
                                              waitForShutdownRequest)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
@@ -42,9 +41,8 @@ import           System.Log.Logger          (errorM)
 import           System.Process             (CreateProcess (std_in, std_out),
                                              ProcessHandle,
                                              StdStream (CreatePipe, Inherit),
-                                             getPid, proc,
-                                             terminateProcess, waitForProcess,
-                                             withCreateProcess)
+                                             getPid, proc, terminateProcess,
+                                             waitForProcess, withCreateProcess)
 import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
                                              async, atomically, cancel,
                                              evaluate, finally, mask,
@@ -160,7 +158,7 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  t <- fmap read <$> lookupEnv "THREAD"
+  t <- fmap (strictReadArg "THREAD") <$> lookupEnv "THREAD"
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 

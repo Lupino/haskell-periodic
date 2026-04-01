@@ -160,7 +160,7 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  t <- fmap read <$> lookupEnv "THREAD"
+  t <- fmap (strictReadArg "THREAD") <$> lookupEnv "THREAD"
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 
