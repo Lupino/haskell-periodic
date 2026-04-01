@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -18,7 +17,6 @@ import           Data.Int                  (Int64)
 import           Data.IOMap                (IOMap)
 import qualified Data.IOMap                as IOMap
 import qualified Data.IOMap.STM            as IOMapS
-import           Data.List                 (find, isPrefixOf)
 import qualified Data.Map                  as Map
 import           Data.Maybe                (fromMaybe)
 import           Data.Version              (showVersion)
@@ -27,6 +25,11 @@ import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Metro.Utils               (setupLog)
 import           Paths_periodic_client_exe (version)
+import           Periodic.Exec.Util        (exitNow, getProcessMem,
+                                            installShutdownSignalHandlers,
+                                            isValidHost,
+                                            parseMemStr,
+                                            waitForShutdownRequest)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workData, workDone,
@@ -41,20 +44,11 @@ import           System.Exit               (ExitCode (..), exitSuccess)
 import           System.IO                 (Handle, hClose, hFlush)
 import           System.Log                (Priority (INFO))
 import           System.Log.Logger         (errorM, infoM)
-#ifdef mingw32_HOST_OS
-import qualified GHC.ConsoleHandler        as Console
-import qualified System.Win32.Process      as Win32
-#else
-import           System.Posix.Process      (exitImmediately)
-import           System.Posix.Signals      (Handler (Catch), installHandler,
-                                            sigHUP, sigINT, sigTERM)
-#endif
 import           System.Process            (CreateProcess (std_in, std_out),
-                                            Pid, ProcessHandle,
+                                            ProcessHandle,
                                             StdStream (CreatePipe), getPid,
-                                            proc, readProcess, terminateProcess,
+                                            proc, terminateProcess,
                                             waitForProcess, withCreateProcess)
-import           Text.Read                 (readMaybe)
 import qualified UnliftIO                  as U (timeout)
 import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel, catchAny,
@@ -166,13 +160,13 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  t <- fmap (safeRead 1) <$> lookupEnv "THREAD"
+  t <- fmap read <$> lookupEnv "THREAD"
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 
   when showHelp printHelp
 
-  when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
+  unless (isValidHost host) $ do
     putStrLn $ "Error: Invalid host " ++ host
     printHelp
 
@@ -180,7 +174,9 @@ main = do
 
   shuttingDown <- newTVarIO False
 
-  installShutdownSignalHandlers "periodic-run-pipe" shuttingDown
+  installShutdownSignalHandlers
+    (\sig -> infoM "periodic-run-pipe" $ "Got signal " ++ sig)
+    shuttingDown
 
   pipes <- newTQueueIO
   runners <- liftIO $ mapM (\_ -> createRunner pipes memLimit readyTimeoutS cmd argv) [1 .. thread]
@@ -214,38 +210,6 @@ doWork shuttingDown pipes runners opts@Options{..} func = do
       close
       liftIO exitNow
   work thread `finally` cancel shutdownAsync
-
-parseMemStr :: String -> Int64
-parseMemStr [] = 0
-parseMemStr [x] = safeRead 0 [x]
-parseMemStr str = floor $ go (init str) (last str)
-  where go :: String -> Char -> Float
-        go num 'k' = safeRead 0 num * 1024
-        go num 'm' = safeRead 0 num * 1024 * 1024
-        go num 'g' = safeRead 0 num * 1024 * 1024 * 1024
-        go num 'K' = safeRead 0 num * 1024
-        go num 'M' = safeRead 0 num * 1024 * 1024
-        go num 'G' = safeRead 0 num * 1024 * 1024 * 1024
-        go num c   = safeRead 0 (num ++ [c])
-
-parseMemLine :: String -> (Pid, Int64)
-parseMemLine str =
-  case words str of
-    [x, y] -> (safeRead 0 x :: Pid, parseMemStr y)
-    _      -> (0, 0)
-
-parseMemMap :: String -> [(Pid, Int64)]
-parseMemMap = filter ((> 0) . fst) . map parseMemLine . drop 1 . lines
-
-getMemMap :: IO [(Pid, Int64)]
-getMemMap = parseMemMap <$> readProcess "ps" ["-eo", "pid,rss"] ""
-
-getProcessMem :: Pid -> IO Int64
-getProcessMem pid = do
-  memMap <- getMemMap
-  case find ((== pid) . fst) memMap of
-    Nothing       -> pure 0
-    Just (_, mem) -> pure mem
 
 type PipeOut = IOMap Msgid (TQueue ByteString)
 
@@ -441,36 +405,6 @@ processPipeWorker Options{..} pipes = do
   workPipeOut pipeOut msgid skipFail retrySecs `finally` do
     IOMap.delete msgid pipeOut
     mapM_ cancel io
-
-safeRead :: Read a => a -> String -> a
-safeRead def s = fromMaybe def $ readMaybe s
-
-installShutdownSignalHandlers :: String -> TVar Bool -> IO ()
-installShutdownSignalHandlers loggerName shuttingDown = do
-  let markShutdown sigName = do
-        atomically $ writeTVar shuttingDown True
-        infoM loggerName $ "Got signal " ++ sigName
-#ifdef mingw32_HOST_OS
-  void $ Console.installHandler $ Console.Catch $ \ev -> do
-    markShutdown (show ev)
-    pure ()
-#else
-  void $ installHandler sigHUP (Catch $ markShutdown "HUP") Nothing
-  void $ installHandler sigTERM (Catch $ markShutdown "TERM") Nothing
-  void $ installHandler sigINT (Catch $ markShutdown "INT") Nothing
-#endif
-
-exitNow :: IO ()
-#ifdef mingw32_HOST_OS
-exitNow = Win32.exitProcess 0
-#else
-exitNow = exitImmediately ExitSuccess
-#endif
-
-waitForShutdownRequest :: TVar Bool -> WorkerT tp IO ()
-waitForShutdownRequest shuttingDown = liftIO $ atomically $ do
-  done <- readTVar shuttingDown
-  if done then pure () else retrySTM
 
 stopPipes :: TQueue Pipe -> IO ()
 stopPipes pipes = do

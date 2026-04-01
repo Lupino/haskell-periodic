@@ -1,10 +1,10 @@
-{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
 module Main
   ( main
   ) where
+
 
 import           Control.Concurrent         (forkIO, killThread, threadDelay)
 import           Control.DeepSeq            (rnf)
@@ -16,13 +16,17 @@ import qualified Data.ByteString.Char8      as B (drop, empty, hGetLine, pack,
 import qualified Data.ByteString.Lazy       as LB (null, toStrict)
 import qualified Data.ByteString.Lazy.Char8 as LB (hGetContents, hPut)
 import           Data.Int                   (Int64)
-import           Data.List                  (find, isPrefixOf)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Version               (showVersion)
 import           Metro.Class                (Transport)
 import qualified Metro.TP.RSA               as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
+import           Periodic.Exec.Util         (exitNow, getProcessMem,
+                                             installShutdownSignalHandlers,
+                                             isValidHost,
+                                             parseMemStr,
+                                             waitForShutdownRequest)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workData, workDone,
                                              workDone_, workFail, workload)
@@ -34,21 +38,12 @@ import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
 import           System.IO                  (Handle, hClose)
 import           System.Log.Logger          (errorM)
-#ifdef mingw32_HOST_OS
-import qualified GHC.ConsoleHandler         as Console
-import qualified System.Win32.Process       as Win32
-#else
-import           System.Posix.Process       (exitImmediately)
-import           System.Posix.Signals       (Handler (Catch), installHandler,
-                                             sigHUP, sigINT, sigTERM)
-#endif
 import           System.Process             (CreateProcess (std_in, std_out),
-                                             Pid, ProcessHandle,
+                                             ProcessHandle,
                                              StdStream (CreatePipe, Inherit),
-                                             getPid, proc, readProcess,
+                                             getPid, proc,
                                              terminateProcess, waitForProcess,
                                              withCreateProcess)
-import           Text.Read                  (readMaybe)
 import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
                                              async, atomically, cancel,
                                              evaluate, finally, mask,
@@ -164,18 +159,20 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  t <- fmap (safeRead 1) <$> lookupEnv "THREAD"
+  t <- fmap read <$> lookupEnv "THREAD"
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 
   when showHelp printHelp
 
-  when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
+  unless (isValidHost host) $ do
     putStrLn $ "Error: Invalid host " ++ host
     printHelp
 
   shuttingDown <- newTVarIO False
-  installShutdownSignalHandlers "periodic-run" shuttingDown
+  installShutdownSignalHandlers
+    (\sig -> errorM "periodic-run" $ "Got signal " ++ sig)
+    shuttingDown
 
   case rsaPrivatePath of
     "" -> startWorkerT (socket host) $ doWork shuttingDown opts func cmd argv
@@ -344,65 +341,3 @@ withForkWait io body = do
     tid <- forkIO $ try (restore io) >>= putMVar waitVar
     let wait_ = takeMVar waitVar >>= either throwIO return
     restore (body wait_) `onException` killThread tid
-
-parseMemStr :: String -> Int64
-parseMemStr [] = 0
-parseMemStr [x] = safeRead 0 [x]
-parseMemStr str = floor $ go (init str) (last str)
-  where go :: String -> Char -> Float
-        go num 'k' = safeRead 0 num * 1024
-        go num 'm' = safeRead 0 num * 1024 * 1024
-        go num 'g' = safeRead 0 num * 1024 * 1024 * 1024
-        go num 'K' = safeRead 0 num * 1024
-        go num 'M' = safeRead 0 num * 1024 * 1024
-        go num 'G' = safeRead 0 num * 1024 * 1024 * 1024
-        go num c   = safeRead 0 (num ++ [c])
-
-parseMemLine :: String -> (Pid, Int64)
-parseMemLine str =
-  case words str of
-    [x, y] -> (safeRead 0 x :: Pid, parseMemStr y)
-    _      -> (0, 0)
-
-parseMemMap :: String -> [(Pid, Int64)]
-parseMemMap = filter ((> 0) . fst) . map parseMemLine . drop 1 . lines
-
-getMemMap :: IO [(Pid, Int64)]
-getMemMap = parseMemMap <$> readProcess "ps" ["-eo", "pid,rss"] ""
-
-getProcessMem :: Pid -> IO Int64
-getProcessMem pid = do
-  memMap <- getMemMap
-  case find ((== pid) . fst) memMap of
-    Nothing       -> pure 0
-    Just (_, mem) -> pure mem
-
-safeRead :: Read a => a -> String -> a
-safeRead def s = fromMaybe def $ readMaybe s
-
-installShutdownSignalHandlers :: String -> TVar Bool -> IO ()
-installShutdownSignalHandlers loggerName shuttingDown = do
-  let markShutdown sigName = do
-        atomically $ writeTVar shuttingDown True
-        errorM loggerName $ "Got signal " ++ sigName
-#ifdef mingw32_HOST_OS
-  void $ Console.installHandler $ Console.Catch $ \ev -> do
-    markShutdown (show ev)
-    pure ()
-#else
-  void $ installHandler sigHUP (Catch $ markShutdown "HUP") Nothing
-  void $ installHandler sigTERM (Catch $ markShutdown "TERM") Nothing
-  void $ installHandler sigINT (Catch $ markShutdown "INT") Nothing
-#endif
-
-exitNow :: IO ()
-#ifdef mingw32_HOST_OS
-exitNow = Win32.exitProcess 0
-#else
-exitNow = exitImmediately ExitSuccess
-#endif
-
-waitForShutdownRequest :: TVar Bool -> WorkerT tp IO ()
-waitForShutdownRequest shuttingDown = liftIO $ atomically $ do
-  done <- readTVar shuttingDown
-  unless done retrySTM

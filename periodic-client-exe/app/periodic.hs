@@ -23,6 +23,7 @@ import           Metro.TP.RSA              (generateKeyPair)
 import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
+import           Periodic.Exec.Util        (safeRead)
 import           Periodic.Trans.Client
 import           Periodic.Types            (Job, Workload (..))
 import           System.Environment        (getArgs, lookupEnv)
@@ -343,9 +344,6 @@ doSubmitJob (x:y:xs) = do
   void $ submitJob (fromString x) (fromString y) wl l t
   where l = getLater xs
         t = getTimeout 0 xs
-
-safeRead :: Read a => a -> String -> a
-safeRead def s = fromMaybe def $ readMaybe s
 
 getWorkload :: [String] -> IO Workload
 getWorkload argv =
