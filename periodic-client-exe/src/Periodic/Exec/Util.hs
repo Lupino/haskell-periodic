@@ -2,6 +2,7 @@
 
 module Periodic.Exec.Util
   ( safeRead
+  , strictReadArg
   , parseMemStr
   , parseMemLine
   , parseMemMap
@@ -35,6 +36,12 @@ import           System.Posix.Signals   (Handler (Catch), installHandler,
 safeRead :: Read a => a -> String -> a
 safeRead def "" = def
 safeRead def s  = fromMaybe def $ readMaybe s
+
+strictReadArg :: Read a => String -> String -> a
+strictReadArg flag raw =
+  case readMaybe raw of
+    Just v  -> v
+    Nothing -> error $ "Invalid value for " ++ flag ++ ": " ++ show raw
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0

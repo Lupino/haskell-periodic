@@ -27,8 +27,8 @@ import           Metro.Utils               (setupLog)
 import           Paths_periodic_client_exe (version)
 import           Periodic.Exec.Util        (exitNow, getProcessMem,
                                             installShutdownSignalHandlers,
-                                            isValidHost,
-                                            parseMemStr,
+                                            isValidHost, parseMemStr,
+                                            strictReadArg,
                                             waitForShutdownRequest)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
@@ -40,7 +40,7 @@ import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast, close,
 import           Periodic.Types            (FuncName (..), LockName (..),
                                             Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
-import           System.Exit               (ExitCode (..), exitSuccess)
+import           System.Exit               (exitSuccess)
 import           System.IO                 (Handle, hClose, hFlush)
 import           System.Log                (Priority (INFO))
 import           System.Log.Logger         (errorM, infoM)
@@ -54,9 +54,9 @@ import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel, catchAny,
                                             finally, newEmptyTMVarIO,
                                             newTQueueIO, newTVarIO, putTMVar,
-                                            readTQueue, readTVar, readTVarIO,
-                                            retrySTM, takeTMVar, throwString,
-                                            tryIO, tryPutTMVar, tryReadTQueue,
+                                            readTQueue, readTVarIO, retrySTM,
+                                            takeTMVar, throwString, tryIO,
+                                            tryPutTMVar, tryReadTQueue,
                                             tryTakeTMVar, writeTQueue,
                                             writeTVar)
 
@@ -101,20 +101,20 @@ options t h = Options
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host      = x }
-parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = safeRead (thread opt) x }
-parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = safeRead (lockCount opt) x }
+parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = strictReadArg "--thread" x }
+parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = strictReadArg "--lock-count" x }
 parseOptions ("--lock-name":x:xs)        opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)          opt = parseOptions xs opt { notify = True }
 parseOptions ("--no-name":xs)            opt = parseOptions xs opt { useName = False }
 parseOptions ("--skip-fail":xs)          opt = parseOptions xs opt { skipFail = True }
-parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = safeRead (timeoutS opt) x }
-parseOptions ("--ready-timeout":x:xs)    opt = parseOptions xs opt { readyTimeoutS = safeRead (readyTimeoutS opt) x }
-parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = safeRead (retrySecs opt) x }
+parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = strictReadArg "--timeout" x }
+parseOptions ("--ready-timeout":x:xs)    opt = parseOptions xs opt { readyTimeoutS = strictReadArg "--ready-timeout" x }
+parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = strictReadArg "--retry-secs" x }
 parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = strictReadArg "--rsa-mode" x }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions []                          opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                         opt = (opt { showHelp = True }, "", "", [])

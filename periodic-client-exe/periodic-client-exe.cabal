@@ -87,6 +87,7 @@ executable periodic-http-bridge
   main-is:             periodic-http-bridge.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base >= 4.7 && < 5
+                     , periodic-client-exe
                      , periodic-client
                      , periodic-common
                      , bytestring
@@ -106,6 +107,7 @@ executable periodic-mcp
   main-is:             periodic-mcp.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base >= 4.7 && < 5
+                     , periodic-client-exe
                      , periodic-client
                      , periodic-common
                      , bytestring

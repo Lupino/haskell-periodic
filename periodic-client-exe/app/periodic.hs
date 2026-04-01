@@ -23,7 +23,7 @@ import           Metro.TP.RSA              (generateKeyPair)
 import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
-import           Periodic.Exec.Util        (safeRead)
+import           Periodic.Exec.Util        (safeRead, strictReadArg)
 import           Periodic.Trans.Client
 import           Periodic.Types            (Job, Workload (..))
 import           System.Environment        (getArgs, lookupEnv)
@@ -85,7 +85,7 @@ parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host       
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host           = x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = strictReadArg "--rsa-mode" x }
 parseOptions (x:xs)                      opt = (parseCommand x, opt, xs)
 
 printHelp :: IO ()

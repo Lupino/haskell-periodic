@@ -26,6 +26,7 @@ import           Periodic.Exec.Util         (exitNow, getProcessMem,
                                              installShutdownSignalHandlers,
                                              isValidHost,
                                              parseMemStr,
+                                             strictReadArg,
                                              waitForShutdownRequest)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workData, workDone,
@@ -97,20 +98,20 @@ options t h = Options
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host      = x }
-parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = safeRead (thread opt) x }
-parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = safeRead (lockCount opt) x }
+parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = strictReadArg "--thread" x }
+parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = strictReadArg "--lock-count" x }
 parseOptions ("--lock-name":x:xs)        opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--broadcast":xs)          opt = parseOptions xs opt { notify = True }
 parseOptions ("--data":xs)               opt = parseOptions xs opt { useData = True }
 parseOptions ("--work-data":xs)          opt = parseOptions xs opt { useWorkData = True }
 parseOptions ("--no-name":xs)            opt = parseOptions xs opt { useName = False }
 parseOptions ("--skip-fail":xs)          opt = parseOptions xs opt { skipFail = True }
-parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = safeRead (timeoutS opt) x }
-parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = safeRead (retrySecs opt) x }
+parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = strictReadArg "--timeout" x }
+parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = strictReadArg "--retry-secs" x }
 parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = safeRead (rsaMode opt) x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = strictReadArg "--rsa-mode" x }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions []                          opt = (opt { showHelp = True }, "", "", [])

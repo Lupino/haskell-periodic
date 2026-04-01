@@ -69,16 +69,19 @@ parseOptions ("--path":x:xs)             opt = parseOptions xs opt { storePath  
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp      = True }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp      = True }
 parseOptions ("--hook":x:xs)             opt = parseOptions xs opt { hookHostPort  = x }
-parseOptions ("--log":x:xs)              opt = parseOptions xs opt { logLevel      = safeRead (logLevel opt) x }
-parseOptions ("--max-cache-size":x:xs)   opt = parseOptions xs opt { maxCacheSize  = safeRead (maxCacheSize opt) x }
-parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSize  = safeRead (pushTaskSize opt) x }
-parseOptions ("--sched-task-size":x:xs)  opt = parseOptions xs opt { schedTaskSize = safeRead (schedTaskSize opt) x }
+parseOptions ("--log":x:xs)              opt = parseOptions xs opt { logLevel      = strictReadArg "--log" x }
+parseOptions ("--max-cache-size":x:xs)   opt = parseOptions xs opt { maxCacheSize  = strictReadArg "--max-cache-size" x }
+parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSize  = strictReadArg "--push-task-size" x }
+parseOptions ("--sched-task-size":x:xs)  opt = parseOptions xs opt { schedTaskSize = strictReadArg "--sched-task-size" x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath = x }
 parseOptions (_:xs)                      opt = parseOptions xs opt
 
-safeRead :: Read a => a -> String -> a
-safeRead old = fromMaybe old . readMaybe
+strictReadArg :: Read a => String -> String -> a
+strictReadArg flag raw =
+  case readMaybe raw of
+    Just v  -> v
+    Nothing -> error $ "Invalid value for " ++ flag ++ ": " ++ show raw
 
 printHelp :: IO ()
 printHelp = do
