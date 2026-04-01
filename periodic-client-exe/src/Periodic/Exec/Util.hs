@@ -19,16 +19,14 @@ import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Data.Int               (Int64)
 import           Data.List              (find, isPrefixOf)
 import           Data.Maybe             (fromMaybe)
+import           System.Exit            (exitSuccess)
 import           System.Process         (Pid, readProcess)
 import           Text.Read              (readMaybe)
 import           UnliftIO               (TVar, atomically, readTVar, retrySTM,
                                          writeTVar)
 #ifdef mingw32_HOST_OS
 import qualified GHC.ConsoleHandler     as Console
-import qualified System.Win32.Process   as Win32
 #else
-import           System.Exit            (ExitCode (..))
-import           System.Posix.Process   (exitImmediately)
 import           System.Posix.Signals   (Handler (Catch), installHandler,
                                          sigHUP, sigINT, sigTERM)
 #endif
@@ -99,8 +97,4 @@ waitForShutdownRequest shuttingDown = liftIO $ atomically $ do
   unless done retrySTM
 
 exitNow :: IO ()
-#ifdef mingw32_HOST_OS
-exitNow = Win32.exitProcess 0
-#else
-exitNow = exitImmediately ExitSuccess
-#endif
+exitNow = exitSuccess
