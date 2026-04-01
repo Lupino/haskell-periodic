@@ -145,19 +145,26 @@ startWorkerT_ config m = do
   let wEnv = WorkerEnv {..}
 
   runNodeT jobEnv1 $ do
-
-    void $ async $ startNodeT_ (filterPacketM jobList) defaultSessionHandler
-    runWorkerT wEnv $ do
-      void . async $ forever $ do
-        threadDelay healthCheckIntervalUs
-        checkHealth
-      void . async . runJobT $ processJobQueue wEnv
-      m
+    aNode <- async $ startNodeT_ (filterPacketM jobList) defaultSessionHandler
+    aHealth <- async $ runWorkerT wEnv workerHealthLoop
+    aQueue <- async $ runWorkerT wEnv $ runJobT $ processJobQueue wEnv
+    aMain <- async $ runWorkerT wEnv m
+    (_, e) <- waitAnyCatchCancel [aNode, aHealth, aQueue, aMain]
+    either throwIO pure e
 
   where mapEnv =
           setNodeMode Multi
           . setSessionMode SingleAction
         healthCheckIntervalUs = 5 * 1000 * 1000
+
+        workerHealthLoop :: (MonadUnliftIO m, Transport tp) => WorkerT tp m ()
+        workerHealthLoop = forever $ do
+          threadDelay healthCheckIntervalUs
+          ret <- timeout 10000000 ping
+          case ret of
+            Just True  -> pure ()
+            Just False -> throwString "worker health check failed: ping returned False"
+            Nothing    -> throwString "worker health check failed: ping timeout"
 
 filterPacketM :: MonadIO m => JobList -> Packet ServerCommand -> m Bool
 filterPacketM jl rpkt = do
