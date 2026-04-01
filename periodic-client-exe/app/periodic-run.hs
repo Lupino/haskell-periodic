@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -26,12 +27,22 @@ import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workData, workDone,
                                              workDone_, workFail, workload)
 import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
-                                             startWorkerT, work)
+                                             close, removeFunc,
+                                             runningTaskCount, startWorkerT,
+                                             waitIdle, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
 import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
 import           System.IO                  (Handle, hClose)
 import           System.Log.Logger          (errorM)
+#ifdef mingw32_HOST_OS
+import qualified GHC.ConsoleHandler         as Console
+import qualified System.Win32.Process       as Win32
+#else
+import           System.Posix.Process       (exitImmediately)
+import           System.Posix.Signals       (Handler (Catch), installHandler,
+                                             sigHUP, sigINT, sigTERM)
+#endif
 import           System.Process             (CreateProcess (std_in, std_out),
                                              Pid, ProcessHandle,
                                              StdStream (CreatePipe, Inherit),
@@ -41,12 +52,13 @@ import           System.Process             (CreateProcess (std_in, std_out),
 import           Text.Read                  (readMaybe)
 import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
                                              async, atomically, cancel,
-                                             evaluate, mask, newEmptyMVar,
+                                             evaluate, finally, mask, newEmptyMVar,
                                              newTQueueIO, newTVarIO,
                                              onException, putMVar, readTQueue,
                                              readTVar, readTVarIO, retrySTM,
                                              takeMVar, throwIO, try, tryIO,
-                                             wait, writeTQueue, writeTVar)
+                                             wait, writeTQueue,
+                                             writeTVar)
 
 
 data Options = Options
@@ -163,14 +175,17 @@ main = do
     putStrLn $ "Error: Invalid host " ++ host
     printHelp
 
+  shuttingDown <- newTVarIO False
+
   case rsaPrivatePath of
-    "" -> startWorkerT (socket host) $ doWork opts func cmd argv
+    "" -> startWorkerT (socket host) $ doWork shuttingDown opts func cmd argv
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      startWorkerT (genTP $ socket host) $ doWork opts func cmd argv
+      startWorkerT (genTP $ socket host) $ doWork shuttingDown opts func cmd argv
 
-doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
-doWork opts@Options{..} func cmd argv = do
+doWork :: Transport tp => TVar Bool -> Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
+doWork shuttingDown opts@Options{..} func cmd argv = do
+  liftIO $ installShutdownSignalHandlers "periodic-run" shuttingDown
   let w = processWorker opts cmd argv
   if notify then void $ broadcast func w
   else
@@ -178,7 +193,15 @@ doWork opts@Options{..} func cmd argv = do
       Nothing -> void $ addFunc func w
       Just n  -> void $ addFunc func $ withLock_ n lockCount w
   liftIO $ putStrLn "Worker started."
-  work thread
+  shutdownAsync <- async $ do
+      waitForShutdownRequest shuttingDown
+      rt <- runningTaskCount
+      liftIO $ errorM "periodic-run" $ "Got shutdown signal, state: shuttingDown=True, runningTasks=" ++ show rt
+      void $ removeFunc func
+      waitIdle
+      close
+      liftIO exitNow
+  work thread `finally` cancel shutdownAsync
 
 finishProcess :: (String -> IO ()) ->  Int -> Int64 -> ProcessHandle -> IO ExitCode
 finishProcess _ 0 0 ph = waitForProcess ph
@@ -354,3 +377,30 @@ getProcessMem pid = do
 
 safeRead :: Read a => a -> String -> a
 safeRead def s = fromMaybe def $ readMaybe s
+
+installShutdownSignalHandlers :: String -> TVar Bool -> IO ()
+installShutdownSignalHandlers loggerName shuttingDown = do
+  let markShutdown sigName = do
+        atomically $ writeTVar shuttingDown True
+        errorM loggerName $ "Got signal " ++ sigName
+#ifdef mingw32_HOST_OS
+  void $ Console.installHandler $ Console.Catch $ \ev -> do
+    markShutdown (show ev)
+    pure ()
+#else
+  void $ installHandler sigHUP (Catch $ markShutdown "HUP") Nothing
+  void $ installHandler sigTERM (Catch $ markShutdown "TERM") Nothing
+  void $ installHandler sigINT (Catch $ markShutdown "INT") Nothing
+#endif
+
+exitNow :: IO ()
+#ifdef mingw32_HOST_OS
+exitNow = Win32.exitProcess 0
+#else
+exitNow = exitImmediately ExitSuccess
+#endif
+
+waitForShutdownRequest :: TVar Bool -> WorkerT tp IO ()
+waitForShutdownRequest shuttingDown = liftIO $ atomically $ do
+  done <- readTVar shuttingDown
+  unless done retrySTM

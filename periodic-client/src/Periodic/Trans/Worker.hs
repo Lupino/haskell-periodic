@@ -17,6 +17,8 @@ module Periodic.Trans.Worker
   , broadcast
   , removeFunc
   , work
+  , runningTaskCount
+  , waitIdle
   , close
   , runJobT
   , getClientEnv
@@ -265,6 +267,18 @@ work size = do
     forever $ do
       nextGrab gl
       threadDelay 60000000 -- 60s
+
+runningTaskCount :: MonadIO m => WorkerT tp m Int
+runningTaskCount = do
+  ref <- asks tskSizeH
+  liftIO $ readTVarIO ref
+
+waitIdle :: MonadIO m => WorkerT tp m ()
+waitIdle = do
+  ref <- asks tskSizeH
+  liftIO $ atomically $ do
+    n <- readTVar ref
+    when (n > 0) retrySTM
 
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()

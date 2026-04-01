@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -7,7 +8,7 @@ module Main
 
 
 import           Control.Concurrent        (threadDelay)
-import           Control.Monad             (forever, replicateM_, void, when)
+import           Control.Monad             (forever, void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetLine, hPutStrLn,
@@ -30,15 +31,24 @@ import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workData, workDone,
                                             workDone_, workFail, workload)
-import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
-                                            startWorkerT, work)
+import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast, close,
+                                            removeFunc, runningTaskCount,
+                                            startWorkerT, waitIdle, work)
 import           Periodic.Types            (FuncName (..), LockName (..),
                                             Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
-import           System.Exit               (exitSuccess)
+import           System.Exit               (ExitCode (..), exitSuccess)
 import           System.IO                 (Handle, hClose, hFlush)
 import           System.Log                (Priority (INFO))
 import           System.Log.Logger         (errorM, infoM)
+#ifdef mingw32_HOST_OS
+import qualified GHC.ConsoleHandler        as Console
+import qualified System.Win32.Process      as Win32
+#else
+import           System.Posix.Process      (exitImmediately)
+import           System.Posix.Signals      (Handler (Catch), installHandler,
+                                            sigHUP, sigINT, sigTERM)
+#endif
 import           System.Process            (CreateProcess (std_in, std_out),
                                             Pid, ProcessHandle,
                                             StdStream (CreatePipe), getPid,
@@ -50,9 +60,10 @@ import           UnliftIO                  (Async, MonadIO, TMVar, TQueue, TVar,
                                             async, atomically, cancel, catchAny,
                                             finally, newEmptyTMVarIO,
                                             newTQueueIO, newTVarIO, putTMVar,
-                                            readTQueue, readTVarIO, retrySTM,
-                                            takeTMVar, tryIO, tryPutTMVar,
-                                            tryReadTQueue, tryTakeTMVar,
+                                            readTQueue, readTVar, readTVarIO,
+                                            retrySTM, takeTMVar, tryIO,
+                                            tryPutTMVar, tryReadTQueue,
+                                            tryTakeTMVar,
                                             writeTQueue, writeTVar)
 
 
@@ -167,25 +178,38 @@ main = do
 
   setupLog INFO
 
+  shuttingDown <- newTVarIO False
+
   pipes <- newTQueueIO
-  liftIO $ replicateM_ thread $ createRunner pipes memLimit readyTimeoutS cmd argv
+  runners <- liftIO $ mapM (\_ -> createRunner pipes memLimit readyTimeoutS cmd argv) [1 .. thread]
 
   case rsaPrivatePath of
-    "" -> startWorkerT (socket host) $ doWork pipes opts func
+    "" -> startWorkerT (socket host) $ doWork shuttingDown pipes runners opts func
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      startWorkerT (genTP $ socket host) $ doWork pipes opts func
+      startWorkerT (genTP $ socket host) $ doWork shuttingDown pipes runners opts func
 
-doWork :: Transport tp => TQueue Pipe -> Options -> FuncName -> WorkerT tp IO ()
-doWork pipes opts@Options{..} func = do
+doWork :: Transport tp => TVar Bool -> TQueue Pipe -> [Async ()] -> Options -> FuncName -> WorkerT tp IO ()
+doWork shuttingDown pipes runners opts@Options{..} func = do
+  liftIO $ installShutdownSignalHandlers "periodic-run-pipe" shuttingDown
+  let w = processPipeWorker opts pipes
   if notify then void $ broadcast func w
   else
     case lockName of
       Nothing -> void $ addFunc func w
       Just n  -> void $ addFunc func $ withLock_ n lockCount w
   liftIO $ putStrLn "Pipe Worker started."
-  work thread
-  where w = processPipeWorker opts pipes
+  shutdownAsync <- async $ do
+      waitForShutdownRequest shuttingDown
+      rt <- runningTaskCount
+      liftIO $ infoM "periodic-run-pipe" $ "Got shutdown signal, state: shuttingDown=True, runningTasks=" ++ show rt
+      void $ removeFunc func
+      waitIdle
+      liftIO $ stopPipes pipes
+      mapM_ cancel runners
+      close
+      liftIO exitNow
+  work thread `finally` cancel shutdownAsync
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0
@@ -416,3 +440,46 @@ processPipeWorker Options{..} pipes = do
 
 safeRead :: Read a => a -> String -> a
 safeRead def s = fromMaybe def $ readMaybe s
+
+installShutdownSignalHandlers :: String -> TVar Bool -> IO ()
+installShutdownSignalHandlers loggerName shuttingDown = do
+  let markShutdown sigName = do
+        atomically $ writeTVar shuttingDown True
+        infoM loggerName $ "Got signal " ++ sigName
+#ifdef mingw32_HOST_OS
+  void $ Console.installHandler $ Console.Catch $ \ev -> do
+    markShutdown (show ev)
+    pure ()
+#else
+  void $ installHandler sigHUP (Catch $ markShutdown "HUP") Nothing
+  void $ installHandler sigTERM (Catch $ markShutdown "TERM") Nothing
+  void $ installHandler sigINT (Catch $ markShutdown "INT") Nothing
+#endif
+
+exitNow :: IO ()
+#ifdef mingw32_HOST_OS
+exitNow = Win32.exitProcess 0
+#else
+exitNow = exitImmediately ExitSuccess
+#endif
+
+waitForShutdownRequest :: TVar Bool -> WorkerT tp IO ()
+waitForShutdownRequest shuttingDown = liftIO $ atomically $ do
+  done <- readTVar shuttingDown
+  if done then pure () else retrySTM
+
+stopPipes :: TQueue Pipe -> IO ()
+stopPipes pipes = do
+  allPipes <- atomically $ drainQueue pipes []
+  mapM_ stopPipe allPipes
+
+drainQueue pipes acc = do
+  mp <- tryReadTQueue pipes
+  case mp of
+    Nothing -> pure acc
+    Just p  -> drainQueue pipes (p : acc)
+
+stopPipe :: Pipe -> IO ()
+stopPipe Pipe{..} = do
+  mph <- readTVarIO pipeIO
+  mapM_ terminateProcess mph

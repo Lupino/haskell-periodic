@@ -66,3 +66,6 @@ jobs:
         env:
           PERIODIC_TEST_POSTGRES_URI: postgres://host='127.0.0.1' port=5432 dbname='periodic_test' user='postgres' password='postgres'
         run: bash ./scripts/ci/echo-integration-spec.sh
+
+      - name: Stack reconnect integration tests
+        run: bash ./scripts/ci/reconnect-integration-spec.sh
