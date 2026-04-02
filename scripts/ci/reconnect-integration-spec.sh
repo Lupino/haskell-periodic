@@ -35,6 +35,26 @@ wait_for_log() {
   return 1
 }
 
+stop_process() {
+  local pid="$1"
+  local grace_seconds="${2:-5}"
+  if [ -z "${pid:-}" ]; then
+    return 0
+  fi
+
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 "$grace_seconds"); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 wait_for_run_result() {
   local func_name="$1"
   local input="$2"
@@ -72,16 +92,19 @@ test_reconnect_run() {
   local worker_pid=""
 
   cleanup() {
-    if [ -n "$worker_pid" ]; then
-      kill "$worker_pid" 2>/dev/null || true
-      wait "$worker_pid" 2>/dev/null || true
+    if [ -n "${worker_pid:-}" ]; then
+      stop_process "$worker_pid" 3
       worker_pid=""
     fi
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
+    if [ -n "${server_pid:-}" ]; then
+      stop_process "$server_pid" 5
+      server_pid=""
+    fi
+    pkill -f "periodicd" 2>/dev/null || true
+    pkill -f "periodic-run" 2>/dev/null || true
     rm -f /tmp/periodic.sock
   }
-  trap cleanup RETURN
+  trap cleanup EXIT
 
   rm -f "$db_file"
   server_pid="$(start_server "$backend_uri" "$server_log")"
@@ -96,8 +119,7 @@ test_reconnect_run() {
     return 1
   fi
 
-  kill "$server_pid" 2>/dev/null || true
-  wait "$server_pid" 2>/dev/null || true
+  stop_process "$server_pid" 5
 
   server_pid="$(start_server "$backend_uri" "$server_log")"
   wait_for_ping 90
@@ -110,11 +132,12 @@ test_reconnect_run() {
     return 1
   fi
 
+  local output
   output="$("$PERIODIC_BIN" run "$func_name" "$input")"
   echo "$output"
   echo "$output" | grep -F "Result: ${input}"
 
-  trap - RETURN
+  trap - EXIT
   cleanup
 }
 
@@ -142,16 +165,19 @@ EOF
   chmod +x "$pipe_script"
 
   cleanup() {
-    if [ -n "$worker_pid" ]; then
-      kill "$worker_pid" 2>/dev/null || true
-      wait "$worker_pid" 2>/dev/null || true
+    if [ -n "${worker_pid:-}" ]; then
+      stop_process "$worker_pid" 3
       worker_pid=""
     fi
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
+    if [ -n "${server_pid:-}" ]; then
+      stop_process "$server_pid" 5
+      server_pid=""
+    fi
+    pkill -f "periodicd" 2>/dev/null || true
+    pkill -f "periodic-run" 2>/dev/null || true
     rm -f /tmp/periodic.sock "$pipe_script"
   }
-  trap cleanup RETURN
+  trap cleanup EXIT
 
   rm -f "$db_file"
   server_pid="$(start_server "$backend_uri" "$server_log")"
@@ -166,8 +192,7 @@ EOF
     return 1
   fi
 
-  kill "$server_pid" 2>/dev/null || true
-  wait "$server_pid" 2>/dev/null || true
+  stop_process "$server_pid" 5
 
   server_pid="$(start_server "$backend_uri" "$server_log")"
   wait_for_ping 90
@@ -180,11 +205,12 @@ EOF
     return 1
   fi
 
+  local output
   output="$("$PERIODIC_BIN" run "$func_name" "$input")"
   echo "$output"
   echo "$output" | grep -F "Result: ${input}"
 
-  trap - RETURN
+  trap - EXIT
   cleanup
 }
 

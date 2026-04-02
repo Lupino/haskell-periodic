@@ -75,8 +75,19 @@ EOF
   WORKER_PID=""
 
   stop_worker() {
-    if [ -n "$WORKER_PID" ]; then
+    if [ -n "${WORKER_PID:-}" ]; then
       kill "$WORKER_PID" 2>/dev/null || true
+      # Wait up to 3 seconds for the worker to exit gracefully.
+      for _ in $(seq 1 3); do
+        if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      # If still alive, force terminate with SIGKILL.
+      if kill -0 "$WORKER_PID" 2>/dev/null; then
+        kill -9 "$WORKER_PID" 2>/dev/null || true
+      fi
       wait "$WORKER_PID" 2>/dev/null || true
       WORKER_PID=""
     fi
@@ -84,11 +95,33 @@ EOF
 
   cleanup() {
     stop_worker
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+
+    if [ -n "${SERVER_PID:-}" ]; then
+      kill "$SERVER_PID" 2>/dev/null || true
+      # Wait up to 5 seconds for the server to exit gracefully.
+      for _ in $(seq 1 5); do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      # If still alive, force terminate with SIGKILL.
+      if kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+      fi
+      wait "$SERVER_PID" 2>/dev/null || true
+      SERVER_PID=""
+    fi
+
+    # Cleanup possible orphan processes left by stack exec (avoid CI hangs).
+    pkill -f "periodicd" 2>/dev/null || true
+    pkill -f "periodic-run" 2>/dev/null || true
+
     rm -f /tmp/periodic.sock
   }
-  trap cleanup RETURN
+
+  # Use EXIT instead of RETURN so cleanup still runs when set -e exits early.
+  trap cleanup EXIT
 
   for i in $(seq 1 20); do
     if stack exec periodic -- ping >/dev/null 2>&1; then
@@ -146,7 +179,8 @@ EOF
 
   grep -Fx "echo-pipe-submit-${tag}" "pipe-events-${tag}.log"
 
-  trap - RETURN
+  # On success, clear the EXIT trap and cleanup manually before the next suite.
+  trap - EXIT
   cleanup
 }
 
@@ -166,8 +200,17 @@ run_rsa_modes_suite() {
   WORKER_PID=""
 
   stop_worker() {
-    if [ -n "$WORKER_PID" ]; then
+    if [ -n "${WORKER_PID:-}" ]; then
       kill "$WORKER_PID" 2>/dev/null || true
+      for _ in $(seq 1 3); do
+        if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      if kill -0 "$WORKER_PID" 2>/dev/null; then
+        kill -9 "$WORKER_PID" 2>/dev/null || true
+      fi
       wait "$WORKER_PID" 2>/dev/null || true
       WORKER_PID=""
     fi
@@ -175,11 +218,31 @@ run_rsa_modes_suite() {
 
   cleanup() {
     stop_worker
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+
+    if [ -n "${SERVER_PID:-}" ]; then
+      kill "$SERVER_PID" 2>/dev/null || true
+      for _ in $(seq 1 5); do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      if kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+      fi
+      wait "$SERVER_PID" 2>/dev/null || true
+      SERVER_PID=""
+    fi
+
+    # Fallback cleanup.
+    pkill -f "periodicd" 2>/dev/null || true
+    pkill -f "periodic-run" 2>/dev/null || true
+
     rm -f /tmp/periodic.sock
   }
-  trap cleanup RETURN
+
+  # Also use EXIT instead of RETURN here.
+  trap cleanup EXIT
 
   for i in $(seq 1 20); do
     if stack exec periodic -- \
@@ -224,9 +287,12 @@ run_rsa_modes_suite() {
     stop_worker
   done
 
-  trap - RETURN
+  # Clear trap and cleanup manually at the end.
+  trap - EXIT
   cleanup
 }
+
+# --------- Main execution flow ---------
 
 run_suite ":memory:" "memory" "periodic-memory.sqlite"
 run_suite "file://periodic-sqlite.sqlite" "sqlite" "periodic-sqlite.sqlite"
