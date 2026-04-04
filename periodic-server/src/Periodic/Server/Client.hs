@@ -157,7 +157,8 @@ handleWorkerSessionT _ (WC.Release n jh) = do
   lift $ releaseLock n jh
   send $ packetRES Success
 
-handleWorkerSessionT ClientConfig {..} WC.JobAssigned = pure ()
+handleWorkerSessionT _ WC.JobAssigned = pure ()
+handleWorkerSessionT _ WC.JobUnassigned = pure ()
 
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)

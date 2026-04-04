@@ -6,7 +6,7 @@ module Periodic.Server
   ) where
 
 
-import           Control.Monad                (unless, void, when)
+import           Control.Monad                (void, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString              (ByteString)
@@ -49,7 +49,7 @@ import           Periodic.Types               (ClientType, Job, Msgid (..),
                                                getHandle, getResult, getTimeout,
                                                packetRES, regPacketRES)
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
-import           Periodic.Types.WorkerCommand (isJobAssigned)
+import           Periodic.Types.WorkerCommand (getJobAssignResult)
 import           System.Entropy               (getEntropy)
 import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
@@ -60,9 +60,9 @@ import           UnliftIO                     (MonadUnliftIO, atomically,
 type ServerEnv serv =
   M.ServerEnv serv ClientConfig Nid Msgid (Packet Command)
 
-isJobAssignedCmd :: Command -> Bool
-isJobAssignedCmd (WC cmd) = isJobAssigned cmd
-isJobAssignedCmd _        = False
+getJobAssignResultCmd :: Command -> Maybe Bool
+getJobAssignResultCmd (WC cmd) = getJobAssignResult cmd
+getJobAssignResultCmd _        = Nothing
 
 doAssignJob :: Transport tp => ServerEnv serv tp -> Int -> Nid -> Msgid -> Job -> IO Bool
 doAssignJob sEnv wait nid msgid job = do
@@ -70,7 +70,7 @@ doAssignJob sEnv wait nid msgid job = do
   case menv0 of
     Nothing   -> return False
     Just env0 -> do
-      assigned <- newTVarIO False
+      assigned <- newTVarIO Nothing
       mr <- timeout waitS
          $ tryAny
          $ runNodeT1 env0
@@ -79,22 +79,30 @@ doAssignJob sEnv wait nid msgid job = do
 
         S.send (packetRES (JobAssign job))
         foreverExit $ \exit -> do
-          ret <- lift $ getResult False isJobAssignedCmd <$> S.receive
-          atomically $ writeTVar assigned ret
-          when ret $ exit ()
+          ret <- lift $ getResult Nothing getJobAssignResultCmd <$> S.receive
+          case ret of
+            Nothing -> pure ()
+            Just r -> do
+              atomically $ writeTVar assigned (Just r)
+              exit ()
 
-      case mr of
-        Nothing         -> errorM "Periodic.Server" "Job assignment timed out. Consider increasing the 'assign-wait' configuration value to allow more time."
-        Just (Left err) -> errorM "Periodic.Server" $ "Job assignment error: " ++ show err
-        _               -> pure ()
+      isTransportError <- case mr of
+        Nothing -> do
+          errorM "Periodic.Server" "Job assignment timed out. Consider increasing the 'assign-wait' configuration value to allow more time."
+          pure True
+        Just (Left err) -> do
+          errorM "Periodic.Server" $ "Job assignment error: " ++ show err
+          pure True
+        _ -> pure False
 
-      r <- readTVarIO assigned
+      mrAssigned <- readTVarIO assigned
+      let r = mrAssigned == Just True
       when r $ do
         env1 <- runNodeT1 env0 env
         expiredAt <- (+tout) <$> getEpochTime
         IOMap.insert jh expiredAt (wJobQueue env1)
 
-      unless r $ runNodeT1 env0 stopNodeT
+      when (isTransportError && not r) $ runNodeT1 env0 stopNodeT
 
       return r
 

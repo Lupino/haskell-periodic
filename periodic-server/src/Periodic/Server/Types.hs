@@ -102,6 +102,8 @@ instance Binary Command where
       32 -> WC <$> get
       -- 0x21 WC.JobAssigned
       33 -> WC <$> get
+      -- 0x22 WC.JobUnassigned
+      34 -> WC <$> get
       _  -> fail $ "Error Command " ++ show cmd
 
   put (CC cmd) = put cmd

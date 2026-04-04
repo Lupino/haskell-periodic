@@ -25,7 +25,8 @@ module Periodic.Trans.Worker
   ) where
 
 
-import           Control.Monad                (forever, replicateM, unless, void, when)
+import           Control.Monad                (forever, replicateM, unless,
+                                               void, when)
 import           Control.Monad.Reader.Class   (MonadReader, asks)
 import           Control.Monad.Trans.Class    (MonadTrans, lift)
 import           Control.Monad.Trans.Reader   (ReaderT (..), runReaderT)
@@ -258,6 +259,7 @@ work
   => Int -> WorkerT tp m ()
 work size = do
   maxSize <- asks maxSizeH
+  tskSize <- asks tskSizeH
   gl      <- asks grabList
 
   atomically $ writeTVar maxSize size
@@ -265,7 +267,9 @@ work size = do
   runJobT $ do
     mapM_ (\msgid -> Map.insert msgid 0 gl) =<< replicateM size nextSessionId
     forever $ do
-      nextGrab gl
+      s <- liftIO $ readTVarIO tskSize
+      maxSize' <- liftIO $ readTVarIO maxSize
+      when (s < maxSize') $ nextGrab gl
       threadDelay 60000000 -- 60s
 
 runningTaskCount :: MonadIO m => WorkerT tp m Int
@@ -283,43 +287,48 @@ waitIdle = do
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()
 processJob WorkerEnv{..} ((sid, _), job) = do
-  withSessionT_ (pure sid) (Just 10) $ send (packetREQ JobAssigned)
-
-  atomically $ do
+  isAccepted <- atomically $ do
     s <- readTVar tskSizeH
     maxSize <- readTVar maxSizeH
-    when (maxSize <= s) retrySTM
-    writeTVar tskSizeH (s + 1)
+    if maxSize <= s
+      then pure False
+      else do
+        writeTVar tskSizeH (s + 1)
+        pure True
 
-  nextGrab grabList
+  withSessionT_ (pure sid) (Just 10) $
+    send (packetREQ $ if isAccepted then JobAssigned else JobUnassigned)
 
-  let finishJob = do
-        atomically $ do
-          s <- readTVar tskSizeH
-          writeTVar tskSizeH (s - 1)
-        void $ sendGrab sid
+  when isAccepted $ do
+    nextGrab grabList
 
-  withEnv (Just job) (do
-    f <- func_
-    task <- Map.lookup f taskList
-    case task of
-      Nothing -> do
-        void $ removeFunc_ taskList f
-        void workFail
-      Just task' ->
-        catchAny task' $ \e -> do
-          n <- name
-          liftIO $ errorM "Periodic.Trans.Worker"
-                 $ concat [ "Failing on running job { name = "
-                          , n
-                          , ", "
-                          , show f
-                          , " }"
-                          , "\nError: "
-                          , show e
-                          ]
+    let finishJob = do
+          atomically $ do
+            s <- readTVar tskSizeH
+            writeTVar tskSizeH (s - 1)
+          void $ sendGrab sid
+
+    withEnv (Just job) (do
+      f <- func_
+      task <- Map.lookup f taskList
+      case task of
+        Nothing -> do
+          void $ removeFunc_ taskList f
           void workFail
-    ) `finally` finishJob
+        Just task' ->
+          catchAny task' $ \e -> do
+            n <- name
+            liftIO $ errorM "Periodic.Trans.Worker"
+                   $ concat [ "Failing on running job { name = "
+                            , n
+                            , ", "
+                            , show f
+                            , " }"
+                            , "\nError: "
+                            , show e
+                            ]
+            void workFail
+      ) `finally` finishJob
 
 checkHealth
   :: (MonadUnliftIO m, Transport tp)
