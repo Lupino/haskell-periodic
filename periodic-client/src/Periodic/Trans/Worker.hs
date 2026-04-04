@@ -301,34 +301,38 @@ processJob WorkerEnv{..} ((sid, _), job) = do
 
   when isAccepted $ do
     nextGrab grabList
+    processJob_ taskList job `finally` finishJob tskSizeH sid
 
-    let finishJob = do
-          atomically $ do
-            s <- readTVar tskSizeH
-            writeTVar tskSizeH (s - 1)
-          void $ sendGrab sid
+finishJob :: (MonadUnliftIO m, Transport tp) => TVar Int -> Msgid -> JobT tp m ()
+finishJob tskSizeH sid = do
+  atomically $ do
+    s <- readTVar tskSizeH
+    writeTVar tskSizeH (s - 1)
+  void $ sendGrab sid
 
-    withEnv (Just job) (do
-      f <- func_
-      task <- Map.lookup f taskList
-      case task of
-        Nothing -> do
-          void $ removeFunc_ taskList f
-          void workFail
-        Just task' ->
-          catchAny task' $ \e -> do
-            n <- name
-            liftIO $ errorM "Periodic.Trans.Worker"
-                   $ concat [ "Failing on running job { name = "
-                            , n
-                            , ", "
-                            , show f
-                            , " }"
-                            , "\nError: "
-                            , show e
-                            ]
-            void workFail
-      ) `finally` finishJob
+processJob_ :: (MonadUnliftIO m, Transport tp) => TaskList tp m -> Job -> JobT tp m ()
+processJob_ taskList job = withEnv (Just job) $ do
+  f <- func_
+  task <- Map.lookup f taskList
+  case task of
+    Nothing -> do
+      void $ removeFunc_ taskList f
+      void workFail
+    Just task' ->
+      catchAny task' $ \e -> do
+        n <- name
+        liftIO
+          $ errorM "Periodic.Trans.Worker"
+          $ concat
+          [ "Failing on running job { name = "
+          , n
+          , ", "
+          , show f
+          , " }"
+          , "\nError: "
+          , show e
+          ]
+        void workFail
 
 checkHealth
   :: (MonadUnliftIO m, Transport tp)
