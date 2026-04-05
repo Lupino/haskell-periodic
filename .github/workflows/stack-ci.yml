@@ -69,3 +69,6 @@ jobs:
 
       - name: Stack reconnect integration tests
         run: bash ./scripts/ci/reconnect-integration-spec.sh
+
+      - name: Stack job-unassigned integration tests
+        run: bash ./scripts/ci/job-unassigned-integration-spec.sh
