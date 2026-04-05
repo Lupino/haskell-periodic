@@ -22,17 +22,15 @@ import           Metro.Class                (Transport)
 import qualified Metro.TP.RSA               as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
-import           Periodic.Exec.Util         (exitNow, getProcessMem,
+import           Periodic.Exec.Util         (getProcessMem,
                                              installShutdownSignalHandlers,
                                              isValidHost, parseMemStr,
-                                             strictReadArg,
-                                             waitForShutdownRequest)
+                                             strictReadArg)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workData, workDone,
                                              workDone_, workFail, workload)
-import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast, close,
-                                             removeFunc, runningTaskCount,
-                                             startWorkerT, waitIdle, work)
+import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
+                                             startWorkerTWithSignal, work)
 import           Periodic.Types             (FuncName (..), LockName (..))
 import           System.Environment         (getArgs, lookupEnv)
 import           System.Exit                (ExitCode (..), exitSuccess)
@@ -45,13 +43,13 @@ import           System.Process             (CreateProcess (std_in, std_out),
                                              waitForProcess, withCreateProcess)
 import           UnliftIO                   (MVar, SomeException, TQueue, TVar,
                                              async, atomically, cancel,
-                                             evaluate, finally, mask,
-                                             newEmptyMVar, newTQueueIO,
-                                             newTVarIO, onException, putMVar,
-                                             readTQueue, readTVar, readTVarIO,
-                                             retrySTM, takeMVar, throwIO,
-                                             throwString, try, tryIO, wait,
-                                             writeTQueue, writeTVar)
+                                             evaluate, mask, newEmptyMVar,
+                                             newTQueueIO, newTVarIO,
+                                             onException, putMVar, readTQueue,
+                                             readTVar, readTVarIO, retrySTM,
+                                             takeMVar, throwIO, throwString,
+                                             try, tryIO, wait, writeTQueue,
+                                             writeTVar)
 
 
 data Options = Options
@@ -174,13 +172,13 @@ main = do
     shuttingDown
 
   case rsaPrivatePath of
-    "" -> startWorkerT (socket host) $ doWork shuttingDown opts func cmd argv
+    "" -> startWorkerTWithSignal (Just shuttingDown) (pure ()) (socket host) $ doWork opts func cmd argv
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      startWorkerT (genTP $ socket host) $ doWork shuttingDown opts func cmd argv
+      startWorkerTWithSignal (Just shuttingDown) (pure ()) (genTP $ socket host) $ doWork opts func cmd argv
 
-doWork :: Transport tp => TVar Bool -> Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
-doWork shuttingDown opts@Options{..} func cmd argv = do
+doWork :: Transport tp => Options -> FuncName -> String -> [String] -> WorkerT tp IO ()
+doWork opts@Options{..} func cmd argv = do
   let w = processWorker opts cmd argv
   registered <-
     if notify then broadcast func w
@@ -191,15 +189,7 @@ doWork shuttingDown opts@Options{..} func cmd argv = do
   unless registered $
     throwString "worker register failed: server did not accept CanDo/Broadcast"
   liftIO $ putStrLn "Worker started."
-  shutdownAsync <- async $ do
-    waitForShutdownRequest shuttingDown
-    rt <- runningTaskCount
-    liftIO $ errorM "periodic-run" $ "Got shutdown signal, state: shuttingDown=True, runningTasks=" ++ show rt
-    void $ removeFunc func
-    waitIdle
-    close
-    liftIO exitNow
-  work thread `finally` cancel shutdownAsync
+  work thread
 
 finishProcess :: (String -> IO ()) ->  Int -> Int64 -> ProcessHandle -> IO ExitCode
 finishProcess _ 0 0 ph = waitForProcess ph

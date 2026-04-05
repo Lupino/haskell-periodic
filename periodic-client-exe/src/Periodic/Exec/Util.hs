@@ -4,31 +4,23 @@ module Periodic.Exec.Util
   ( safeRead
   , strictReadArg
   , parseMemStr
-  , parseMemLine
-  , parseMemMap
-  , getMemMap
   , getProcessMem
   , isValidHost
   , installShutdownSignalHandlers
-  , waitForShutdownRequest
-  , exitNow
   ) where
 
-import           Control.Monad          (unless, void)
-import           Control.Monad.IO.Class (MonadIO, liftIO)
-import           Data.Int               (Int64)
-import           Data.List              (find, isPrefixOf)
-import           Data.Maybe             (fromMaybe)
-import           System.Exit            (exitSuccess)
-import           System.Process         (Pid, readProcess)
-import           Text.Read              (readMaybe)
-import           UnliftIO               (TVar, atomically, readTVar, retrySTM,
-                                         writeTVar)
+import           Control.Monad        (void)
+import           Data.Int             (Int64)
+import           Data.List            (find, isPrefixOf)
+import           Data.Maybe           (fromMaybe)
+import           System.Process       (Pid, readProcess)
+import           Text.Read            (readMaybe)
+import           UnliftIO             (TVar, atomically, writeTVar)
 #ifdef mingw32_HOST_OS
-import qualified GHC.ConsoleHandler     as Console
+import qualified GHC.ConsoleHandler   as Console
 #else
-import           System.Posix.Signals   (Handler (Catch), installHandler,
-                                         sigHUP, sigINT, sigTERM)
+import           System.Posix.Signals (Handler (Catch), installHandler, sigHUP,
+                                       sigINT, sigTERM)
 #endif
 
 safeRead :: Read a => a -> String -> a
@@ -90,11 +82,3 @@ installShutdownSignalHandlers onSignal shuttingDown = do
   void $ installHandler sigTERM (Catch $ markShutdown "TERM") Nothing
   void $ installHandler sigINT (Catch $ markShutdown "INT") Nothing
 #endif
-
-waitForShutdownRequest :: MonadIO m => TVar Bool -> m ()
-waitForShutdownRequest shuttingDown = liftIO $ atomically $ do
-  done <- readTVar shuttingDown
-  unless done retrySTM
-
-exitNow :: IO ()
-exitNow = exitSuccess

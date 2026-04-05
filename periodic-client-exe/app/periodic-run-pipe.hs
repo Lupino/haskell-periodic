@@ -25,18 +25,16 @@ import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Metro.Utils               (setupLog)
 import           Paths_periodic_client_exe (version)
-import           Periodic.Exec.Util        (exitNow, getProcessMem,
+import           Periodic.Exec.Util        (getProcessMem,
                                             installShutdownSignalHandlers,
                                             isValidHost, parseMemStr,
-                                            strictReadArg,
-                                            waitForShutdownRequest)
+                                            strictReadArg)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workData, workDone,
                                             workDone_, workFail, workload)
-import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast, close,
-                                            removeFunc, runningTaskCount,
-                                            startWorkerT, waitIdle, work)
+import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
+                                            startWorkerTWithSignal, work)
 import           Periodic.Types            (FuncName (..), LockName (..),
                                             Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
@@ -182,13 +180,13 @@ main = do
   runners <- liftIO $ mapM (\_ -> createRunner pipes memLimit readyTimeoutS cmd argv) [1 .. thread]
 
   case rsaPrivatePath of
-    "" -> startWorkerT (socket host) $ doWork shuttingDown pipes runners opts func
+    "" -> startWorkerTWithSignal (Just shuttingDown) (cleanupPipes pipes runners) (socket host) $ doWork pipes opts func
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      startWorkerT (genTP $ socket host) $ doWork shuttingDown pipes runners opts func
+      startWorkerTWithSignal (Just shuttingDown) (cleanupPipes pipes runners) (genTP $ socket host) $ doWork pipes opts func
 
-doWork :: Transport tp => TVar Bool -> TQueue Pipe -> [Async ()] -> Options -> FuncName -> WorkerT tp IO ()
-doWork shuttingDown pipes runners opts@Options{..} func = do
+doWork :: Transport tp => TQueue Pipe -> Options -> FuncName -> WorkerT tp IO ()
+doWork pipes opts@Options{..} func = do
   let w = processPipeWorker opts pipes
   registered <-
     if notify then broadcast func w
@@ -199,17 +197,13 @@ doWork shuttingDown pipes runners opts@Options{..} func = do
   unless registered $
     throwString "pipe worker register failed: server did not accept CanDo/Broadcast"
   liftIO $ putStrLn "Pipe Worker started."
-  shutdownAsync <- async $ do
-      waitForShutdownRequest shuttingDown
-      rt <- runningTaskCount
-      liftIO $ infoM "periodic-run-pipe" $ "Got shutdown signal, state: shuttingDown=True, runningTasks=" ++ show rt
-      void $ removeFunc func
-      waitIdle
-      liftIO $ stopPipes pipes
-      mapM_ cancel runners
-      close
-      liftIO exitNow
-  work thread `finally` cancel shutdownAsync
+
+  work thread
+
+cleanupPipes :: TQueue Pipe -> [Async ()] -> IO ()
+cleanupPipes pipes runners = do
+  stopPipes pipes
+  mapM_ cancel runners
 
 type PipeOut = IOMap Msgid (TQueue ByteString)
 

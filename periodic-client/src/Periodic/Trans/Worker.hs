@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -12,13 +13,12 @@
 module Periodic.Trans.Worker
   ( WorkerT
   , startWorkerT
+  , startWorkerTWithSignal
   , ping
   , addFunc
   , broadcast
   , removeFunc
   , work
-  , runningTaskCount
-  , waitIdle
   , close
   , runJobT
   , getClientEnv
@@ -51,7 +51,7 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
                                                startNodeT_, withEnv,
                                                withSessionT_)
 import           Metro.Session                (receive, send)
-import           Metro.Utils                  (getEpochTime)
+import           Metro.Utils                  (foreverExit, getEpochTime)
 import           Periodic.Node
 import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
                                                      close, getClientEnv, ping,
@@ -78,11 +78,13 @@ instance (Binary a) => RecvPacket (Maybe Job) (Packet a) where
   recvPacket _ = recvRawPacket
 
 data WorkerEnv tp m = WorkerEnv
-    { taskList :: TaskList tp m
-    , jobList  :: JobList
-    , tskSizeH :: TVar Int
-    , maxSizeH :: TVar Int
-    , grabList :: GrabList
+    { taskList       :: TaskList tp m
+    , jobList        :: JobList
+    , tskSizeH       :: TVar Int
+    , maxSizeH       :: TVar Int
+    , grabList       :: GrabList
+    , queueInFlightH :: TVar Int
+    , shutdownH      :: Maybe (TVar Bool)
     }
 
 newtype WorkerT tp m a = WorkerT {unWorkerT :: ReaderT (WorkerEnv tp m) (JobT tp m) a}
@@ -109,21 +111,36 @@ runWorkerT workerEnv = flip runReaderT workerEnv . unWorkerT
 startWorkerT
   :: (MonadUnliftIO m, Transport tp)
   => TransportConfig tp -> WorkerT tp m () -> m ()
-startWorkerT config m = forever $ do
-  e <- tryAny (startWorkerT_ config m)
-  case e of
-    Left err -> liftIO $ errorM "Periodic.Trans.Worker"
-      $ "Worker disconnected, retrying in 3s. Error: " ++ show err
-    Right _ ->
-      liftIO $ errorM "Periodic.Trans.Worker" "Worker disconnected, retrying in 3s."
-  threadDelay reconnectDelayUs
+startWorkerT = startWorkerTWithSignal Nothing $ pure ()
 
-  where reconnectDelayUs = 3 * 1000 * 1000
+getShutdown :: MonadIO m => Maybe (TVar Bool) -> m Bool
+getShutdown = maybe (pure False) readTVarIO
+
+startWorkerTWithSignal
+  :: (MonadUnliftIO m, Transport tp)
+  => Maybe (TVar Bool) -> m () -> TransportConfig tp -> WorkerT tp m () -> m ()
+startWorkerTWithSignal mShutdownH cleanup config m = foreverExit $ \exit -> do
+  shouldStop <- getShutdown mShutdownH
+  when shouldStop $ exit ()
+
+  e <- lift $ tryAny (startWorkerT_ mShutdownH cleanup config m)
+  shouldStopRetry <- getShutdown mShutdownH
+  when shouldStopRetry $ exit ()
+
+  let extMsg = case e of
+                 Left err -> " Error: " ++ show err
+                 Right _  -> ""
+
+
+  liftIO $ errorM "Periodic.Trans.Worker" $ "Worker disconnected, retrying in 3s." ++ extMsg
+  lift $ threadDelay reconnectDelayUs
+  where
+    reconnectDelayUs = 3 * 1000 * 1000
 
 startWorkerT_
   :: (MonadUnliftIO m, Transport tp)
-  => TransportConfig tp -> WorkerT tp m () -> m ()
-startWorkerT_ config m = do
+  => Maybe (TVar Bool) -> m () -> TransportConfig tp -> WorkerT tp m () -> m ()
+startWorkerT_ shutdownH cleanup config m = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
     Conn.send $ regPacketREQ TypeWorker
@@ -141,6 +158,7 @@ startWorkerT_ config m = do
   tskSizeH <- newTVarIO 0
   maxSizeH <- newTVarIO 0
   grabList <- Map.empty
+  queueInFlightH <- newTVarIO 0
 
   jobEnv1 <- initEnv1 mapEnv connEnv Nothing (Nid nid) True sessionGen
   setDefaultSessionTimeout1 jobEnv1 100
@@ -152,7 +170,10 @@ startWorkerT_ config m = do
     aHealth <- async $ runWorkerT wEnv workerHealthLoop
     aQueue <- async $ runWorkerT wEnv $ runJobT $ processJobQueue wEnv
     aMain <- async $ runWorkerT wEnv m
-    (_, e) <- waitAnyCatchCancel [aNode, aHealth, aQueue, aMain]
+    (_, e) <- waitAnyCatch [aNode, aHealth, aQueue, aMain]
+    isShuttingDown <- getShutdown shutdownH
+    when isShuttingDown $ runWorkerT wEnv $ gracefulExit cleanup
+    mapM_ cancel [aNode, aHealth, aQueue, aMain]
     either throwIO pure e
 
   where mapEnv =
@@ -225,6 +246,11 @@ removeFunc_ ref f = do
   Map.delete f ref
   return r
 
+removeFuncServerOnly_
+  :: (MonadUnliftIO m, Transport tp)
+  => FuncName -> JobT tp m Bool
+removeFuncServerOnly_ f = BT.successRequest (packetREQ $ CantDo f)
+
 getAssignJob :: ServerCommand -> Maybe Job
 getAssignJob (JobAssign job) = Just job
 getAssignJob _               = Nothing
@@ -261,36 +287,72 @@ work size = do
   maxSize <- asks maxSizeH
   tskSize <- asks tskSizeH
   gl      <- asks grabList
+  mShutdownH <- asks shutdownH
 
   atomically $ writeTVar maxSize size
 
   runJobT $ do
     mapM_ (\msgid -> Map.insert msgid 0 gl) =<< replicateM size nextSessionId
-    forever $ do
-      s <- liftIO $ readTVarIO tskSize
-      maxSize' <- liftIO $ readTVarIO maxSize
-      when (s < maxSize') $ nextGrab gl
-      threadDelay 60000000 -- 60s
+    foreverExit $ \exit -> do
+      isShuttingDown <- getShutdown mShutdownH
+      when isShuttingDown $ exit ()
+      s <- readTVarIO tskSize
+      maxSize' <- readTVarIO maxSize
+      when (s < maxSize') $ lift $ nextGrab gl
+      waitForNextRound mShutdownH
+  where
+    -- Keep the original ~60s grab cadence, but wake early on shutdown.
+    waitForNextRound mShutdownH = do
+      timer <- liftIO $ registerDelay 60000000
+      atomically $ do
+        timeoutReached <- readTVar timer
+        isShuttingDown <- maybe (pure False) readTVar mShutdownH
+        unless (timeoutReached || isShuttingDown) retrySTM
+
+gracefulExit
+  :: (MonadUnliftIO m, Transport tp)
+  => m () -> WorkerT tp m ()
+gracefulExit cleanup = do
+  tskList <- asks taskList
+  funcs <- atomically $ map fst <$> MapS.toList tskList
+  runJobT $ mapM_ removeFuncServerOnly_ funcs
+  -- New jobs will be refused in processJob with JobUnassigned once
+  -- shutdownH is set.
+  liftIO $ errorM "Periodic.Trans.Worker" $ "Got shutdown signal."
+  io <- async $ forever $ do
+    rt <- runningTaskCount
+    liftIO $ errorM "Periodic.Trans.Worker" $ "State: shuttingDown=True, runningTasks=" ++ show rt
+    threadDelay 1000000
+  waitIdle
+  lift cleanup
+  -- close
+
+  cancel io
 
 runningTaskCount :: MonadIO m => WorkerT tp m Int
 runningTaskCount = do
   ref <- asks tskSizeH
-  liftIO $ readTVarIO ref
+  readTVarIO ref
 
 waitIdle :: MonadIO m => WorkerT tp m ()
 waitIdle = do
-  ref <- asks tskSizeH
-  liftIO $ atomically $ do
-    n <- readTVar ref
-    when (n > 0) retrySTM
+  runningRef <- asks tskSizeH
+  inFlightRef <- asks queueInFlightH
+  jobsRef <- asks jobList
+  atomically $ do
+    n <- readTVar runningRef
+    q <- readTVar inFlightRef
+    pending <- MapS.toList jobsRef
+    when (n > 0 || q > 0 || not (null pending)) retrySTM
 
 
 processJob :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> ((Msgid, JobHandle), Job) -> JobT tp m ()
 processJob WorkerEnv{..} ((sid, _), job) = do
   isAccepted <- atomically $ do
+    isShuttingDown <- maybe (pure False) readTVar shutdownH
     s <- readTVar tskSizeH
     maxSize <- readTVar maxSizeH
-    if maxSize <= s
+    if isShuttingDown || maxSize <= s
       then pure False
       else do
         writeTVar tskSizeH (s + 1)
@@ -301,14 +363,16 @@ processJob WorkerEnv{..} ((sid, _), job) = do
 
   when isAccepted $ do
     nextGrab grabList
-    processJob_ taskList job `finally` finishJob tskSizeH sid
+    processJob_ taskList job `finally` finishJob tskSizeH shutdownH sid
 
-finishJob :: (MonadUnliftIO m, Transport tp) => TVar Int -> Msgid -> JobT tp m ()
-finishJob tskSizeH sid = do
+finishJob :: (MonadUnliftIO m, Transport tp) => TVar Int -> Maybe (TVar Bool) -> Msgid -> JobT tp m ()
+finishJob tskSizeH mShutdownH sid = do
   atomically $ do
     s <- readTVar tskSizeH
     writeTVar tskSizeH (s - 1)
-  void $ sendGrab sid
+  shouldGrab <- not <$> getShutdown mShutdownH
+  when shouldGrab $
+    void $ sendGrab sid
 
 processJob_ :: (MonadUnliftIO m, Transport tp) => TaskList tp m -> Job -> JobT tp m ()
 processJob_ taskList job = withEnv (Just job) $ do
@@ -348,4 +412,12 @@ processJobQueue wEnv@WorkerEnv {..} = forever $ do
                 MapS.modifyIOMap (const RMap.empty) jobList
                 return v
 
-  mapM_ (async . processJob wEnv) jobs
+  mapM_ (\j -> do
+            atomically $ do
+              q <- readTVar queueInFlightH
+              writeTVar queueInFlightH (q + 1)
+            void $ async $
+              processJob wEnv j `finally` atomically (do
+                q <- readTVar queueInFlightH
+                writeTVar queueInFlightH (q - 1)))
+        jobs
