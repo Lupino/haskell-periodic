@@ -134,6 +134,15 @@ or use the `periodic-run-pipe` command
 
     periodic status
 
+### E2E benchmark defaults
+
+The benchmark script `scripts/bench/e2e_throughput_latency.sh` uses these defaults:
+
+    CONCURRENCY=10
+    WORKER_THREADS=4
+
+This pair was selected from repeated local runs as the most stable baseline
+for high throughput with low failure rate.
 
 ### MacOS bundle
 

@@ -311,10 +311,8 @@ pollJob fn = do
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   when (maxBatchSize `div` 4 > size) $ do
     p <- asks sPersist
-    count <- liftIO $ P.countPending p fn next
-    when (count > size) $
-      liftIO (P.getPendingJob p fn next (maxBatchSize + size))
-       >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
+    liftIO (P.getPendingJob p fn next (maxBatchSize + size))
+      >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
 
 
 getNextPoll :: MonadIO m => m Int64

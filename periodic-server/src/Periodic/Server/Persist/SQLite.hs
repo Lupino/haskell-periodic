@@ -51,6 +51,7 @@ instance Persist SQLite where
         beginTx db
         createConfigTable db
         createJobTable db
+        createJobIndexes db
         createFuncTable db
         createMetricTable db
         allPending db
@@ -108,6 +109,11 @@ createJobTable db = void . exec db $ Utf8 $
     `append` " state  INTEGER DEFAULT 0,"
     `append` " sched_at INTEGER DEFAULT 0,"
     `append` " PRIMARY KEY (func, name))"
+
+createJobIndexes :: Database -> IO ()
+createJobIndexes db = do
+  void . exec db $ Utf8 "CREATE INDEX IF NOT EXISTS idx_jobs_func_state_sched_at ON jobs (func, state, sched_at)"
+  void . exec db $ Utf8 "CREATE INDEX IF NOT EXISTS idx_jobs_state_sched_at ON jobs (state, sched_at)"
 
 createFuncTable :: Database -> IO ()
 createFuncTable db = void . exec db $ Utf8 $

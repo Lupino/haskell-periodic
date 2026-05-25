@@ -26,7 +26,8 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
 import           System.Log.Logger       (infoM)
 import           UnliftIO                (Exception, STM, SomeException, TVar,
                                           Typeable, atomically, modifyTVar',
-                                          newTVar, readTVar)
+                                          newTVar, newTVarIO, readTVar,
+                                          readTVarIO)
 
 data PureJob = PureJob
   { pureState :: State
@@ -36,8 +37,9 @@ data PureJob = PureJob
 
 type JobMap = IOMap JobName (TVar PureJob)
 
-newtype Memory = Memory
+data Memory = Memory
   { jobList :: IOMap FuncName JobMap
+  , jobSize :: TVar Int64
   }
 
 instance Persist Memory where
@@ -47,6 +49,7 @@ instance Persist Memory where
   newPersist _ = do
     infoM "Periodic.Server.Persist.Memory" "Memory connected"
     jobList  <- IOMap.empty
+    jobSize  <- newTVarIO 0
     return Memory {..}
 
   getOne         = doGetOne
@@ -105,6 +108,7 @@ doInsert m s v = atomically $ do
         }
       jobMap <- IOMapS.fromList [(j, pureJobT)]
       IOMapS.insert f jobMap (jobList m)
+      modifyTVar' (jobSize m) (+1)
     Just jobMap -> do
       mPureJobT <- IOMapS.lookup j jobMap
       case mPureJobT of
@@ -114,6 +118,7 @@ doInsert m s v = atomically $ do
             , pureState = s
             }
           IOMapS.insert j pureJobT jobMap
+          modifyTVar' (jobSize m) (+1)
         Just pureJobT ->
           modifyTVar' pureJobT $ \vv -> vv
             { pureJob = v
@@ -140,7 +145,15 @@ doUpdateState m s f j = atomically $ do
 doDelete :: Memory -> FuncName -> JobName -> IO ()
 doDelete m f j = atomically $ do
   mJobMap <- getJobMap m f
-  mapM_ (IOMapS.delete j) mJobMap
+  case mJobMap of
+    Nothing -> pure ()
+    Just jobMap -> do
+      mPureJobT <- IOMapS.lookup j jobMap
+      case mPureJobT of
+        Nothing -> pure ()
+        Just _ -> do
+          IOMapS.delete j jobMap
+          modifyTVar' (jobSize m) (max 0 . subtract 1)
 
 doSize :: Memory -> State -> FuncName -> IO Int64
 doSize m s f =
@@ -223,8 +236,14 @@ doInsertFuncName m fn = atomically $ do
 
 
 doRemoveFuncName :: Memory -> FuncName -> IO ()
-doRemoveFuncName m fn =
-  atomically $ IOMapS.delete fn $ jobList m
+doRemoveFuncName m fn = atomically $ do
+  mJobMap <- getJobMap m fn
+  case mJobMap of
+    Nothing -> pure ()
+    Just jobMap -> do
+      count <- fromIntegral . length <$> IOMapS.elems jobMap
+      modifyTVar' (jobSize m) (max 0 . subtract count)
+      IOMapS.delete fn $ jobList m
 
 doFuncList :: Memory -> IO [FuncName]
 doFuncList = IOMap.keys . jobList
@@ -238,9 +257,7 @@ doMinSchedAt m fn =
   atomically $ safeMinimum <$> mapJobMap m fn (genMapFunc_ getSchedAt (is Pending))
 
 memorySize :: Memory -> IO Int64
-memorySize Memory {..} = do
-  sizes <- mapM IOMap.size =<< IOMap.elems jobList
-  pure . fromIntegral $ sum sizes
+memorySize Memory {..} = readTVarIO jobSize
 
 doInsertMetric :: Memory -> String -> String -> Int -> IO ()
 doInsertMetric _ _ _ _ = pure ()

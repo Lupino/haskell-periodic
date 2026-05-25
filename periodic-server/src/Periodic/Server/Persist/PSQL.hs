@@ -26,6 +26,7 @@ import           Database.PSQL           (From, FromField (..), Only (..),
                                           ResultError (ConversionFailed), Size,
                                           TableName, TablePrefix, ToField (..),
                                           constraintPrimaryKey, count,
+                                          createIndex,
                                           createPSQLPool, createTable, delete,
                                           getTablePrefix, insert,
                                           insertOrUpdate, pageAsc, pageNone,
@@ -101,6 +102,7 @@ instance Persist PSQL where
     runPSQLPool tablePrefix pool $ withTransaction $ do
       void createConfigTable
       void createJobTable
+      void createJobIndexes
       void createFuncTable
       void createMetricTable
       void allPending
@@ -168,6 +170,13 @@ createJobTable = do
     , "sched_at INT DEFAULT 0"
     , constraintPrimaryKey tablePrefix jobs ["func", "name"]
     ]
+
+createJobIndexes :: DB.PSQL Int64
+createJobIndexes = do
+  _ <- createIndex False jobs "idx_jobs_func_state_sched_at"
+       ["func", "state", "sched_at"]
+  createIndex False jobs "idx_jobs_state_sched_at"
+    ["state", "sched_at"]
 
 createFuncTable :: DB.PSQL Int64
 createFuncTable = do
