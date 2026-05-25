@@ -8,6 +8,7 @@ module Main
   ) where
 
 import           Control.Monad                  (when)
+import           Control.Applicative            ((<|>))
 import           Data.Int                       (Int64)
 import           Data.Maybe                     (fromMaybe)
 import           Data.Version                   (showVersion)
@@ -28,7 +29,7 @@ import           System.Environment             (getArgs, lookupEnv)
 #ifdef mingw32_HOST_OS
 import           System.Exit                    (exitFailure, exitSuccess)
 #else
-import           System.Exit                    (exitSuccess)
+import           System.Exit                    (exitFailure, exitSuccess)
 #endif
 import           System.Log                     (Priority (..))
 import           Text.Read                      (readMaybe)
@@ -44,6 +45,7 @@ data Options = Options
   , schedTaskSize  :: Int
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
+  , invalidOption  :: Maybe String
   }
 
 options :: Maybe String -> Maybe String -> Options
@@ -58,6 +60,7 @@ options h p = Options
   , schedTaskSize  = 2
   , rsaPublicPath  = "public_keys.pem"
   , rsaPrivatePath = ""
+  , invalidOption  = Nothing
   }
 
 parseOptions :: [String] -> Options -> Options
@@ -75,7 +78,8 @@ parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSiz
 parseOptions ("--sched-task-size":x:xs)  opt = parseOptions xs opt { schedTaskSize = strictReadArg "--sched-task-size" x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath = x }
-parseOptions (_:xs)                      opt = parseOptions xs opt
+parseOptions (x:xs)                      opt =
+  parseOptions xs opt { invalidOption = invalidOption opt <|> Just x }
 
 strictReadArg :: Read a => String -> String -> a
 strictReadArg flag raw =
@@ -139,6 +143,12 @@ main = do
   opts@Options {..} <- flip parseOptions (options h p) <$> getArgs
 
   when showHelp printHelp
+  case invalidOption of
+    Just opt -> do
+      putStrLn $ "Unknown option: " ++ opt
+      putStrLn "Use --help to see supported options."
+      exitFailure
+    Nothing -> pure ()
 
   setupLog logLevel
 
@@ -163,7 +173,7 @@ main = do
     failPostgreSQLOnWindows
 #endif
   else
-    run opts (useSQLite storePath)
+    failUnknownStorePath storePath
 
 run :: Persist db => Options -> PersistConfig db -> IO ()
 run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath = ""} config = do
@@ -181,3 +191,9 @@ failPostgreSQLOnWindows = do
   putStrLn "Please use :memory:, file://..., or cache+file://..."
   exitFailure
 #endif
+
+failUnknownStorePath :: String -> IO ()
+failUnknownStorePath p = do
+  putStrLn $ "Unsupported storage path: " ++ show p
+  putStrLn "Supported formats: :memory:, file://..., postgres://..., cache+file://..., cache+postgres://..."
+  exitFailure

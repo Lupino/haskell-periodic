@@ -8,6 +8,7 @@ module Main
 
 import           Control.Concurrent        (threadDelay)
 import           Control.Monad             (forever, unless, void, when)
+import           Control.Applicative       ((<|>))
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as B (drop, hGetLine, hPutStrLn,
@@ -28,7 +29,7 @@ import           Paths_periodic_client_exe (version)
 import           Periodic.Exec.Util        (getProcessMem,
                                             installShutdownSignalHandlers,
                                             isValidHost, parseMemStr,
-                                            strictReadArg)
+                                            parseReadArg, strictReadArgE)
 import           Periodic.Node             (sessionGen)
 import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workData, workDone,
@@ -38,7 +39,7 @@ import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
 import           Periodic.Types            (FuncName (..), LockName (..),
                                             Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
-import           System.Exit               (exitSuccess)
+import           System.Exit               (exitFailure, exitSuccess)
 import           System.IO                 (Handle, hClose, hFlush)
 import           System.Log                (Priority (INFO))
 import           System.Log.Logger         (errorM, infoM)
@@ -75,6 +76,7 @@ data Options = Options
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
   , rsaMode        :: RSA.RSAMode
+  , parseError     :: Maybe String
   }
 
 options :: Maybe Int -> Maybe String -> Options
@@ -94,29 +96,33 @@ options t h = Options
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
   , rsaMode        = RSA.AES
+  , parseError     = Nothing
   }
 
 parseOptions :: [String] -> Options -> (Options, FuncName, String, [String])
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host      = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host      = x }
-parseOptions ("--thread":x:xs)           opt = parseOptions xs opt { thread = strictReadArg "--thread" x }
-parseOptions ("--lock-count":x:xs)       opt = parseOptions xs opt { lockCount = strictReadArg "--lock-count" x }
+parseOptions ("--thread":x:xs)           opt = parseOptions xs $ parseReadArg "--thread" x (\v o -> o { thread = v }) onParseErr opt
+parseOptions ("--lock-count":x:xs)       opt = parseOptions xs $ parseReadArg "--lock-count" x (\v o -> o { lockCount = v }) onParseErr opt
 parseOptions ("--lock-name":x:xs)        opt = parseOptions xs opt { lockName = Just (LockName $ B.pack x) }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("--broadcast":xs)          opt = parseOptions xs opt { notify = True }
 parseOptions ("--no-name":xs)            opt = parseOptions xs opt { useName = False }
 parseOptions ("--skip-fail":xs)          opt = parseOptions xs opt { skipFail = True }
-parseOptions ("--timeout":x:xs)          opt = parseOptions xs opt { timeoutS = strictReadArg "--timeout" x }
-parseOptions ("--ready-timeout":x:xs)    opt = parseOptions xs opt { readyTimeoutS = strictReadArg "--ready-timeout" x }
-parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs opt { retrySecs = strictReadArg "--retry-secs" x }
+parseOptions ("--timeout":x:xs)          opt = parseOptions xs $ parseReadArg "--timeout" x (\v o -> o { timeoutS = v }) onParseErr opt
+parseOptions ("--ready-timeout":x:xs)    opt = parseOptions xs $ parseReadArg "--ready-timeout" x (\v o -> o { readyTimeoutS = v }) onParseErr opt
+parseOptions ("--retry-secs":x:xs)       opt = parseOptions xs $ parseReadArg "--retry-secs" x (\v o -> o { retrySecs = v }) onParseErr opt
 parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = parseMemStr x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = strictReadArg "--rsa-mode" x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs $ parseReadArg "--rsa-mode" x (\v o -> o { rsaMode = v }) onParseErr opt
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions []                          opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                         opt = (opt { showHelp = True }, "", "", [])
 parseOptions (x:y:xs)                    opt = (opt, FuncName $ B.pack x, y, xs)
+
+onParseErr :: String -> Options -> Options
+onParseErr err o = o { parseError = parseError o <|> Just err }
 
 printHelp :: IO ()
 printHelp = do
@@ -158,11 +164,20 @@ printHelp = do
 main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
-  t <- fmap (strictReadArg "THREAD") <$> lookupEnv "THREAD"
+  mtRaw <- lookupEnv "THREAD"
+  t <- case mtRaw of
+    Nothing -> pure Nothing
+    Just raw ->
+      case strictReadArgE "THREAD" raw of
+        Right v  -> pure $ Just v
+        Left err -> putStrLn err >> exitFailure
 
   (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
 
   when showHelp printHelp
+  case parseError of
+    Just err -> putStrLn err >> putStrLn "Use --help to see supported options." >> exitFailure
+    Nothing  -> pure ()
 
   unless (isValidHost host) $ do
     putStrLn $ "Error: Invalid host " ++ host

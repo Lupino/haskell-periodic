@@ -7,6 +7,7 @@ module Main
   ) where
 
 import           Control.Monad             (void, when)
+import           Control.Applicative       ((<|>))
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.Binary               (decodeFileOrFail, encodeFile)
 import           Data.Binary.Get           (ByteOffset)
@@ -23,11 +24,11 @@ import           Metro.TP.RSA              (generateKeyPair)
 import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
-import           Periodic.Exec.Util        (safeRead, strictReadArg)
+import           Periodic.Exec.Util        (parseReadArg, safeRead)
 import           Periodic.Trans.Client
 import           Periodic.Types            (Job, Workload (..))
 import           System.Environment        (getArgs, lookupEnv)
-import           System.Exit               (exitSuccess)
+import           System.Exit               (exitFailure, exitSuccess)
 import           Text.Read                 (readMaybe)
 import           UnliftIO                  (async, atomically, cancel,
                                             newEmptyTMVarIO, takeTMVar, timeout,
@@ -69,6 +70,8 @@ data Options = Options
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
   , rsaMode        :: RSA.RSAMode
+  , parseError     :: Maybe String
+  , invalidOption  :: Maybe String
   }
 
 options :: Maybe String -> Options
@@ -77,6 +80,8 @@ options h = Options
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
   , rsaMode        = RSA.AES
+  , parseError     = Nothing
+  , invalidOption  = Nothing
   }
 
 parseOptions :: [String] -> Options -> (Command, Options, [String])
@@ -85,8 +90,14 @@ parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host       
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host           = x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = strictReadArg "--rsa-mode" x }
-parseOptions (x:xs)                      opt = (parseCommand x, opt, xs)
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs $ parseReadArg "--rsa-mode" x (\v o -> o { rsaMode = v }) onParseErr opt
+parseOptions (x:xs)
+  opt
+    | "-" `isPrefixOf` x = parseOptions xs opt { invalidOption = invalidOption opt <|> Just x }
+    | otherwise          = (parseCommand x, opt, xs)
+
+onParseErr :: String -> Options -> Options
+onParseErr err o = o { parseError = parseError o <|> Just err }
 
 printHelp :: IO ()
 printHelp = do
@@ -242,6 +253,12 @@ main = do
   h <- lookupEnv "PERIODIC_PORT"
 
   (cmd, opt@(Options {..}), argv) <- flip parseOptions (options h) <$> getArgs
+  case parseError of
+    Just err -> putStrLn err >> putStrLn "Use --help to see supported options." >> exitFailure
+    Nothing  -> pure ()
+  case invalidOption of
+    Just optName -> putStrLn ("Unknown option: " ++ optName) >> putStrLn "Use --help to see supported options." >> exitFailure
+    Nothing      -> pure ()
 
   let argc = length argv
 

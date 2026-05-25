@@ -2,7 +2,8 @@
 
 module Periodic.Exec.Util
   ( safeRead
-  , strictReadArg
+  , strictReadArgE
+  , parseReadArg
   , parseMemStr
   , getProcessMem
   , isValidHost
@@ -27,11 +28,17 @@ safeRead :: Read a => a -> String -> a
 safeRead def "" = def
 safeRead def s  = fromMaybe def $ readMaybe s
 
-strictReadArg :: Read a => String -> String -> a
-strictReadArg flag raw =
+strictReadArgE :: Read a => String -> String -> Either String a
+strictReadArgE flag raw =
   case readMaybe raw of
-    Just v  -> v
-    Nothing -> error $ "Invalid value for " ++ flag ++ ": " ++ show raw
+    Just v  -> Right v
+    Nothing -> Left $ "Invalid value for " ++ flag ++ ": " ++ show raw
+
+parseReadArg :: Read a => String -> String -> (a -> s -> s) -> (String -> s -> s) -> s -> s
+parseReadArg flag raw onOk onErr st =
+  case strictReadArgE flag raw of
+    Right v  -> onOk v st
+    Left err -> onErr err st
 
 parseMemStr :: String -> Int64
 parseMemStr [] = 0

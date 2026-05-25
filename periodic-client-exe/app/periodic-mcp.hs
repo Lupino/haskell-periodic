@@ -6,6 +6,7 @@ module Main
   ) where
 
 import           Control.Monad             (when)
+import           Control.Applicative       ((<|>))
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.Maybe (MaybeT, hoistMaybe, runMaybeT)
 import           Data.Aeson                (Value (..), object, (.=))
@@ -25,11 +26,11 @@ import           Network.MCP.Server
 import           Network.MCP.Server.StdIO
 import           Network.MCP.Types
 import           Paths_periodic_client_exe (version)
-import           Periodic.Exec.Util        (strictReadArg)
+import           Periodic.Exec.Util        (parseReadArg)
 import           Periodic.Trans.ClientPool
 import           Periodic.Types            (FuncName (..), JobName (..))
 import           System.Environment        (getArgs, lookupEnv)
-import           System.Exit               (exitSuccess)
+import           System.Exit               (exitFailure, exitSuccess)
 
 
 data Options = Options
@@ -39,6 +40,8 @@ data Options = Options
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
   , rsaMode        :: RSA.RSAMode
+  , parseError     :: Maybe String
+  , invalidOption  :: Maybe String
   }
 
 options :: Maybe String -> Options
@@ -49,19 +52,24 @@ options h = Options
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
   , rsaMode        = RSA.AES
+  , parseError     = Nothing
+  , invalidOption  = Nothing
   }
 
 parseOptions :: [String] -> Options -> Options
 parseOptions []                          opt = opt
 parseOptions ("-H":x:xs)                 opt = parseOptions xs opt { host = x }
 parseOptions ("--host":x:xs)             opt = parseOptions xs opt { host = x }
-parseOptions ("--pool-size":x:xs)        opt = parseOptions xs opt { poolSize = strictReadArg "--pool-size" x }
+parseOptions ("--pool-size":x:xs)        opt = parseOptions xs $ parseReadArg "--pool-size" x (\v o -> o { poolSize = v }) onParseErr opt
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
-parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs opt { rsaMode  = strictReadArg "--rsa-mode" x }
+parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs $ parseReadArg "--rsa-mode" x (\v o -> o { rsaMode = v }) onParseErr opt
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
-parseOptions (_:xs)                      opt = parseOptions xs opt
+parseOptions (x:xs)                      opt = parseOptions xs opt { invalidOption = invalidOption opt <|> Just x }
+
+onParseErr :: String -> Options -> Options
+onParseErr err o = o { parseError = parseError o <|> Just err }
 
 printHelp :: IO ()
 printHelp = do
@@ -200,6 +208,12 @@ main = do
   Options{..} <- flip parseOptions (options h) <$> getArgs
 
   when showHelp printHelp
+  case parseError of
+    Just err -> putStrLn err >> putStrLn "Use --help to see supported options." >> exitFailure
+    Nothing  -> pure ()
+  case invalidOption of
+    Just opt -> putStrLn ("Unknown option: " ++ opt) >> putStrLn "Use --help to see supported options." >> exitFailure
+    Nothing  -> pure ()
 
   when (not ("tcp" `isPrefixOf` host) && not ("unix" `isPrefixOf` host)) $ do
     putStrLn $ "Error: Invalid host " ++ host
