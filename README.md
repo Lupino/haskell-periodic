@@ -94,6 +94,12 @@ Quick start
 
     periodicd
 
+To persist internal hook metrics with queue protection:
+
+    PERIODIC_METRIC_QUEUE_MAX_SIZE=10000 \
+    PERIODIC_METRIC_DROP_LOG_EVERY=1000 \
+    periodicd --hook persist
+
 ### Show file worker
 
 ```haskell
