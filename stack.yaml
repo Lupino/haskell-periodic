@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: lts-15.4
-resolver: lts-24.23
+resolver: lts-24.42
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -62,7 +62,7 @@ extra-deps:
   - metro-socket
   - metro-transport-crypto
 - git: https://github.com/Lupino/yuntan-common.git
-  commit: 235bd76d53e8d7946d8aa29beccc4ba0d825ec82
+  commit: 0bce6ca80972102108c15b38380df0d50572cae0
   subdirs:
   - psql-utils
 

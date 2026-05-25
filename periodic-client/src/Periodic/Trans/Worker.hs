@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -318,7 +317,7 @@ gracefulExit cleanup = do
   runJobT $ mapM_ removeFuncServerOnly_ funcs
   -- New jobs will be refused in processJob with JobUnassigned once
   -- shutdownH is set.
-  liftIO $ errorM "Periodic.Trans.Worker" $ "Got shutdown signal."
+  liftIO $ errorM "Periodic.Trans.Worker" "Got shutdown signal."
   io <- async $ forever $ do
     rt <- runningTaskCount
     liftIO $ errorM "Periodic.Trans.Worker" $ "State: shuttingDown=True, runningTasks=" ++ show rt

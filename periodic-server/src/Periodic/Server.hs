@@ -6,7 +6,7 @@ module Periodic.Server
   ) where
 
 
-import           Control.Monad                (void, when)
+import           Control.Monad                (when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary.Get              (getWord32be, runGet)
 import           Data.ByteString              (ByteString)
@@ -116,12 +116,14 @@ doPushData sEnv nid msgid w = do
   case menv0 of
     Nothing   -> return ()
     Just env0 -> do
-      void
-        $ tryAny
+      r <- tryAny
         $ runConnT (connEnv env0)
         $ send
         $ setPacketId msgid
         $ packetRES (Data w)
+      case r of
+        Left err -> errorM "Periodic.Server" $ "Push data failed: " ++ show err
+        Right _  -> pure ()
 
 startServer
   :: (Servable serv, Transport tp, Persist db, MonadUnliftIO m)

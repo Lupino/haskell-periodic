@@ -22,15 +22,16 @@ import           Data.Int                (Int64)
 import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..), fromString)
 import           Database.PSQL           (From, FromField (..), Only (..),
-                                          PSQLPool, Size, TableName,
-                                          TablePrefix, ToField (..),
+                                          PSQLPool,
+                                          ResultError (ConversionFailed), Size,
+                                          TableName, TablePrefix, ToField (..),
                                           constraintPrimaryKey, count,
                                           createPSQLPool, createTable, delete,
                                           getTablePrefix, insert,
                                           insertOrUpdate, pageAsc, pageNone,
-                                          runPSQLPool, selectOneOnly,
-                                          selectOnly, selectOnly_, update,
-                                          withTransaction)
+                                          returnError, runPSQLPool,
+                                          selectOneOnly, selectOnly,
+                                          selectOnly_, update, withTransaction)
 import qualified Database.PSQL           as DB (PSQL)
 import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
@@ -57,7 +58,7 @@ instance FromField Job where
   fromField f dat = do
     r <- fromField f dat
     case decodeJob r of
-      Left e   -> error $ "decodeJob " ++ e
+      Left e   -> returnError ConversionFailed f $ "decodeJob " ++ e
       Right ok -> pure ok
 
 instance ToField Job where
