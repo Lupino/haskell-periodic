@@ -197,21 +197,19 @@ doGetRunningJob m ts = atomically $ mapPureJob m $ genMapFunc comp
 takeMin :: Int -> [Job] -> [Job]
 takeMin c = take c . sortOn getSchedAt
 
-comparePending :: FuncName -> Int64 -> PureJob -> Bool
-comparePending fn0 ts pj
-  | isPending && isElem && canSched = True
+comparePending :: Int64 -> PureJob -> Bool
+comparePending ts pj
+  | isPending && canSched = True
   | otherwise = False
 
   where job = pureJob pj
-        fn = getFuncName job
         schedAt = getSchedAt job
         isPending = is Pending pj
-        isElem = fn0 == fn
         canSched = ts <= 0 || (schedAt < ts)
 
 doGetPendingJob :: Memory -> FuncName -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fn ts c =
-  atomically $ takeMin c <$> mapPureJob m (genMapFunc (comparePending fn ts))
+  atomically $ takeMin c <$> mapJobMap m fn (genMapFunc (comparePending ts))
 
 doGetLockedJob :: Memory -> FuncName -> Int -> IO [Job]
 doGetLockedJob m fn c =
@@ -219,7 +217,7 @@ doGetLockedJob m fn c =
 
 doCountPending :: Memory -> FuncName -> Int64 -> IO Int
 doCountPending m fn ts =
-  atomically $ sum <$> mapPureJob m (genMapFunc_ (const 1) (comparePending fn ts))
+  atomically $ sum <$> mapJobMap m fn (genMapFunc_ (const 1) (comparePending ts))
 
 doDumpJob :: Memory -> IO [Job]
 doDumpJob m = atomically $ mapPureJob m (genMapFunc $ const True)

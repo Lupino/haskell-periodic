@@ -50,6 +50,7 @@ import qualified Data.IOMap.STM             as IOMapS
 import qualified Data.List                  as L (delete, nub)
 import qualified Data.Map.Strict            as Map (filter, map)
 import           Data.Maybe                 (fromMaybe, isJust, isNothing)
+import qualified Data.Set                   as Set
 import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
                                              diffUnixTime, getUnixTime)
 import           Foreign.C.Types            (CTime (..))
@@ -306,13 +307,14 @@ pollJob fn = do
   poolList <- asks sSchedPoolList
   mPool <- IOMap.lookup fn poolList
   handles <- fromMaybe [] <$> mapM Pool.getHandleList mPool
+  let handleSet = Set.fromList handles
 
   let size = length handles
   maxBatchSize <- readTVarIO =<< asks sMaxBatchSize
   when (maxBatchSize `div` 4 > size) $ do
     p <- asks sPersist
     liftIO (P.getPendingJob p fn next (maxBatchSize + size))
-      >>= mapM_ pushChanJob . filter (flip notElem handles . getHandle)
+      >>= mapM_ pushChanJob . filter (flip Set.notMember handleSet . getHandle)
 
 
 getNextPoll :: MonadIO m => m Int64

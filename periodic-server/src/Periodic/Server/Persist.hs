@@ -45,11 +45,14 @@ class (Exception (PersistException db)) => Persist db where
 
 
 loopFetchData :: Int -> Int -> Int -> (Int -> IO [a]) -> IO [a]
-loopFetchData offset total batchSize doGetBatch
-  | offset >= total = pure []
-  | otherwise = do
-  !batchJobList <- take (total - offset) <$> doGetBatch offset
-  if length batchJobList < batchSize then pure batchJobList
-  else do
-    !jobList <- loopFetchData (offset + batchSize) total batchSize doGetBatch
-    pure $! batchJobList ++ jobList
+loopFetchData offset total batchSize doGetBatch = go offset id
+  where
+    go off build
+      | off >= total = pure $ build []
+      | otherwise = do
+          !batchJobList <- take (total - off) <$> doGetBatch off
+          let !batchSize' = length batchJobList
+              !build' = build . (batchJobList ++)
+          if batchSize' < batchSize
+            then pure $ build' []
+            else go (off + batchSize) build'
