@@ -25,7 +25,7 @@ import           Periodic.Server.Persist.Memory (useMemory)
 import           Periodic.Server.Persist.PSQL   (usePSQL)
 #endif
 import           Periodic.Server.Persist.SQLite (useSQLite)
-import           System.Environment             (getArgs, lookupEnv)
+import           System.Environment             (getArgs, lookupEnv, withProgName)
 #ifdef mingw32_HOST_OS
 import           System.Exit                    (exitFailure, exitSuccess)
 #else
@@ -43,6 +43,7 @@ data Options = Options
   , hookHostPort   :: String
   , pushTaskSize   :: Int
   , schedTaskSize  :: Int
+  , processName    :: Maybe String
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
   , invalidOption  :: Maybe String
@@ -58,6 +59,7 @@ options h p = Options
   , hookHostPort   = ""
   , pushTaskSize   = 4
   , schedTaskSize  = 2
+  , processName    = Nothing
   , rsaPublicPath  = "public_keys.pem"
   , rsaPrivatePath = ""
   , invalidOption  = Nothing
@@ -72,6 +74,7 @@ parseOptions ("--path":x:xs)             opt = parseOptions xs opt { storePath  
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp      = True }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp      = True }
 parseOptions ("--hook":x:xs)             opt = parseOptions xs opt { hookHostPort  = x }
+parseOptions ("--name":x:xs)             opt = parseOptions xs opt { processName   = Just x }
 parseOptions ("--log":x:xs)              opt = parseOptions xs opt { logLevel      = strictReadArg "--log" x }
 parseOptions ("--max-cache-size":x:xs)   opt = parseOptions xs opt { maxCacheSize  = strictReadArg "--max-cache-size" x }
 parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSize  = strictReadArg "--push-task-size" x }
@@ -117,6 +120,7 @@ printHelp = do
   putStrLn "                        - persist: Save system events to the backend database"
   putStrLn "                        - udp://127.0.0.1:1000: Stream events via UDP"
   putStrLn "                        - tcp://127.0.0.1:1000: Stream events via TCP"
+  putStrLn "      --name <NAME>     Display name for this process"
   putStrLn "      --log <LEVEL>     Log level: DEBUG, INFO, NOTICE, WARNING, ERROR, etc."
   putStrLn ""
   putStrLn "Performance & Tuning:"
@@ -150,30 +154,31 @@ main = do
       exitFailure
     Nothing -> pure ()
 
-  setupLog logLevel
+  maybe id withProgName processName $ do
+    setupLog logLevel
 
 #ifndef mingw32_HOST_OS
-  if take 11 storePath == "postgres://" then
-    run opts (usePSQL $ drop 11 storePath)
+    if take 11 storePath == "postgres://" then
+      run opts (usePSQL $ drop 11 storePath)
 #else
-  if take 11 storePath == "postgres://" then
-    failPostgreSQLOnWindows
+    if take 11 storePath == "postgres://" then
+      failPostgreSQLOnWindows
 #endif
-  else if take 7 storePath == "file://" then
-    run opts (useSQLite $ drop 7 storePath)
-  else if storePath == ":memory:" then
-    run opts useMemory
-  else if take 13 storePath == "cache+file://" then
-    run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath)
+    else if take 7 storePath == "file://" then
+      run opts (useSQLite $ drop 7 storePath)
+    else if storePath == ":memory:" then
+      run opts useMemory
+    else if take 13 storePath == "cache+file://" then
+      run opts (useCache maxCacheSize $ useSQLite $ drop 13 storePath)
 #ifndef mingw32_HOST_OS
-  else if take 17 storePath == "cache+postgres://" then
-    run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath)
+    else if take 17 storePath == "cache+postgres://" then
+      run opts (useCache maxCacheSize $ usePSQL $ drop 17 storePath)
 #else
-  else if take 17 storePath == "cache+postgres://" then
-    failPostgreSQLOnWindows
+    else if take 17 storePath == "cache+postgres://" then
+      failPostgreSQLOnWindows
 #endif
-  else
-    failUnknownStorePath storePath
+    else
+      failUnknownStorePath storePath
 
 run :: Persist db => Options -> PersistConfig db -> IO ()
 run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath = ""} config = do
