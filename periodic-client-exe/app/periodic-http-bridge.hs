@@ -35,7 +35,7 @@ import qualified Web.Scotty                      as WS (status)
 import           Web.Scotty                      (ActionM, ScottyM, body,
                                                   captureParam, catch, get,
                                                   post, queryParam, raw,
-                                                  scottyOpts, settings)
+                                                  scottyOpts, settings,defaultOptions )
 
 
 data Options = Options
@@ -134,9 +134,9 @@ main = do
     putStrLn $ "Error: Invalid host address " ++ host
     printHelp
 
-  let sopts = def
+  let sopts = defaultOptions
         { settings = setPort httpPort
-                   $ setHost (Host httpHost) (settings def)}
+                   $ setHost (Host httpHost) (settings defaultOptions)}
 
   case rsaPrivatePath of
     "" -> do

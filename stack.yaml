@@ -55,14 +55,14 @@ extra-deps:
 - git: https://github.com/buecking/hs-mcp.git
   commit: 6df508fe1b1f3f62d15e0b012233fa7536f8fceb
 - git: https://github.com/Lupino/metro.git
-  commit: c9c5e1c109e23116c8405d7371c43af7d50fd888
+  commit: ce5e7573e4cadd8b36abab9a44d856f5572d5310
   subdirs:
   - .
   - map-io
   - metro-socket
   - metro-transport-crypto
 - git: https://github.com/Lupino/yuntan-common.git
-  commit: 0bce6ca80972102108c15b38380df0d50572cae0
+  commit: e3dd349e91b66ce00bc9c6f20d70376379a7c6e7
   subdirs:
   - psql-utils
 

@@ -6,7 +6,7 @@ EXT =
 
 ifeq ($(PLATFORM),aarch64-multiplatform-musl)
 STRIP = aarch64-linux-gnu-strip
-COMPILER ?= ghc9141
+COMPILER ?= ghc9124
 else
 ifeq ($(PLATFORM),muslpi)
 STRIP = armv6l-unknown-linux-musleabihf-strip
@@ -14,11 +14,11 @@ COMPILER ?= ghc884
 else
 ifeq ($(PLATFORM),mingwW64)
 STRIP = x86_64-w64-mingw32-strip
-COMPILER ?= ghc9141
+COMPILER ?= ghc9124
 EXT = .exe
 SYSTEM = windows
 else
-COMPILER ?= ghc9141
+COMPILER ?= ghc9124
 endif
 endif
 endif
