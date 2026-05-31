@@ -93,7 +93,6 @@ executable periodic-http-bridge
                      , bytestring
                      , scotty
                      , warp
-                     , data-default-class
                      , streaming-commons
                      , http-types
                      , metro

@@ -7,13 +7,12 @@ module Main
   ) where
 
 
-import           Control.Exception               (SomeException)
 import           Control.Applicative             ((<|>))
+import           Control.Exception               (SomeException)
 import           Control.Monad                   (when)
 import           Control.Monad.IO.Class          (liftIO)
 import qualified Data.ByteString.Lazy            as LB (empty, fromStrict,
                                                         toStrict)
-import           Data.Default.Class              (def)
 import           Data.List                       (isPrefixOf)
 import           Data.Maybe                      (fromMaybe)
 import           Data.Streaming.Network.Internal (HostPreference (Host))
@@ -33,9 +32,10 @@ import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitFailure, exitSuccess)
 import qualified Web.Scotty                      as WS (status)
 import           Web.Scotty                      (ActionM, ScottyM, body,
-                                                  captureParam, catch, get,
-                                                  post, queryParam, raw,
-                                                  scottyOpts, settings,defaultOptions )
+                                                  captureParam, catch,
+                                                  defaultOptions, get, post,
+                                                  queryParam, raw, scottyOpts,
+                                                  settings)
 
 
 data Options = Options
