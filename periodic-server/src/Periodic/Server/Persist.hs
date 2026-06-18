@@ -42,6 +42,8 @@ class (Exception (PersistException db)) => Persist db where
   minSchedAt     :: db -> FuncName -> IO Int64
   countPending   :: db -> FuncName -> Int64 -> IO Int
   insertMetric   :: db -> String -> String -> Int -> IO ()
+  insertMetrics  :: db -> [(String, String, Int)] -> IO ()
+  insertMetrics db = mapM_ (\(event, name, durationMs) -> insertMetric db event name durationMs)
 
 
 loopFetchData :: Int -> Int -> Int -> (Int -> IO [a]) -> IO [a]

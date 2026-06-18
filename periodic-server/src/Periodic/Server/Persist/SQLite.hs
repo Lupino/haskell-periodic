@@ -24,7 +24,7 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (infoM)
-import           UnliftIO                (Exception, Typeable, throwIO)
+import           UnliftIO                (Exception, Typeable, throwIO, tryAny)
 
 stateName :: State -> ByteString
 stateName Pending = "0"
@@ -48,6 +48,7 @@ instance Persist SQLite where
     case edb of
       Left (e, _) -> throwIO $ SQLiteException e
       Right db -> do
+        configureSQLite db
         beginTx db
         createConfigTable db
         createJobTable db
@@ -75,6 +76,7 @@ instance Persist SQLite where
   minSchedAt     (SQLite db) = doMinSchedAt db Pending
   countPending   (SQLite db) = doCountPending db
   insertMetric   (SQLite db) = doInsertMetric db
+  insertMetrics  (SQLite db) = doInsertMetrics db
 
 instance Exception (PersistException SQLite)
 
@@ -85,13 +87,35 @@ useSQLite :: String -> PersistConfig SQLite
 useSQLite = SQLitePath . fromString
 
 beginTx :: Database -> IO ()
-beginTx db = void $ exec db "BEGIN TRANSACTION"
+beginTx db = execChecked db "BEGIN TRANSACTION"
+
+beginImmediateTx :: Database -> IO ()
+beginImmediateTx db = execChecked db "BEGIN IMMEDIATE TRANSACTION"
 
 commitTx :: Database -> IO ()
-commitTx db = void $ exec db "COMMIT TRANSACTION"
+commitTx db = execChecked db "COMMIT TRANSACTION"
 
 rollbackTx :: Database -> IO ()
-rollbackTx db = void $ exec db "ROLLBACK TRANSACTION"
+rollbackTx db = execChecked db "ROLLBACK TRANSACTION"
+
+withImmediateTransaction :: Database -> IO a -> IO a
+withImmediateTransaction db action = do
+  beginImmediateTx db
+  r <- tryAny action
+  case r of
+    Left e -> do
+      rollbackTx db
+      throwIO e
+    Right v -> do
+      commitTx db
+      pure v
+
+configureSQLite :: Database -> IO ()
+configureSQLite db = do
+  void $ exec db "PRAGMA journal_mode=WAL"
+  void $ exec db "PRAGMA synchronous=NORMAL"
+  void $ exec db "PRAGMA busy_timeout=5000"
+  void $ exec db "PRAGMA temp_store=MEMORY"
 
 createConfigTable :: Database -> IO ()
 createConfigTable db = void . exec db $ Utf8 $
@@ -268,6 +292,9 @@ execStmt db sql bindStmt = do
   void $ liftEither $ step stmt
   void $ finalize stmt
 
+execChecked :: Database -> Utf8 -> IO ()
+execChecked db sql = void $ liftEither $ exec db sql
+
 execFN :: Database -> Utf8 -> FuncName -> IO ()
 execFN db sql fn = execStmt db sql (`bindFN` fn)
 
@@ -322,6 +349,16 @@ stepMaybeInt stmt = do
 doInsertMetric :: Database -> String -> String -> Int -> IO ()
 doInsertMetric db event name durationMs = do
   now <- getEpochTime
+  doInsertMetricAt db now event name durationMs
+
+doInsertMetrics :: Database -> [(String, String, Int)] -> IO ()
+doInsertMetrics _ [] = pure ()
+doInsertMetrics db items = withImmediateTransaction db $ do
+  now <- getEpochTime
+  mapM_ (\(event, name, durationMs) -> doInsertMetricAt db now event name durationMs) items
+
+doInsertMetricAt :: Database -> Int64 -> String -> String -> Int -> IO ()
+doInsertMetricAt db now event name durationMs =
   execStmt db sql $ \stmt -> do
     void $ bindText  stmt 1 $ fromString event
     void $ bindText  stmt 2 $ fromString name

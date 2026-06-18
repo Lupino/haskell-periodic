@@ -19,7 +19,20 @@ main = do
   putStrLn ""
   benchPollPath
   putStrLn ""
+  benchMetricPath
+  putStrLn ""
   benchMemorySize
+
+removeIfExists :: FilePath -> IO ()
+removeIfExists path = do
+  exists <- doesFileExist path
+  if exists then removeFile path else pure ()
+
+resetSQLiteFile :: FilePath -> IO ()
+resetSQLiteFile dbFile = do
+  removeIfExists dbFile
+  removeIfExists $ dbFile ++ "-wal"
+  removeIfExists $ dbFile ++ "-shm"
 
 benchPollPath :: IO ()
 benchPollPath = do
@@ -30,8 +43,7 @@ benchPollPath = do
       batchSize = 400 :: Int
       rounds = 3000 :: Int
 
-  exists <- doesFileExist dbFile
-  if exists then removeFile dbFile else pure ()
+  resetSQLiteFile dbFile
 
   db <- newPersist (useSQLite dbFile) :: IO SQLite
 
@@ -62,6 +74,45 @@ benchPollPath = do
   printf "poll current (get only): %.2f ms (%.2f us/op)\n"
     (toMs tNew) (toUs tNew / fromIntegral rounds)
   printf "poll speedup: %.2fx\n" (tLegacy / tNew)
+
+benchMetricPath :: IO ()
+benchMetricPath = do
+  let dbFileSingle = "/private/tmp/periodic-metric-single-bench.sqlite"
+      dbFileBatch = "/private/tmp/periodic-metric-batch-bench.sqlite"
+      totalMetrics = 20000 :: Int
+      batchSize = 400 :: Int
+      metrics =
+        [ ("benchEvent", "benchMetric", i `mod` 1000)
+        | i <- [1 .. totalMetrics]
+        ]
+
+  resetSQLiteFile dbFileSingle
+  resetSQLiteFile dbFileBatch
+
+  dbSingle <- newPersist (useSQLite dbFileSingle) :: IO SQLite
+  dbBatch <- newPersist (useSQLite dbFileBatch) :: IO SQLite
+
+  putStrLn "[metric] Running SQLite metric insert benchmark..."
+
+  tSingle <- timeIt $
+    forM_ metrics $ \(event, name, durationMs) ->
+      insertMetric dbSingle event name durationMs
+
+  tBatch <- timeIt $
+    forM_ (chunksOf batchSize metrics) $
+      insertMetrics dbBatch
+
+  printf "metric single inserts: %.2f ms (%.2f us/op)\n"
+    (toMs tSingle) (toUs tSingle / fromIntegral totalMetrics)
+  printf "metric batch inserts: %.2f ms (%.2f us/op, batch=%d)\n"
+    (toMs tBatch) (toUs tBatch / fromIntegral totalMetrics) batchSize
+  printf "metric write speedup: %.2fx\n" (tSingle / tBatch)
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs =
+  let (chunk, rest) = splitAt n xs
+  in chunk : chunksOf n rest
 
 benchMemorySize :: IO ()
 benchMemorySize = do

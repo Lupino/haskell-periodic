@@ -53,6 +53,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    minSchedAt       = doMinSchedAt
    countPending     = doCountPending
    insertMetric     = doInsertMetric
+   insertMetrics    = doInsertMetrics
 
 instance Typeable db => Exception (PersistException (Cache db))
 
@@ -148,3 +149,6 @@ doMinSchedAt m fn = do
 
 doInsertMetric :: Persist db => Cache db -> String -> String -> Int -> IO ()
 doInsertMetric m = insertMetric (backend m)
+
+doInsertMetrics :: Persist db => Cache db -> [(String, String, Int)] -> IO ()
+doInsertMetrics m = insertMetrics (backend m)

@@ -134,13 +134,13 @@ drainMetricQueue queue item0 = atomically $ go [item0]
 
 runPersistMetricWorker :: Persist db => TBQueue (MetricItem db) -> IO ()
 runPersistMetricWorker queue = forever $ do
-  item0 <- atomically $ readTBQueue queue
+  item0@(MetricItem db _ _ _) <- atomically $ readTBQueue queue
   itemList <- drainMetricQueue queue item0
-  forM_ itemList $ \(MetricItem db evt name durationMs) -> do
-    r <- tryAny $ insertMetric db evt name durationMs
-    case r of
-      Left e  -> errorM "Periodic.Server.Hook" $ "Persist metric error " ++ show e
-      Right _ -> pure ()
+  let metrics = map (\(MetricItem _ evt name durationMs) -> (evt, name, durationMs)) itemList
+  r <- tryAny $ insertMetrics db metrics
+  case r of
+    Left e  -> errorM "Periodic.Server.Hook" $ "Persist metric error " ++ show e
+    Right _ -> pure ()
 
 markMetricDropped :: TVar Int -> Int -> STM (Maybe Int)
 markMetricDropped droppedCounter logEvery = do

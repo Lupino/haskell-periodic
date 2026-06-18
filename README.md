@@ -100,6 +100,10 @@ To persist internal hook metrics with queue protection:
     PERIODIC_METRIC_DROP_LOG_EVERY=1000 \
     periodicd --hook persist
 
+The SQLite backend (`file://...` and `cache+file://...`) enables WAL mode and
+uses batched metric writes for this hook. It is still intended for a single
+`periodicd` process; use PostgreSQL for multi-process server deployments.
+
 ### Show file worker
 
 ```haskell
