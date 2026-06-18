@@ -7,6 +7,7 @@
 
 module Periodic.Server.Persist
   ( Persist (..)
+  , FuncStats (..)
   , State (..)
   , loopFetchData
   ) where
@@ -20,6 +21,13 @@ data State = Pending
     | Running
     | Locked
     deriving (Show, Eq)
+
+data FuncStats = FuncStats
+  { funcPending :: Int64
+  , funcRunning :: Int64
+  , funcLocked  :: Int64
+  , funcSchedAt :: Int64
+  } deriving (Show, Eq)
 
 class (Exception (PersistException db)) => Persist db where
   data PersistConfig db
@@ -40,6 +48,18 @@ class (Exception (PersistException db)) => Persist db where
   removeFuncName :: db -> FuncName -> IO ()
   funcList       :: db -> IO [FuncName]
   minSchedAt     :: db -> FuncName -> IO Int64
+  getFuncStats   :: db -> FuncName -> IO FuncStats
+  getFuncStats db fn = do
+    pending <- size db Pending fn
+    running <- size db Running fn
+    locked <- size db Locked fn
+    schedAt <- minSchedAt db fn
+    pure FuncStats
+      { funcPending = pending
+      , funcRunning = running
+      , funcLocked = locked
+      , funcSchedAt = schedAt
+      }
   countPending   :: db -> FuncName -> Int64 -> IO Int
   insertMetric   :: db -> String -> String -> Int -> IO ()
   insertMetrics  :: db -> [(String, String, Int)] -> IO ()

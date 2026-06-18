@@ -488,10 +488,7 @@ schedJob job nid msgid = do
 adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
 adjustFuncStat fn = do
   SchedEnv{..} <- ask
-  size <- liftIO $ P.size sPersist Pending fn
-  sizePQ <- liftIO $ P.size sPersist Running fn
-  sizeL <- liftIO $ P.size sPersist Locked fn
-  sc <- liftIO $ P.minSchedAt sPersist fn
+  P.FuncStats size sizePQ sizeL sc <- liftIO $ P.getFuncStats sPersist fn
 
   schedAt <- if sc > 0 then pure sc else getEpochTime
 

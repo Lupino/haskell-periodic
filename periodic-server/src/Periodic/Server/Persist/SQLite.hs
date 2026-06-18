@@ -74,6 +74,7 @@ instance Persist SQLite where
   removeFuncName (SQLite db) = doRemoveFuncName db
   funcList       (SQLite db) = doFuncList db
   minSchedAt     (SQLite db) = doMinSchedAt db Pending
+  getFuncStats   (SQLite db) = doGetFuncStats db
   countPending   (SQLite db) = doCountPending db
   insertMetric   (SQLite db) = doInsertMetric db
   insertMetrics  (SQLite db) = doInsertMetrics db
@@ -247,6 +248,15 @@ doSize :: Database -> State -> FuncName -> IO Int64
 doSize db state fn = queryStmt db sql (`bindFN` fn) stepInt64
   where sql = Utf8 $ "SELECT COUNT(*) FROM jobs WHERE func=? AND state=" `append` stateName state
 
+doGetFuncStats :: Database -> FuncName -> IO FuncStats
+doGetFuncStats db fn = queryStmt db sql (bindFNS 1 [fn, fn, fn, fn]) stepFuncStats
+  where sql = Utf8 $
+          "SELECT"
+          <> " (SELECT COUNT(*) FROM jobs WHERE func=? AND state=0),"
+          <> " (SELECT COUNT(*) FROM jobs WHERE func=? AND state=1),"
+          <> " (SELECT COUNT(*) FROM jobs WHERE func=? AND state=2),"
+          <> " COALESCE((SELECT sched_at FROM jobs WHERE func=? AND state=0 ORDER BY sched_at ASC LIMIT 1), 0)"
+
 doConfigSet :: Database -> String -> Int -> IO ()
 doConfigSet db name v = execStmt db sql $ \stmt -> do
     void $ bindText stmt 1 $ fromString name
@@ -345,6 +355,17 @@ stepMaybeInt stmt = do
   case sr of
     Done -> pure Nothing
     Row  -> Just . fromIntegral <$> columnInt64 stmt 0
+
+stepFuncStats :: Statement -> IO FuncStats
+stepFuncStats stmt = do
+  sr <- liftEither $ step stmt
+  case sr of
+    Done -> pure $ FuncStats 0 0 0 0
+    Row  -> FuncStats
+      <$> columnInt64 stmt 0
+      <*> columnInt64 stmt 1
+      <*> columnInt64 stmt 2
+      <*> columnInt64 stmt 3
 
 doInsertMetric :: Database -> String -> String -> Int -> IO ()
 doInsertMetric db event name durationMs = do

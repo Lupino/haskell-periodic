@@ -10,7 +10,8 @@ module Periodic.Server.Persist.Cache
 
 import           Data.Int                       (Int64)
 import           Metro.Utils                    (getEpochTime)
-import           Periodic.Server.Persist        (Persist (..), State (..))
+import           Periodic.Server.Persist        (FuncStats (..), Persist (..),
+                                                 State (..))
 import           Periodic.Server.Persist.Memory (Memory, memorySize, useMemory)
 import           Periodic.Types.Job             (FuncName, Job, JobName,
                                                  getFuncName, getName,
@@ -51,6 +52,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    removeFuncName m = removeFuncName (backend m)
    funcList       m = funcList (backend m)
    minSchedAt       = doMinSchedAt
+   getFuncStats     = doGetFuncStats
    countPending     = doCountPending
    insertMetric     = doInsertMetric
    insertMetrics    = doInsertMetrics
@@ -146,6 +148,21 @@ doMinSchedAt m fn = do
     if r1 > 0 && r2 > 0 then min r1 r2
                         else if r1 > 0 then r1
                         else r2
+
+doGetFuncStats :: Persist db => Cache db -> FuncName -> IO FuncStats
+doGetFuncStats m fn = do
+  r1 <- getFuncStats (memory m) fn
+  r2 <- getFuncStats (backend m) fn
+  pure FuncStats
+    { funcPending = funcPending r1 + funcPending r2
+    , funcRunning = funcRunning r1 + funcRunning r2
+    , funcLocked = funcLocked r1 + funcLocked r2
+    , funcSchedAt = minNonZero (funcSchedAt r1) (funcSchedAt r2)
+    }
+  where
+    minNonZero 0 y = y
+    minNonZero x 0 = x
+    minNonZero x y = min x y
 
 doInsertMetric :: Persist db => Cache db -> String -> String -> Int -> IO ()
 doInsertMetric m = insertMetric (backend m)

@@ -19,25 +19,26 @@ import           Data.ByteString.Base64  (decode, encode)
 import qualified Data.ByteString.Char8   as B (drop, split, take, unpack)
 import qualified Data.ByteString.Lazy    as BL (fromStrict, null)
 import           Data.Int                (Int64)
+import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String             (IsString (..), fromString)
 import           Database.PSQL           (From, FromField (..), Only (..),
                                           PSQLPool,
                                           ResultError (ConversionFailed), Size,
                                           TableName, TablePrefix, ToField (..),
-                                          constraintPrimaryKey, count,
-                                          createIndex,
-                                          createPSQLPool, createTable, delete,
-                                          getTablePrefix, insert,
-                                          insertOrUpdate, pageAsc, pageNone,
-                                          returnError, runPSQLPool,
-                                          selectOneOnly, selectOnly,
-                                          selectOnly_, update, withTransaction)
+                                          ToRow (..), constraintPrimaryKey,
+                                          count, createIndex, createPSQLPool,
+                                          createTable, execute, getTableName,
+                                          getTablePrefix, insertOrUpdate,
+                                          pageAsc, pageNone, query, returnError,
+                                          runPSQLPool, selectOneOnly,
+                                          selectOnly, selectOnly_, update,
+                                          withTransaction)
 import qualified Database.PSQL           as DB (PSQL)
+import qualified Database.PSQL           as PSQL (delete)
 import           Metro.Utils             (getEpochTime)
-import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
-                                          State (..), loopFetchData)
-import qualified Periodic.Server.Persist as Persist
+import           Periodic.Server.Persist (FuncStats (..), Persist (..),
+                                          State (..))
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
@@ -65,9 +66,17 @@ instance FromField Job where
 instance ToField Job where
   toField = toField . encode . toBytes
 
+newtype MetricRows = MetricRows [(String, String, Int, Int64)]
+
+instance ToRow MetricRows where
+  toRow (MetricRows rows) = concatMap toRow rows
+
 data PSQL = PSQL PSQLPool TablePrefix
 
 idleTime = 10
+
+maxMetricRowsPerInsert :: Int
+maxMetricRowsPerInsert = 10000
 
 runDB :: PSQL -> DB.PSQL a -> IO a
 runDB (PSQL pool tablePrefix) = runPSQLPool tablePrefix pool
@@ -117,8 +126,9 @@ instance Persist PSQL where
   delete         db fn    = runDB_ db . doDelete fn
   size           db st    = runDB  db . doSize st
   getRunningJob  db       = runDB  db . doGetRunningJob
-  getPendingJob  db f t c = loopFetchData 0 c 100 $ \offset ->
-                              runDB db (doGetPendingJob f t (fromIntegral offset) 100)
+  getPendingJob  db f t c
+    | c <= 0    = pure []
+    | otherwise = runDB db (doGetPendingJob f t 0 (fromIntegral c))
   getLockedJob   db fn    = runDB  db . doGetLockedJob fn
   dumpJob        db       = runDB  db   doDumpJob
   configSet      db name  = runDB_ db . doConfigSet name
@@ -127,8 +137,10 @@ instance Persist PSQL where
   removeFuncName db       = runDB  db . doRemoveFuncName
   funcList       db       = runDB  db   doFuncList
   minSchedAt     db       = runDB  db . doMinSchedAt Pending
+  getFuncStats   db       = runDB  db . doGetFuncStats
   countPending   db ts    = runDB  db . doCountPending ts
   insertMetric   db e n   = runDB  db . doInsertMetric e n
+  insertMetrics  db       = runDB  db . doInsertMetrics
 
 instance Exception (PersistException PSQL)
 
@@ -250,12 +262,12 @@ doFuncList :: DB.PSQL [FuncName]
 doFuncList = map FuncName <$> selectOnly_ funcs "func" pageNone
 
 doDelete :: FuncName -> JobName -> DB.PSQL Int64
-doDelete fn jn = delete jobs "func=? AND name=?" (fn, jn)
+doDelete fn jn = PSQL.delete jobs "func=? AND name=?" (fn, jn)
 
 doRemoveFuncName :: FuncName -> DB.PSQL ()
 doRemoveFuncName fn = do
-  void $ delete jobs "func=?" (Only fn)
-  void $ delete funcs "func=?" (Only fn)
+  void $ PSQL.delete jobs "func=?" (Only fn)
+  void $ PSQL.delete funcs "func=?" (Only fn)
 
 doMinSchedAt :: State -> FuncName -> DB.PSQL Int64
 doMinSchedAt state fn =
@@ -266,6 +278,27 @@ doMinSchedAt state fn =
 
 doSize :: State -> FuncName -> DB.PSQL Int64
 doSize state fn = count jobs "func=? AND state=?" (fn, state)
+
+doGetFuncStats :: FuncName -> DB.PSQL FuncStats
+doGetFuncStats fn = do
+  rows <- query mkQuery (fn, fn, fn, fn) :: DB.PSQL [(Int64, Int64, Int64, Maybe Int64)]
+  case rows of
+    [(pending, running, locked, schedAt)] ->
+      pure FuncStats
+        { funcPending = pending
+        , funcRunning = running
+        , funcLocked = locked
+        , funcSchedAt = fromMaybe 0 schedAt
+        }
+    _ -> pure $ FuncStats 0 0 0 0
+  where
+    mkQuery tablePrefix = fromString $
+      "SELECT"
+      ++ " (SELECT count(*) FROM " ++ tableName ++ " WHERE func=? AND state=0),"
+      ++ " (SELECT count(*) FROM " ++ tableName ++ " WHERE func=? AND state=1),"
+      ++ " (SELECT count(*) FROM " ++ tableName ++ " WHERE func=? AND state=2),"
+      ++ " (SELECT sched_at FROM " ++ tableName ++ " WHERE func=? AND state=0 ORDER BY sched_at ASC LIMIT 1)"
+      where tableName = getTableName tablePrefix jobs
 
 doConfigSet :: String -> Int -> DB.PSQL Int64
 doConfigSet name v =
@@ -286,6 +319,29 @@ decodeJob bs =
           | otherwise    -> Left "decodeJob trailing bytes"
 
 doInsertMetric :: String -> String -> Int -> DB.PSQL ()
-doInsertMetric event name durationMs = do
+doInsertMetric event name durationMs =
+  doInsertMetrics [(event, name, durationMs)]
+
+doInsertMetrics :: [(String, String, Int)] -> DB.PSQL ()
+doInsertMetrics [] = pure ()
+doInsertMetrics items = do
   now <- getEpochTime
-  void $ insert metrics ["event", "name", "duration_ms", "created_at"] (event, name, durationMs, now)
+  mapM_ (doInsertMetricBatch now) $ chunksOf maxMetricRowsPerInsert items
+
+doInsertMetricBatch :: Int64 -> [(String, String, Int)] -> DB.PSQL ()
+doInsertMetricBatch now items =
+  void $ execute (mkQuery $ length items) $ MetricRows
+    [ (event, name, durationMs, now)
+    | (event, name, durationMs) <- items
+    ]
+  where
+    mkQuery rowCount tablePrefix = fromString $
+      "INSERT INTO " ++ getTableName tablePrefix metrics
+      ++ " (event, name, duration_ms, created_at) VALUES "
+      ++ intercalate ", " (replicate rowCount "(?, ?, ?, ?)")
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs =
+  let (chunk, rest) = splitAt n xs
+  in chunk : chunksOf n rest

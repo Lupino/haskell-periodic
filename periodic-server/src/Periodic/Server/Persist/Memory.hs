@@ -18,9 +18,9 @@ import qualified Data.IOMap              as IOMap
 import qualified Data.IOMap.STM          as IOMapS
 import           Data.List               (sortOn)
 import           Data.Maybe              (catMaybes)
-import           Periodic.Server.Persist (Persist (PersistConfig, PersistException),
+import           Periodic.Server.Persist (Persist (..),
+                                          FuncStats (..),
                                           State (..))
-import qualified Periodic.Server.Persist as Persist
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           System.Log.Logger       (infoM)
@@ -67,8 +67,10 @@ instance Persist Memory where
   removeFuncName = doRemoveFuncName
   funcList       = doFuncList
   minSchedAt     = doMinSchedAt
+  getFuncStats   = doGetFuncStats
   countPending   = doCountPending
   insertMetric   = doInsertMetric
+  insertMetrics _ _ = pure ()
 
 instance Exception (PersistException Memory)
 
@@ -253,6 +255,28 @@ safeMinimum xs = minimum xs
 doMinSchedAt :: Memory -> FuncName -> IO Int64
 doMinSchedAt m fn =
   atomically $ safeMinimum <$> mapJobMap m fn (genMapFunc_ getSchedAt (is Pending))
+
+doGetFuncStats :: Memory -> FuncName -> IO FuncStats
+doGetFuncStats m fn = atomically $ do
+  mJobMap <- getJobMap m fn
+  case mJobMap of
+    Nothing -> pure $ FuncStats 0 0 0 0
+    Just jobMap -> do
+      jobs <- mapM readTVar =<< IOMapS.elems jobMap
+      pure $ foldr addStats (FuncStats 0 0 0 0) jobs
+  where
+    addStats PureJob{..} stats =
+      case pureState of
+        Pending -> stats
+          { funcPending = funcPending stats + 1
+          , funcSchedAt = minNonZero (funcSchedAt stats) (getSchedAt pureJob)
+          }
+        Running -> stats { funcRunning = funcRunning stats + 1 }
+        Locked  -> stats { funcLocked = funcLocked stats + 1 }
+
+    minNonZero 0 y = y
+    minNonZero x 0 = x
+    minNonZero x y = min x y
 
 memorySize :: Memory -> IO Int64
 memorySize Memory {..} = readTVarIO jobSize

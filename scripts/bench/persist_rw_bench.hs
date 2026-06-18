@@ -6,10 +6,12 @@ import Data.Int (Int64)
 import qualified Data.ByteString.Char8 as B
 import GHC.Clock (getMonotonicTimeNSec)
 import System.Directory (doesFileExist, removeFile)
+import System.Environment (lookupEnv)
 import Text.Printf (printf)
 
 import Periodic.Server.Persist
 import Periodic.Server.Persist.Memory (Memory, memorySize, useMemory)
+import Periodic.Server.Persist.PSQL (PSQL, usePSQL)
 import Periodic.Server.Persist.SQLite (SQLite, useSQLite)
 import Periodic.Types.Job
 
@@ -20,6 +22,10 @@ main = do
   benchPollPath
   putStrLn ""
   benchMetricPath
+  putStrLn ""
+  benchFuncStatsPath
+  putStrLn ""
+  benchOptionalPSQLPath
   putStrLn ""
   benchMemorySize
 
@@ -107,6 +113,130 @@ benchMetricPath = do
   printf "metric batch inserts: %.2f ms (%.2f us/op, batch=%d)\n"
     (toMs tBatch) (toUs tBatch / fromIntegral totalMetrics) batchSize
   printf "metric write speedup: %.2fx\n" (tSingle / tBatch)
+
+benchFuncStatsPath :: IO ()
+benchFuncStatsPath = do
+  let dbFile = "/private/tmp/periodic-func-stats-bench.sqlite"
+      funcName = FuncName "bench-func-stats"
+      pendingJobs = 12000 :: Int
+      runningJobs = 4000 :: Int
+      lockedJobs = 2000 :: Int
+      sqliteRounds = 3000 :: Int
+      memoryRounds = 20 :: Int
+
+  resetSQLiteFile dbFile
+  sqlite <- newPersist (useSQLite dbFile) :: IO SQLite
+  memory <- newPersist useMemory :: IO Memory
+
+  putStrLn "[stats] Seeding SQLite and Memory jobs for func stats benchmark..."
+  seedStatsJobs sqlite funcName pendingJobs runningJobs lockedJobs
+  seedStatsJobs memory funcName pendingJobs runningJobs lockedJobs
+
+  putStrLn "[stats] Running SQLite func stats benchmark..."
+  benchFuncStats "SQLite" sqlite funcName sqliteRounds
+
+  putStrLn "[stats] Running Memory func stats benchmark..."
+  benchFuncStats "Memory" memory funcName memoryRounds
+
+benchFuncStats :: Persist db => String -> db -> FuncName -> Int -> IO ()
+benchFuncStats label db funcName rounds = do
+  tLegacy <- timeIt $ replicateM_ rounds $ do
+    stats <- legacyFuncStats db funcName
+    forceStats stats
+
+  tCurrent <- timeIt $ replicateM_ rounds $ do
+    stats <- getFuncStats db funcName
+    forceStats stats
+
+  printf "%s func stats legacy: %.2f ms (%.2f us/op)\n"
+    label (toMs tLegacy) (toUs tLegacy / fromIntegral rounds)
+  printf "%s func stats current: %.2f ms (%.2f us/op)\n"
+    label (toMs tCurrent) (toUs tCurrent / fromIntegral rounds)
+  printf "%s func stats speedup: %.2fx\n" label (tLegacy / tCurrent)
+
+benchOptionalPSQLPath :: IO ()
+benchOptionalPSQLPath = do
+  mDsn <- lookupEnv "PERIODIC_BENCH_PSQL_DSN"
+  case mDsn of
+    Nothing -> putStrLn "[psql] Skipping PostgreSQL benchmark; set PERIODIC_BENCH_PSQL_DSN to enable."
+    Just dsn -> benchPSQLPath (normalizePSQLDSN dsn)
+
+benchPSQLPath :: String -> IO ()
+benchPSQLPath dsn = do
+  let funcName = FuncName "bench-psql-func-stats"
+      pendingJobs = 3000 :: Int
+      runningJobs = 1000 :: Int
+      lockedJobs = 500 :: Int
+      totalMetrics = 5000 :: Int
+      batchSize = 500 :: Int
+      rounds = 500 :: Int
+      metrics =
+        [ ("benchEvent", "benchMetric", i `mod` 1000)
+        | i <- [1 .. totalMetrics]
+        ]
+
+  db <- newPersist (usePSQL dsn) :: IO PSQL
+  removeFuncName db funcName
+
+  putStrLn "[psql] Seeding PostgreSQL jobs for func stats benchmark..."
+  seedStatsJobs db funcName pendingJobs runningJobs lockedJobs
+
+  putStrLn "[psql] Running PostgreSQL func stats benchmark..."
+  benchFuncStats "PostgreSQL" db funcName rounds
+
+  putStrLn "[psql] Running PostgreSQL metric insert benchmark..."
+  tSingle <- timeIt $
+    forM_ metrics $ \(event, name, durationMs) ->
+      insertMetric db event name durationMs
+
+  tBatch <- timeIt $
+    forM_ (chunksOf batchSize metrics) $
+      insertMetrics db
+
+  printf "PostgreSQL metric single inserts: %.2f ms (%.2f us/op)\n"
+    (toMs tSingle) (toUs tSingle / fromIntegral totalMetrics)
+  printf "PostgreSQL metric batch inserts: %.2f ms (%.2f us/op, batch=%d)\n"
+    (toMs tBatch) (toUs tBatch / fromIntegral totalMetrics) batchSize
+  printf "PostgreSQL metric write speedup: %.2fx\n" (tSingle / tBatch)
+
+  removeFuncName db funcName
+
+normalizePSQLDSN :: String -> String
+normalizePSQLDSN dsn
+  | take 11 dsn == "postgres://" = drop 11 dsn
+  | otherwise = dsn
+
+seedStatsJobs :: Persist db => db -> FuncName -> Int -> Int -> Int -> IO ()
+seedStatsJobs db funcName pendingJobs runningJobs lockedJobs = do
+  forM_ [1 .. pendingJobs] $ \i -> do
+    let jn = JobName (B.pack ("pending-" ++ show i))
+        job = setSchedAt (fromIntegral i) (initJob funcName jn)
+    insert db Pending job
+  forM_ [1 .. runningJobs] $ \i -> do
+    let jn = JobName (B.pack ("running-" ++ show i))
+        job = setSchedAt (fromIntegral i) (initJob funcName jn)
+    insert db Running job
+  forM_ [1 .. lockedJobs] $ \i -> do
+    let jn = JobName (B.pack ("locked-" ++ show i))
+        job = setSchedAt (fromIntegral i) (initJob funcName jn)
+    insert db Locked job
+
+legacyFuncStats :: Persist db => db -> FuncName -> IO FuncStats
+legacyFuncStats db funcName = do
+  pending <- size db Pending funcName
+  running <- size db Running funcName
+  locked <- size db Locked funcName
+  schedAt <- minSchedAt db funcName
+  pure FuncStats
+    { funcPending = pending
+    , funcRunning = running
+    , funcLocked = locked
+    , funcSchedAt = schedAt
+    }
+
+forceStats :: FuncStats -> IO ()
+forceStats stats =
+  evaluate (funcPending stats + funcRunning stats + funcLocked stats + funcSchedAt stats) >> pure ()
 
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []
