@@ -14,11 +14,12 @@ module Periodic.Server.SchedPool
   ) where
 
 
-import           Control.Monad       (unless, when)
-import           Control.Monad.ListM (findM, takeWhileM)
-import           Data.Int            (Int64)
-import           Metro.Utils         (getEpochTime)
-import           Periodic.Types      (Msgid, Nid)
+import           Control.Monad     (unless, when)
+import           Data.Int          (Int64)
+import           Data.Map.Strict   (Map)
+import qualified Data.Map.Strict   as Map
+import           Metro.Utils       (getEpochTime)
+import           Periodic.Types    (Msgid, Nid)
 import           Periodic.Types.Job
 import           UnliftIO
 
@@ -33,8 +34,15 @@ data SchedJob = SchedJob
 
 type PoolerState = TMVar (TVar SchedJob)
 
+type WaitingKey = (Int64, JobHandle)
+
+data WaitingState = WaitingState
+  { waitingJobs    :: Map WaitingKey (TVar SchedJob)
+  , waitingHandles :: Map JobHandle WaitingKey
+  }
+
 data SchedPool = SchedPool
-  { waitingJob  :: TVar [TVar SchedJob]
+  { waitingJob  :: TVar WaitingState
   , maxWaitSize :: TVar Int
   , waitingLock :: TMVar ()
   , onFree      :: STM ()
@@ -49,11 +57,14 @@ newSchedPool
   -> STM ()
   -> m SchedPool
 newSchedPool maxWaitSize onFree = do
-  waitingJob  <- newTVarIO []
+  waitingJob  <- newTVarIO emptyWaitingState
   waitingLock <- newTMVarIO ()
   poolerState <- newEmptyTMVarIO
   poolerIO <- newEmptyTMVarIO
   pure SchedPool {..}
+
+emptyWaitingState :: WaitingState
+emptyWaitingState = WaitingState Map.empty Map.empty
 
 
 setPoolerIO :: MonadIO m => SchedPool -> Async () -> m ()
@@ -66,7 +77,7 @@ cancelSchedPool SchedPool {..} = mapM_ cancel =<< atomically (tryReadTMVar poole
 getWaitingJob :: SchedPool -> STM [TVar SchedJob]
 getWaitingJob SchedPool {..} = do
   handles0 <- go
-  handles1 <- readTVar waitingJob
+  handles1 <- Map.elems . waitingJobs <$> readTVar waitingJob
   pure $ handles0 ++ handles1
   where go :: STM [TVar SchedJob]
         go = do
@@ -88,8 +99,23 @@ toHandle :: TVar SchedJob -> STM JobHandle
 toHandle sJob = getHandle . schedJob <$> readTVar sJob
 
 
-findJob :: JobHandle -> [TVar SchedJob] -> STM (Maybe (TVar SchedJob))
-findJob jh = findM (fmap (jh ==) . toHandle)
+data SchedJobLocation = ActiveJob (TVar SchedJob) | WaitingJob WaitingKey (TVar SchedJob)
+
+findJob :: SchedPool -> JobHandle -> STM (Maybe SchedJobLocation)
+findJob SchedPool {..} jh = do
+  mActive <- tryReadTMVar poolerState
+  case mActive of
+    Just active -> do
+      activeHandle <- toHandle active
+      if activeHandle == jh then pure $ Just $ ActiveJob active
+                            else findWaiting
+    Nothing -> findWaiting
+  where
+    findWaiting = do
+      WaitingState {..} <- readTVar waitingJob
+      case Map.lookup jh waitingHandles of
+        Nothing  -> pure Nothing
+        Just key -> pure $ WaitingJob key <$> Map.lookup key waitingJobs
 
 
 getStateSchedAt :: PoolerState -> STM Int64
@@ -130,44 +156,65 @@ runSchedPool pool@SchedPool {..} work prepareWork = do
 finishPoolerState :: MonadIO m => SchedPool -> m ()
 finishPoolerState SchedPool {..} = atomically $ do
   takeTMVar waitingLock
-  jobs <- readTVar waitingJob
-  case jobs of
-    [] -> onFree
-    (x:xs) -> do
+  waitingState@WaitingState {..} <- readTVar waitingJob
+  case Map.minViewWithKey waitingJobs of
+    Nothing -> onFree
+    Just ((key, x), jobs) -> do
       r <- tryPutTMVar poolerState x
-      when r $ writeTVar waitingJob xs
+      when r $ writeTVar waitingJob waitingState
+        { waitingJobs = jobs
+        , waitingHandles = Map.delete (snd key) waitingHandles
+        }
       s <- (`div` 4) <$> readTVar maxWaitSize
-      when (length xs < s) onFree
+      when (Map.size jobs < s) onFree
   putTMVar waitingLock ()
 
 
 unspawn :: MonadIO m => SchedPool -> Job -> m ()
 unspawn pool job = atomically $ do
-  wJobs <- getWaitingJob pool
-  mSchedJob <- findJob jh wJobs
+  mSchedJob <- findJob pool jh
   case mSchedJob of
     Nothing -> pure ()
-    Just sJob -> modifyTVar' sJob $ \v -> v
-      { schedAlive = False
-      }
+    Just (ActiveJob sJob) -> markDead sJob
+    Just (WaitingJob key sJob) -> do
+      markDead sJob
+      removeWaitingJob pool key jh
   where jh = getHandle job
+        markDead sJob = modifyTVar' sJob $ \v -> v { schedAlive = False }
 
 
-insertSchedJob :: SchedPool -> TVar SchedJob -> Int64 -> STM ()
-insertSchedJob SchedPool {..} s schedAt = do
-  takeTMVar waitingLock
-  sJobs <- readTVar waitingJob
-  hJobs <- takeWhileM compSchedAt sJobs
+insertSchedJob :: SchedPool -> TVar SchedJob -> STM ()
+insertSchedJob SchedPool {..} s = do
+  schedJob0 <- readTVar s
+  let job = schedJob schedJob0
+      jh = getHandle job
+      key = (getSchedAt job, jh)
+  waitingState@WaitingState {..} <- readTVar waitingJob
+  let jobs0 = case Map.lookup jh waitingHandles of
+        Nothing     -> waitingJobs
+        Just oldKey -> Map.delete oldKey waitingJobs
+      jobs1 = Map.insert key s jobs0
+      handles1 = Map.insert jh key waitingHandles
   maxWait <- readTVar maxWaitSize
-  let jobs = hJobs ++ [s] ++ drop (length hJobs) sJobs
-      waitJobs = take maxWait jobs
-  writeTVar waitingJob $! waitJobs
-  putTMVar waitingLock ()
+  let (jobs2, handles2) = trimWaiting maxWait jobs1 handles1
+  writeTVar waitingJob $! waitingState
+    { waitingJobs = jobs2
+    , waitingHandles = handles2
+    }
 
-  where compSchedAt :: TVar SchedJob -> STM Bool
-        compSchedAt t = do
-          newSchedAt <- getSchedAt . schedJob <$> readTVar t
-          pure $ newSchedAt <= schedAt
+trimWaiting :: Int -> Map WaitingKey (TVar SchedJob) -> Map JobHandle WaitingKey -> (Map WaitingKey (TVar SchedJob), Map JobHandle WaitingKey)
+trimWaiting maxWait jobs handles
+  | Map.size jobs <= maxWait = (jobs, handles)
+  | otherwise =
+      let ((key, _), jobs') = Map.deleteFindMax jobs
+      in trimWaiting maxWait jobs' (Map.delete (snd key) handles)
+
+removeWaitingJob :: SchedPool -> WaitingKey -> JobHandle -> STM ()
+removeWaitingJob SchedPool {..} key jh =
+  modifyTVar' waitingJob $ \waitingState@WaitingState {..} -> waitingState
+    { waitingJobs = Map.delete key waitingJobs
+    , waitingHandles = Map.delete jh waitingHandles
+    }
 
 spawn
   :: MonadIO m
@@ -177,17 +224,26 @@ spawn pool@SchedPool {..} job = do
   now <- getEpochTime
   delay <- getDelay now
   atomically $ do
-    wJobs <- getWaitingJob pool
-    mSchedJob <- findJob jh wJobs
+    mSchedJob <- findJob pool jh
     case mSchedJob of
-      Just sJobT -> do
+      Just loc -> do
+        let sJobT = case loc of
+              ActiveJob t    -> t
+              WaitingJob _ t -> t
         sJob <- readTVar sJobT
         oDelay <- readTVar $ schedDelay sJob
-        unless oDelay $
+        unless oDelay $ do
           writeTVar sJobT sJob
             { schedDelay = delay
             , schedJob   = job
             }
+          case loc of
+            ActiveJob _        -> pure ()
+            WaitingJob key _ -> do
+              removeWaitingJob pool key jh
+              takeTMVar waitingLock
+              insertSchedJob pool sJobT
+              putTMVar waitingLock ()
       Nothing   -> do
         sJob <- newTVar SchedJob
           { schedJob   = job
@@ -200,9 +256,15 @@ spawn pool@SchedPool {..} job = do
           putTMVar poolerState sJob
           case mJob of
             Nothing   -> pure ()
-            Just oJob -> insertSchedJob pool oJob schedAt
+            Just oJob -> do
+              takeTMVar waitingLock
+              insertSchedJob pool oJob
+              putTMVar waitingLock ()
 
-        else insertSchedJob pool sJob schedAt
+        else do
+          takeTMVar waitingLock
+          insertSchedJob pool sJob
+          putTMVar waitingLock ()
 
 
   where schedAt = getSchedAt job

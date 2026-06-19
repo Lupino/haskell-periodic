@@ -76,6 +76,22 @@ wait_for_ping() {
   "$PERIODIC_BIN" ping >/dev/null
 }
 
+run_until_result() {
+  local name="$1"
+  local attempts="${2:-60}"
+  local out=""
+  for _ in $(seq 1 "$attempts"); do
+    out="$("$PERIODIC_BIN" run "$FUNC_NAME" "$name" 2>/dev/null || true)"
+    if echo "$out" | grep -F "Result: ${name}" >/dev/null 2>&1; then
+      echo "$out"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "$out"
+  return 1
+}
+
 if [[ "$BACKEND_URI" == file://* ]]; then
   rm -f "${BACKEND_URI#file://}"
 fi
@@ -89,8 +105,7 @@ wait_for_ping 90
 worker_pid="$!"
 
 for i in $(seq 1 "$WARMUP_JOBS"); do
-  out="$($PERIODIC_BIN run "$FUNC_NAME" "warmup-$i" 2>/dev/null || true)"
-  echo "$out" | grep -F "Result: warmup-$i" >/dev/null
+  run_until_result "warmup-$i" >/dev/null
   sleep 0.05
 done
 

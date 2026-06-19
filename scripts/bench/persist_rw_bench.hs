@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Exception (evaluate)
-import Control.Monad (forM_, replicateM_)
+import Control.Monad (forM_, replicateM_, void, when)
 import Data.Int (Int64)
 import qualified Data.ByteString.Char8 as B
 import GHC.Clock (getMonotonicTimeNSec)
@@ -32,7 +32,7 @@ main = do
 removeIfExists :: FilePath -> IO ()
 removeIfExists path = do
   exists <- doesFileExist path
-  if exists then removeFile path else pure ()
+  when exists $ removeFile path
 
 resetSQLiteFile :: FilePath -> IO ()
 resetSQLiteFile dbFile = do
@@ -63,12 +63,10 @@ benchPollPath = do
 
   tLegacy <- timeIt $ replicateM_ rounds $ do
     c <- countPending db funcName ts
-    if c > 0
-      then do
-        xs <- getPendingJob db funcName ts batchSize
-        _ <- evaluate (length xs)
-        pure ()
-      else pure ()
+    when (c > 0) $ do
+      xs <- getPendingJob db funcName ts batchSize
+      _ <- evaluate (length xs)
+      pure ()
 
   tNew <- timeIt $ replicateM_ rounds $ do
     xs <- getPendingJob db funcName ts batchSize
@@ -236,7 +234,7 @@ legacyFuncStats db funcName = do
 
 forceStats :: FuncStats -> IO ()
 forceStats stats =
-  evaluate (funcPending stats + funcRunning stats + funcLocked stats + funcSchedAt stats) >> pure ()
+  void $ evaluate (funcPending stats + funcRunning stats + funcLocked stats + funcSchedAt stats)
 
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []
