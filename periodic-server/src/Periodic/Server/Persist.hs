@@ -14,7 +14,7 @@ module Periodic.Server.Persist
 
 import           Control.Exception  (Exception)
 import           Data.Int           (Int64)
-import           Periodic.Types.Job (FuncName, Job, JobName)
+import           Periodic.Types.Job (FuncName, Job, JobName, getFuncName, getName)
 import           Prelude            hiding (foldr, lookup)
 
 data State = Pending
@@ -37,6 +37,14 @@ class (Exception (PersistException db)) => Persist db where
   insert         :: db -> State -> Job -> IO ()
   updateState    :: db -> State -> FuncName -> JobName -> IO ()
   delete         :: db -> FuncName -> JobName -> IO ()
+  insertPendingUnlessRunning :: db -> Job -> IO Bool
+  insertPendingUnlessRunning db job = do
+    let fn = getFuncName job
+        jn = getName job
+    running <- getOne db Running fn jn
+    case running of
+      Just _  -> pure False
+      Nothing -> insert db Pending job >> pure True
   size           :: db -> State -> FuncName -> IO Int64
   getRunningJob  :: db -> Int64 -> IO [Job]
   getPendingJob  :: db -> FuncName -> Int64 -> Int -> IO [Job]
@@ -60,6 +68,12 @@ class (Exception (PersistException db)) => Persist db where
       , funcLocked = locked
       , funcSchedAt = schedAt
       }
+  getAllFuncStats :: db -> IO [(FuncName, FuncStats)]
+  getAllFuncStats db = do
+    fns <- funcList db
+    mapM (\fn -> do
+      stats <- getFuncStats db fn
+      pure (fn, stats)) fns
   countPending   :: db -> FuncName -> Int64 -> IO Int
   insertMetric   :: db -> String -> String -> Int -> IO ()
   insertMetrics  :: db -> [(String, String, Int)] -> IO ()

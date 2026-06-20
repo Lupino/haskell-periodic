@@ -42,14 +42,16 @@ import           Control.Monad.Reader.Class (MonadReader (ask), asks)
 import           Control.Monad.Trans.Class  (MonadTrans)
 import           Control.Monad.Trans.Reader (ReaderT (..), runReaderT)
 import           Data.ByteString            (ByteString)
-import           Data.Foldable              (forM_)
+import           Data.Foldable              (forM_, toList)
 import           Data.Int                   (Int64)
 import           Data.IOMap                 (IOMap)
 import qualified Data.IOMap                 as IOMap
 import qualified Data.IOMap.STM             as IOMapS
-import qualified Data.List                  as L (delete, nub)
+import qualified Data.List                  as L (nub)
 import qualified Data.Map.Strict            as Map (filter, map)
-import           Data.Maybe                 (fromMaybe, isJust, isNothing)
+import           Data.Maybe                 (fromMaybe, isNothing)
+import           Data.Sequence              (Seq, (|>))
+import qualified Data.Sequence              as Seq
 import qualified Data.Set                   as Set
 import           Data.UnixTime              (UnixDiffTime (..), UnixTime,
                                              diffUnixTime, getUnixTime)
@@ -95,15 +97,20 @@ data LockItem = LockItem JobHandle Int64
 instance Eq LockItem where
   LockItem jh0 _ == LockItem jh1 _ = jh0 == jh1
 
+instance Ord LockItem where
+  compare (LockItem jh0 _) (LockItem jh1 _) = compare jh0 jh1
+
 -- Distributed lock
 --                                  acquired    locked
 data LockInfo = LockInfo
-    { acquired :: [LockItem]
-    , locked   :: [LockItem]
+    { acquired :: Set.Set LockItem
+    , locked   :: Seq LockItem
+    , lockedSet :: Set.Set LockItem
     , maxCount :: Int
     }
 
 type LockList = IOMap LockName LockInfo
+type LockIndex = IOMap JobHandle (Set.Set LockName)
 
 
 data SchedEnv db = SchedEnv
@@ -126,6 +133,7 @@ data SchedEnv db = SchedEnv
     , sChanList      :: TQueue Job
     , sWaitList      :: WaitList
     , sLockList      :: LockList
+    , sLockIndex     :: LockIndex
     , sPersist       :: db
     , sAssignJob     :: Int -> Nid -> Msgid -> Job -> IO Bool
     , sPushData      :: Nid -> Msgid -> ByteString -> IO ()
@@ -173,6 +181,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook sKeepalive (PoolSiz
   sFuncStatList  <- IOMap.empty
   sWaitList      <- IOMap.empty
   sLockList      <- IOMap.empty
+  sLockIndex     <- IOMap.empty
   sLocker        <- L.new
   sPollJob       <- newTVarIO []
   sChanList      <- newTQueueIO
@@ -361,15 +370,13 @@ runPushJob :: (MonadIO m, Persist db) => TQueue Job -> SchedT db m ()
 runPushJob pl = do
   job <- atomically $ readTQueue pl
   let fn = getFuncName job
-      jn = getName job
 
   liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
   t0 <- liftIO getUnixTime
   p <- asks sPersist
-  isRunning <- liftIO $ isJust <$> P.getOne p Running fn jn
-  unless isRunning $ do
-    job' <- fixedSchedAt job
-    liftIO $ P.insert p Pending job'
+  job' <- fixedSchedAt job
+  inserted <- liftIO $ P.insertPendingUnlessRunning p job'
+  when inserted $ do
     poolList <- asks sSchedPoolList
     mPool <- IOMap.lookup fn poolList
     case mPool of
@@ -489,16 +496,24 @@ adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
 adjustFuncStat fn = do
   SchedEnv{..} <- ask
   P.FuncStats size sizePQ sizeL sc <- liftIO $ P.getFuncStats sPersist fn
+  adjustFuncStat' sFuncStatList fn size sizePQ sizeL sc
 
+adjustFuncStatFromPersist :: MonadIO m => (FuncName, P.FuncStats) -> SchedT db m ()
+adjustFuncStatFromPersist (fn, P.FuncStats size sizePQ sizeL sc) = do
+  stList <- asks sFuncStatList
+  adjustFuncStat' stList fn size sizePQ sizeL sc
+
+adjustFuncStat' :: MonadIO m => FuncStatList -> FuncName -> Int64 -> Int64 -> Int64 -> Int64 -> SchedT db m ()
+adjustFuncStat' stList fn size sizePQ sizeL sc = do
   schedAt <- if sc > 0 then pure sc else getEpochTime
 
-  IOMap.alter (update (size + sizePQ + sizeL) sizePQ sizeL schedAt) fn sFuncStatList
+  IOMap.alter (update (size + sizePQ + sizeL) sizePQ sizeL schedAt) fn stList
 
   where update :: Int64 -> Int64 -> Int64 -> Int64 -> Maybe FuncStat -> Maybe FuncStat
-        update size sizePQ sizeL schedAt st =
-          Just ((fromMaybe (funcStat fn) st) { sJob = size
-                                             , sRunning = sizePQ
-                                             , sLocked = sizeL
+        update total running lockedCount schedAt st =
+          Just ((fromMaybe (funcStat fn) st) { sJob = total
+                                             , sRunning = running
+                                             , sLocked = lockedCount
                                              , sSchedAt = schedAt
                                              })
 
@@ -654,6 +669,19 @@ schedLaterJob jh later step = do
 
   where (fn, jn) = unHandle jh
 
+addLockIndexSTM :: LockIndex -> JobHandle -> LockName -> STM ()
+addLockIndexSTM lockIndex jh name = do
+  names <- fromMaybe Set.empty <$> IOMapS.lookup jh lockIndex
+  IOMapS.insert jh (Set.insert name names) lockIndex
+
+removeLockIndexSTM :: LockIndex -> JobHandle -> LockName -> STM ()
+removeLockIndexSTM lockIndex jh name = do
+  names <- fromMaybe Set.empty <$> IOMapS.lookup jh lockIndex
+  let names' = Set.delete name names
+  if Set.null names'
+    then IOMapS.delete jh lockIndex
+    else IOMapS.insert jh names' lockIndex
+
 acquireLock
   :: (MonadUnliftIO m, Persist db)
   => LockName -> Int -> JobHandle -> SchedT db m Bool
@@ -671,6 +699,7 @@ acquireLock_ name count jh = do
   locker <- asks sLocker
   L.with locker $ do
     lockList <- asks sLockList
+    lockIndex <- asks sLockIndex
     p <- asks sPersist
     j <- liftIO $ P.getOne p Running fn jn
     case j of
@@ -683,27 +712,32 @@ acquireLock_ name count jh = do
           case l of
             Nothing -> do
               IOMapS.insert name LockInfo
-                { acquired = [item]
-                , locked = []
+                { acquired = Set.singleton item
+                , locked = Seq.empty
+                , lockedSet = Set.empty
                 , maxCount = count
                 } lockList
+              addLockIndexSTM lockIndex jh name
               pure True
             Just info@LockInfo {..} -> do
               let newCount = max maxCount count
-              if item `elem` acquired then pure True
-              else if item `elem` locked then pure False
+              if item `Set.member` acquired then pure True
+              else if item `Set.member` lockedSet then pure False
               else
-                if length acquired < newCount then do
+                if Set.size acquired < newCount then do
                   IOMapS.insert name info
-                    { acquired = acquired ++ [item]
+                    { acquired = Set.insert item acquired
                     , maxCount = newCount
                     } lockList
+                  addLockIndexSTM lockIndex jh name
                   pure True
                 else do
                   IOMapS.insert name info
-                    { locked = locked ++ [item]
+                    { locked = locked |> item
+                    , lockedSet = Set.insert item lockedSet
                     , maxCount = newCount
                     } lockList
+                  addLockIndexSTM lockIndex jh name
                   pure False
 
         unless r $ liftIO $ P.updateState p Locked fn jn
@@ -727,31 +761,38 @@ releaseLock_ name jh = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("releaseLock: " ++ show name ++ " " ++ show jh)
   p <- asks sPersist
   lockList <- asks sLockList
+  lockIndex <- asks sLockIndex
   h <- atomically $ do
     l <- IOMapS.lookup name lockList
     case l of
-      Nothing -> pure Nothing
+      Nothing -> removeLockIndexSTM lockIndex jh name >> pure Nothing
       Just info@LockInfo {..} ->
-        if item `elem` acquired then
-          case locked of
-            [] -> do
+        if item `Set.member` acquired then do
+          removeLockIndexSTM lockIndex jh name
+          case Seq.viewl locked of
+            Seq.EmptyL -> do
               IOMapS.insert name info
-                { acquired = L.delete item acquired
+                { acquired = Set.delete item acquired
                 } lockList
               pure Nothing
-            x:xs -> do
+            x Seq.:< xs -> do
               IOMapS.insert name info
-                { acquired = L.delete item acquired
+                { acquired = Set.insert x $ Set.delete item acquired
                 , locked   = xs
+                , lockedSet = Set.delete x lockedSet
                 } lockList
               pure $ Just x
         else
-          if item `elem` locked then do
+          if item `Set.member` lockedSet then do
+            removeLockIndexSTM lockIndex jh name
+            let locked' = Seq.filter (/= item) locked
             IOMapS.insert name info
-              { locked = L.delete item locked
+              { locked = locked'
+              , lockedSet = Set.delete item lockedSet
               } lockList
             pure Nothing
-          else pure Nothing
+          else
+            pure Nothing
 
   case h of
     Nothing -> pure ()
@@ -770,34 +811,39 @@ releaseLock'
   :: (MonadUnliftIO m, Persist db)
   => JobHandle -> SchedT db m ()
 releaseLock' jh = do
-  lockList <- asks sLockList
-  names <- IOMap.foldrWithKey foldFunc [] lockList
+  lockIndex <- asks sLockIndex
+  names <- fromMaybe Set.empty <$> IOMap.lookup jh lockIndex
   mapM_ (`releaseLock` jh) names
-
-  where foldFunc :: LockName -> LockInfo -> [LockName] -> [LockName]
-        foldFunc n LockInfo {..} acc
-          | item `elem` acquired = n : acc
-          | item `elem` locked   = n : acc
-          | otherwise          = acc
-
-        item = LockItem jh 0
 
 purgeEmptyLock :: MonadIO m => SchedT db m ()
 purgeEmptyLock = do
   lockList <- asks sLockList
+  lockIndex <- asks sLockIndex
   tout <- fmap fromIntegral . readTVarIO =<< asks sLockTimeout
   now <- getEpochTime
+  let expiredAt = now - tout
+  expired <- expiredLockItems expiredAt <$> IOMap.toList lockList
+  atomically $ mapM_ (uncurry $ removeLockIndexSTM lockIndex) expired
   IOMap.modifyIOMap (Map.filter filterFunc . Map.map (mapFunc (now - tout))) lockList
 
-  where filterFunc :: LockInfo -> Bool
+  where expiredLockItems :: Int64 -> [(LockName, LockInfo)] -> [(JobHandle, LockName)]
+        expiredLockItems expiredAt =
+          concatMap $ \(name, LockInfo {..}) ->
+            [ (jh, name)
+            | LockItem jh t <- Set.toList acquired ++ toList locked
+            , t <= expiredAt
+            ]
+
+        filterFunc :: LockInfo -> Bool
         filterFunc LockInfo {..}
-          | null acquired && null locked = False
+          | Set.null acquired && null locked = False
           | otherwise = True
 
         mapFunc :: Int64 -> LockInfo -> LockInfo
-        mapFunc e i = i { locked = filter ff (locked i), acquired = filter ff (acquired i) }
+        mapFunc e i = i { locked = locked', lockedSet = Set.fromList $ toList locked', acquired = Set.filter ff (acquired i) }
           where ff :: LockItem -> Bool
                 ff (LockItem _ t) = t > e
+                locked' = Seq.filter ff (locked i)
 
 getMaxLockCount :: MonadUnliftIO m => Int -> SchedT db m Int
 getMaxLockCount minV = do
@@ -815,7 +861,7 @@ purgeDeadTasks = do
 
 status :: (MonadIO m, Persist db) => SchedT db m [FuncStat]
 status = do
-  mapM_ adjustFuncStat =<< liftIO . P.funcList =<< asks sPersist
+  mapM_ adjustFuncStatFromPersist =<< liftIO . P.getAllFuncStats =<< asks sPersist
   IOMap.elems =<< asks sFuncStatList
 
 revertRunningQueue :: (MonadUnliftIO m, Persist db) => SchedT db m ()

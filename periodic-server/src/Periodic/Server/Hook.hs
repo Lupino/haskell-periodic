@@ -109,12 +109,19 @@ genSocketHook lock tph config _ (HookEvent evt) (HookName name) count = L.with l
 
 
 data MetricItem db = MetricItem db String String Int
+data SocketHookItem = SocketHookItem HookEvent HookName Double
 
 metricQueueMaxSize :: Int
 metricQueueMaxSize = 10000
 
 metricDropLogEvery :: Int
 metricDropLogEvery = 1000
+
+socketHookQueueMaxSize :: Int
+socketHookQueueMaxSize = 10000
+
+socketHookDropLogEvery :: Int
+socketHookDropLogEvery = 1000
 
 readPositiveEnv :: String -> Int -> IO Int
 readPositiveEnv key fallback = do
@@ -142,6 +149,17 @@ runPersistMetricWorker queue = forever $ do
     Left e  -> errorM "Periodic.Server.Hook" $ "Persist metric error " ++ show e
     Right _ -> pure ()
 
+runSocketHookWorker
+  :: Transport tp
+  => L.Lock
+  -> TVar (Maybe tp)
+  -> TransportConfig tp
+  -> TBQueue SocketHookItem
+  -> IO ()
+runSocketHookWorker lock tph config queue = forever $ do
+  SocketHookItem evt name count <- atomically $ readTBQueue queue
+  genSocketHook lock tph config () evt name count
+
 markMetricDropped :: TVar Int -> Int -> STM (Maybe Int)
 markMetricDropped droppedCounter logEvery = do
   dropped <- readTVar droppedCounter
@@ -166,12 +184,35 @@ genPersistHook queue droppedCounter dropLogEvery db (HookEvent evt) (HookName na
     errorM "Periodic.Server.Hook" $
       "Persist metric queue is full, dropped metrics count=" ++ show dropped
 
+genSocketQueueHook
+  :: TBQueue SocketHookItem
+  -> TVar Int
+  -> Int
+  -> db -> HookEvent -> HookName -> Double -> IO ()
+genSocketQueueHook queue droppedCounter dropLogEvery _ evt name count = do
+  mDropped <- atomically $ do
+    full <- isFullTBQueue queue
+    if full then markMetricDropped droppedCounter dropLogEvery
+            else writeTBQueue queue (SocketHookItem evt name count) >> pure Nothing
+
+  forM_ mDropped $ \dropped ->
+    errorM "Periodic.Server.Hook" $
+      "Socket hook queue is full, dropped events count=" ++ show dropped
+
 
 socketHook :: String -> IO (Hook db)
 socketHook hostPort = do
   h <- newTVarIO Nothing
   lock <- L.new
-  return . Hook $ genSocketHook lock h $ socket hostPort
+  queueSize <- readPositiveEnv "PERIODIC_SOCKET_HOOK_QUEUE_MAX_SIZE" socketHookQueueMaxSize
+  dropLogEvery <- readPositiveEnv "PERIODIC_SOCKET_HOOK_DROP_LOG_EVERY" socketHookDropLogEvery
+  queue <- newTBQueueIO $ fromIntegral queueSize
+  droppedCounter <- newTVarIO 0
+  void $ async $ runSocketHookWorker lock h (socket hostPort) queue
+  infoM "Periodic.Server.Hook" $
+    "Socket hook worker started, queueMaxSize="
+    ++ show queueSize ++ ", dropLogEvery=" ++ show dropLogEvery
+  return . Hook $ genSocketQueueHook queue droppedCounter dropLogEvery
 
 
 persistHook :: Persist db => IO (Hook db)

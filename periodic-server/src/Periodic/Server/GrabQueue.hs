@@ -13,6 +13,8 @@ import           Data.IOMap     (IOMap)
 import qualified Data.IOMap     as IOMap
 import qualified Data.IOMap.STM as IOMapS
 import           Data.Maybe     (catMaybes)
+import qualified Data.Set       as Set
+import           Data.Set       (Set)
 import           Metro.Utils    (foreverExit, lift)
 import           Periodic.Types (FuncName, Msgid, Nid)
 import           UnliftIO       (MonadIO, STM, TQueue, TVar, atomically,
@@ -22,7 +24,7 @@ import           UnliftIO       (MonadIO, STM, TQueue, TVar, atomically,
 
 data GrabItem = GrabItem
   { msgidList :: TVar [Msgid]
-  , funcList  :: TVar [FuncName]
+  , funcList  :: TVar (Set FuncName)
   }
 
 
@@ -33,7 +35,7 @@ newGrabQueue = do
   nidList <- newTQueueIO
   GrabQueue nidList <$> IOMap.empty
 
-pushAgent :: MonadIO m => GrabQueue -> TVar [FuncName] -> Nid -> TVar [Msgid] -> m ()
+pushAgent :: MonadIO m => GrabQueue -> TVar (Set FuncName) -> Nid -> TVar [Msgid] -> m ()
 pushAgent (GrabQueue s q) fl nid ml = atomically $ do
   writeTQueue s nid
   IOMapS.insert nid (GrabItem ml fl) q
@@ -49,10 +51,10 @@ findMsgid (GrabQueue _ q) fn nid = do
         []     -> pure Nothing
         (x:xs) -> do
           funcs <- readTVar fl
-          if fn `elem` funcs then do
-                             writeTVar ml xs
-                             pure $ Just (nid, x)
-                             else pure Nothing
+          if fn `Set.member` funcs then do
+            writeTVar ml xs
+            pure $ Just (nid, x)
+          else pure Nothing
 
 
 popAgentSTM :: GrabQueue -> FuncName -> STM (Maybe (Nid, Msgid))

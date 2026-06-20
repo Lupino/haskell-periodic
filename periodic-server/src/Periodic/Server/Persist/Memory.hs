@@ -69,6 +69,7 @@ instance Persist Memory where
   insert         = doInsert
   updateState    = doUpdateState
   delete         = doDelete
+  insertPendingUnlessRunning = doInsertPendingUnlessRunning
   size           = doSize
   getRunningJob  = doGetRunningJob
   getPendingJob  = doGetPendingJob
@@ -81,6 +82,7 @@ instance Persist Memory where
   funcList       = doFuncList
   minSchedAt     = doMinSchedAt
   getFuncStats   = doGetFuncStats
+  getAllFuncStats = doGetAllFuncStats
   countPending   = doCountPending
   insertMetric   = doInsertMetric
   insertMetrics _ _ = pure ()
@@ -146,7 +148,11 @@ doGetOne m s f j = atomically $ do
 
 
 doInsert :: Memory -> State -> Job -> IO ()
-doInsert m s v = atomically $ do
+doInsert m s v = atomically $ insertSTM m s v
+
+
+insertSTM :: Memory -> State -> Job -> STM ()
+insertSTM m s v = do
   jobMap <- ensureJobMap m f
   indexT <- ensureFuncIndex m f
   mPureJobT <- IOMapS.lookup j jobMap
@@ -166,6 +172,20 @@ doInsert m s v = atomically $ do
         , pureState = s
         }
       modifyTVar' indexT $ insertIndex s v . deleteIndex (pureState old) (pureJob old)
+  where f = getFuncName v
+        j = getName     v
+
+
+doInsertPendingUnlessRunning :: Memory -> Job -> IO Bool
+doInsertPendingUnlessRunning m v = atomically $ do
+  mPureJobT <- getPureJob m f j
+  case mPureJobT of
+    Just pureJobT -> do
+      old <- readTVar pureJobT
+      if pureState old == Running
+        then pure False
+        else insertSTM m Pending v >> pure True
+    Nothing -> insertSTM m Pending v >> pure True
   where f = getFuncName v
         j = getName     v
 
@@ -366,6 +386,13 @@ doGetFuncStats m fn = atomically $ do
         , funcLocked = idxLockedCount index
         , funcSchedAt = minSchedAtIndex $ idxPending index
         }
+
+doGetAllFuncStats :: Memory -> IO [(FuncName, FuncStats)]
+doGetAllFuncStats m = do
+  fns <- doFuncList m
+  mapM (\fn -> do
+    stats <- doGetFuncStats m fn
+    pure (fn, stats)) fns
 
 memorySize :: Memory -> IO Int64
 memorySize Memory {..} = readTVarIO jobSize

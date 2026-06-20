@@ -13,6 +13,7 @@ import           Data.ByteString              (ByteString)
 import           Data.ByteString.Lazy         (fromStrict)
 import qualified Data.IOMap                   as IOMap
 import           Data.Map.Strict              (filterWithKey)
+import qualified Data.Set                     as Set
 import           Metro                        (NodeMode (..), SessionMode (..))
 import           Metro.Class                  (Servable (STP),
                                                Transport (TransportConfig),
@@ -146,7 +147,7 @@ startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
         nid <- getEntropy 4
         runConnT connEnv0 $ send (regPacketRES $ Data nid)
         let nidV = Nid $! runGet getWord32be $ fromStrict nid
-        wFuncList  <- newTVarIO []
+        wFuncList  <- newTVarIO Set.empty
         wJobQueue  <- IOMap.empty
         wMsgidList <- newTVarIO []
         pushAgent grabQueue wFuncList nidV wMsgidList
@@ -162,7 +163,7 @@ startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
   setOnNodeLeave sEnv $ \nid ClientConfig {..} ->
     runSchedT schedEnv $ do
       mapM_ failJob =<< IOMap.keys wJobQueue
-      mapM_ removeFunc =<< readTVarIO wFuncList
+      mapM_ removeFunc . Set.toList =<< readTVarIO wFuncList
       dropAgentList grabQueue nid
 
   setOnCheckNodeState sEnv $ \_ ClientConfig {..} -> do

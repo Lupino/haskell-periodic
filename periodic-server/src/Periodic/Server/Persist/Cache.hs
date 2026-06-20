@@ -8,7 +8,9 @@ module Periodic.Server.Persist.Cache
   , useCache
   ) where
 
+import           Control.Applicative           ((<|>))
 import           Data.Int                       (Int64)
+import           Data.List                      (sortBy)
 import           Metro.Utils                    (getEpochTime)
 import           Periodic.Server.Persist        (FuncStats (..), Persist (..),
                                                  State (..))
@@ -41,6 +43,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    insert           = doInsert
    updateState      = doUpdateState
    delete           = doDelete
+   insertPendingUnlessRunning = doInsertPendingUnlessRunning
    size             = doSize
    getRunningJob    = doGetRunningJob
    getPendingJob    = doGetPendingJob
@@ -53,6 +56,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    funcList       m = funcList (backend m)
    minSchedAt       = doMinSchedAt
    getFuncStats     = doGetFuncStats
+   getAllFuncStats  = doGetAllFuncStats
    countPending     = doCountPending
    insertMetric     = doInsertMetric
    insertMetrics    = doInsertMetrics
@@ -85,6 +89,16 @@ doInsert Cache{..} s v = do
         f = getFuncName v
         j = getName     v
 
+doInsertPendingUnlessRunning :: Persist db => Cache db -> Job -> IO Bool
+doInsertPendingUnlessRunning m v = do
+  let f = getFuncName v
+      j = getName v
+  memoryRunning <- getOne (memory m) Running f j
+  backendRunning <- getOne (backend m) Running f j
+  case memoryRunning <|> backendRunning of
+    Just _  -> pure False
+    Nothing -> doInsert m Pending v >> pure True
+
 doUpdateState :: Persist db => Cache db -> State -> FuncName -> JobName -> IO ()
 doUpdateState Cache{..} s f j = do
   updateState backend s f j
@@ -113,18 +127,16 @@ doGetPendingJob
   => Cache db -> FuncName -> Int64 -> Int -> IO [Job]
 doGetPendingJob m fn ts c = do
   r0 <- getPendingJob (memory m) fn ts c
-  let l0 = length r0
-  if l0 < c then (r0 ++) <$> getPendingJob (backend m) fn ts (c - l0)
-            else pure r0
+  r1 <- getPendingJob (backend m) fn ts c
+  pure $ take c $ sortJobs $ r0 ++ r1
 
 doGetLockedJob
   :: forall db . Persist db
   => Cache db -> FuncName -> Int -> IO [Job]
 doGetLockedJob m fn c = do
   r0 <- getLockedJob (memory m) fn c
-  let l0 = length r0
-  if l0 < c then (r0 ++) <$> getLockedJob (backend m) fn (c - l0)
-            else pure r0
+  r1 <- getLockedJob (backend m) fn c
+  pure $ take c $ sortJobs $ r0 ++ r1
 
 doCountPending
   :: forall db . Persist db
@@ -163,6 +175,19 @@ doGetFuncStats m fn = do
     minNonZero 0 y = y
     minNonZero x 0 = x
     minNonZero x y = min x y
+
+doGetAllFuncStats :: Persist db => Cache db -> IO [(FuncName, FuncStats)]
+doGetAllFuncStats m = do
+  fns <- funcList (backend m)
+  mapM (\fn -> do
+    stats <- doGetFuncStats m fn
+    pure (fn, stats)) fns
+
+sortJobs :: [Job] -> [Job]
+sortJobs = sortBy jobOrder
+  where
+    jobOrder a b =
+      compare (getSchedAt a, getFuncName a, getName a) (getSchedAt b, getFuncName b, getName b)
 
 doInsertMetric :: Persist db => Cache db -> String -> String -> Int -> IO ()
 doInsertMetric m = insertMetric (backend m)

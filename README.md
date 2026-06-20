@@ -100,6 +100,13 @@ To persist internal hook metrics with queue protection:
     PERIODIC_METRIC_DROP_LOG_EVERY=1000 \
     periodicd --hook persist
 
+Socket hooks (`--hook udp://...` or `--hook tcp://...`) are also buffered so a
+slow hook receiver does not block the scheduler path:
+
+    PERIODIC_SOCKET_HOOK_QUEUE_MAX_SIZE=10000 \
+    PERIODIC_SOCKET_HOOK_DROP_LOG_EVERY=1000 \
+    periodicd --hook udp://127.0.0.1:1000
+
 The SQLite backend (`file://...` and `cache+file://...`) enables WAL mode and
 uses batched metric writes for this hook. It is still intended for a single
 `periodicd` process; use PostgreSQL for multi-process server deployments.

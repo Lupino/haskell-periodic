@@ -75,6 +75,7 @@ instance Persist SQLite where
   funcList       (SQLite db) = doFuncList db
   minSchedAt     (SQLite db) = doMinSchedAt db Pending
   getFuncStats   (SQLite db) = doGetFuncStats db
+  getAllFuncStats (SQLite db) = doGetAllFuncStats db
   countPending   (SQLite db) = doCountPending db
   insertMetric   (SQLite db) = doInsertMetric db
   insertMetrics  (SQLite db) = doInsertMetrics db
@@ -257,6 +258,16 @@ doGetFuncStats db fn = queryStmt db sql (bindFNS 1 [fn, fn, fn, fn]) stepFuncSta
           <> " (SELECT COUNT(*) FROM jobs WHERE func=? AND state=2),"
           <> " COALESCE((SELECT sched_at FROM jobs WHERE func=? AND state=0 ORDER BY sched_at ASC LIMIT 1), 0)"
 
+doGetAllFuncStats :: Database -> IO [(FuncName, FuncStats)]
+doGetAllFuncStats db = queryStmt db sql (const $ pure ()) (foldAllFuncStats [])
+  where sql = Utf8 $
+          "SELECT funcs.func,"
+          <> " SUM(CASE WHEN jobs.state=0 THEN 1 ELSE 0 END),"
+          <> " SUM(CASE WHEN jobs.state=1 THEN 1 ELSE 0 END),"
+          <> " SUM(CASE WHEN jobs.state=2 THEN 1 ELSE 0 END),"
+          <> " COALESCE(MIN(CASE WHEN jobs.state=0 THEN jobs.sched_at END), 0)"
+          <> " FROM funcs LEFT JOIN jobs ON funcs.func=jobs.func GROUP BY funcs.func"
+
 doConfigSet :: Database -> String -> Int -> IO ()
 doConfigSet db name v = execStmt db sql $ \stmt -> do
     void $ bindText stmt 1 $ fromString name
@@ -366,6 +377,20 @@ stepFuncStats stmt = do
       <*> columnInt64 stmt 1
       <*> columnInt64 stmt 2
       <*> columnInt64 stmt 3
+
+foldAllFuncStats :: [(FuncName, FuncStats)] -> Statement -> IO [(FuncName, FuncStats)]
+foldAllFuncStats acc stmt = do
+  sr <- liftEither $ step stmt
+  case sr of
+    Done -> pure acc
+    Row  -> do
+      fn <- FuncName <$> columnBlob stmt 0
+      stats <- FuncStats
+        <$> columnInt64 stmt 1
+        <*> columnInt64 stmt 2
+        <*> columnInt64 stmt 3
+        <*> columnInt64 stmt 4
+      foldAllFuncStats ((fn, stats) : acc) stmt
 
 doInsertMetric :: Database -> String -> String -> Int -> IO ()
 doInsertMetric db event name durationMs = do

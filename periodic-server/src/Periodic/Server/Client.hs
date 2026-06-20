@@ -18,7 +18,7 @@ import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
 import qualified Data.IOMap                   as IOMap
-import           Data.List                    (delete)
+import qualified Data.Set                     as Set
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
 import qualified Metro.Conn                   as Conn
@@ -123,19 +123,19 @@ handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList
-    if fn `elem` funcList
+    if fn `Set.member` funcList
        then pure True
        else do
-         writeTVar wFuncList $! fn : funcList
+         writeTVar wFuncList $! Set.insert fn funcList
          pure False
   unless has $ lift $ addFunc fn
   send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList
-    if fn `elem` funcList
+    if fn `Set.member` funcList
        then do
-         writeTVar wFuncList $! delete fn funcList
+         writeTVar wFuncList $! Set.delete fn funcList
          pure True
        else pure False
   when has $ lift $ removeFunc fn
@@ -143,10 +143,10 @@ handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
 handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList
-    if fn `elem` funcList
+    if fn `Set.member` funcList
        then pure True
        else do
-         writeTVar wFuncList $! fn : funcList
+         writeTVar wFuncList $! Set.insert fn funcList
          pure False
   unless has $ lift $ broadcastFunc fn True
   send $ packetRES Success

@@ -48,6 +48,9 @@ import           UnliftIO                (Exception, SomeException, Typeable)
 instance ToField FuncName where
   toField (FuncName fn) = toField fn
 
+instance FromField FuncName where
+  fromField f dat = FuncName <$> fromField f dat
+
 instance ToField JobName where
   toField (JobName jn) = toField jn
 
@@ -124,6 +127,7 @@ instance Persist PSQL where
   insert         db st    = runDB_ db . doInsert st
   updateState    db st fn = runDB_ db . doUpdateState st fn
   delete         db fn    = runDB_ db . doDelete fn
+  insertPendingUnlessRunning db = runDB db . doInsertPendingUnlessRunning
   size           db st    = runDB  db . doSize st
   getRunningJob  db       = runDB  db . doGetRunningJob
   getPendingJob  db f t c
@@ -138,6 +142,7 @@ instance Persist PSQL where
   funcList       db       = runDB  db   doFuncList
   minSchedAt     db       = runDB  db . doMinSchedAt Pending
   getFuncStats   db       = runDB  db . doGetFuncStats
+  getAllFuncStats db      = runDB  db   doGetAllFuncStats
   countPending   db ts    = runDB  db . doCountPending ts
   insertMetric   db e n   = runDB  db . doInsertMetric e n
   insertMetrics  db       = runDB  db . doInsertMetrics
@@ -228,6 +233,15 @@ doInsert state job = do
   where fn = getFuncName job
         jn = getName     job
 
+doInsertPendingUnlessRunning :: Job -> DB.PSQL Bool
+doInsertPendingUnlessRunning job = withTransaction $ do
+  running <- doGetOne Running fn jn
+  case running of
+    Just _  -> pure False
+    Nothing -> doInsert Pending job >> pure True
+  where fn = getFuncName job
+        jn = getName     job
+
 doUpdateState :: State -> FuncName -> JobName -> DB.PSQL Int64
 doUpdateState state fn jn =
   update jobs ["state"] "func=? AND name=?" (state, fn, jn)
@@ -299,6 +313,24 @@ doGetFuncStats fn = do
       ++ " (SELECT count(*) FROM " ++ tableName ++ " WHERE func=? AND state=2),"
       ++ " (SELECT sched_at FROM " ++ tableName ++ " WHERE func=? AND state=0 ORDER BY sched_at ASC LIMIT 1)"
       where tableName = getTableName tablePrefix jobs
+
+doGetAllFuncStats :: DB.PSQL [(FuncName, FuncStats)]
+doGetAllFuncStats = do
+  rows <- query mkQuery () :: DB.PSQL [(FuncName, Int64, Int64, Int64, Maybe Int64)]
+  pure
+    [ (fn, FuncStats pending running locked (fromMaybe 0 schedAt))
+    | (fn, pending, running, locked, schedAt) <- rows
+    ]
+  where
+    mkQuery tablePrefix = fromString $
+      "SELECT funcs.func,"
+      ++ " SUM(CASE WHEN jobs.state=0 THEN 1 ELSE 0 END),"
+      ++ " SUM(CASE WHEN jobs.state=1 THEN 1 ELSE 0 END),"
+      ++ " SUM(CASE WHEN jobs.state=2 THEN 1 ELSE 0 END),"
+      ++ " MIN(CASE WHEN jobs.state=0 THEN jobs.sched_at END)"
+      ++ " FROM " ++ getTableName tablePrefix funcs
+      ++ " AS funcs LEFT JOIN " ++ getTableName tablePrefix jobs
+      ++ " AS jobs ON funcs.func=jobs.func GROUP BY funcs.func"
 
 doConfigSet :: String -> Int -> DB.PSQL Int64
 doConfigSet name v =

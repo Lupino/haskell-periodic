@@ -29,3 +29,18 @@ periodicd --hook persist
 These SQLite settings improve the single-daemon path. They do not make sharing
 one SQLite file across multiple `periodicd` processes safe; use PostgreSQL when
 running more than one server process against the same persistent store.
+
+## Socket hook queue tuning
+
+When running `periodicd --hook udp://...` or `periodicd --hook tcp://...`,
+socket hook events are also written through an async bounded queue. This keeps
+slow hook receivers from blocking the scheduler path.
+
+Environment variables:
+
+- `PERIODIC_SOCKET_HOOK_QUEUE_MAX_SIZE`:
+  Queue capacity for pending socket hook events.
+  Default: `10000`.
+- `PERIODIC_SOCKET_HOOK_DROP_LOG_EVERY`:
+  Log once every N dropped socket hook events when queue is full.
+  Default: `1000`.
