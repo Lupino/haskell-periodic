@@ -31,7 +31,7 @@ data Cache db = Cache
 
 instance (Typeable db, Persist db) => Persist (Cache db) where
    data PersistConfig (Cache db) = UseCache Int64 (PersistConfig db)
-   data PersistException (Cache db) = CacheException SomeException deriving (Show, Typeable)
+   data PersistException (Cache db) = CacheException SomeException deriving Show
 
    newPersist (UseCache maxSize config) = do
      infoM "Periodic.Server.Persist.Cache" "Cache connected"

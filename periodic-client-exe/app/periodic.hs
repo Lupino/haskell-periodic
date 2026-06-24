@@ -384,9 +384,6 @@ getFlag _ []        = ""
 getFlag _ [_]       = ""
 getFlag ks (x:y:xs) = if x `elem` ks then y else getFlag ks (y:xs)
 
-getFile :: String -> IO Workload
-getFile fn = Workload <$> B.readFile fn
-
 doRunJob :: Transport tp => [String] -> ClientT tp IO ()
 doRunJob []       = liftIO printRunHelp
 doRunJob [_]      = liftIO printRunHelp

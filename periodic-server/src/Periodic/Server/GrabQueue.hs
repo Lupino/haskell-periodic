@@ -22,10 +22,7 @@ import           UnliftIO       (MonadIO, STM, TQueue, TVar, atomically,
                                  tryReadTQueue, unGetTQueue, writeTQueue,
                                  writeTVar)
 
-data GrabItem = GrabItem
-  { msgidList :: TVar [Msgid]
-  , funcList  :: TVar (Set FuncName)
-  }
+data GrabItem = GrabItem (TVar [Msgid]) (TVar (Set FuncName))
 
 
 data GrabQueue = GrabQueue (TQueue Nid) (IOMap Nid GrabItem)

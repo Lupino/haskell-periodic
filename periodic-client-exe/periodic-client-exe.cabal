@@ -19,7 +19,6 @@ library
   build-depends:       base >= 4.7 && < 5
                      , unliftio
                      , process
-                     , transformers
   if !os(windows)
     build-depends:     unix
   if os(windows)

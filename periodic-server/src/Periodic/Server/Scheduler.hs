@@ -103,10 +103,10 @@ instance Ord LockItem where
 -- Distributed lock
 --                                  acquired    locked
 data LockInfo = LockInfo
-    { acquired :: Set.Set LockItem
-    , locked   :: Seq LockItem
+    { acquired  :: Set.Set LockItem
+    , locked    :: Seq LockItem
     , lockedSet :: Set.Set LockItem
-    , maxCount :: Int
+    , maxCount  :: Int
     }
 
 type LockList = IOMap LockName LockInfo
@@ -257,7 +257,7 @@ setConfigInt key val = do
     "max-pool-size"  -> saveInt "max-pool-size" val sMaxPoolSize
     _                -> pure ()
 
-getConfigInt :: (MonadIO m, Persist db) => String -> SchedT db m Int
+getConfigInt :: MonadIO m => String -> SchedT db m Int
 getConfigInt key = do
   SchedEnv {..} <- ask
   case key of
@@ -492,12 +492,6 @@ schedJob job nid msgid = do
         jh = getHandle job
 
 
-adjustFuncStat :: (MonadIO m, Persist db) => FuncName -> SchedT db m ()
-adjustFuncStat fn = do
-  SchedEnv{..} <- ask
-  P.FuncStats size sizePQ sizeL sc <- liftIO $ P.getFuncStats sPersist fn
-  adjustFuncStat' sFuncStatList fn size sizePQ sizeL sc
-
 adjustFuncStatFromPersist :: MonadIO m => (FuncName, P.FuncStats) -> SchedT db m ()
 adjustFuncStatFromPersist (fn, P.FuncStats size sizePQ sizeL sc) = do
   stList <- asks sFuncStatList
@@ -607,7 +601,7 @@ retryLater later job = do
   pushChanJob $ setSchedAt nextSchedAt job
 
 getJobDuration
-  :: (MonadIO m, Persist db)
+  :: MonadIO m
   => JobHandle -> SchedT db m Double
 getJobDuration jh = do
   h <- asks sAssignJobTime
@@ -638,7 +632,7 @@ doneJob_ jh w = do
 
 
 workData
-  :: (MonadIO m, Persist db)
+  :: MonadIO m
   => JobHandle -> ByteString -> SchedT db m ()
 workData jh w = do
   liftIO $ debugM "Periodic.Server.Scheduler" ("workData: " ++ show jh)
@@ -974,7 +968,7 @@ existsWaitList jh = do
           | waiterIsData x = hasWaiter xs
           | otherwise = True
 
-runHook :: (MonadIO m, GetHookName a, Persist db) => HookEvent -> a -> Double -> SchedT db m ()
+runHook :: (MonadIO m, GetHookName a) => HookEvent -> a -> Double -> SchedT db m ()
 runHook evt n c = do
   hook <- asks sHook
   db <- asks sPersist

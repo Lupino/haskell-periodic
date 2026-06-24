@@ -51,19 +51,19 @@ job = do
     Just j  -> pure j
     Nothing -> liftIO $ ioError $ userError "Missing job context in JobT"
 
-name :: (FromBS a, Show a, MonadIO m) => JobT tp m a
+name :: (FromBS a, MonadIO m) => JobT tp m a
 name = fromBS . unJN <$> name_
 
 name_ :: MonadIO m => JobT tp m JobName
 name_ = getName <$> job
 
-func :: (FromBS a, Show a, MonadIO m) => JobT tp m a
+func :: (FromBS a, MonadIO m) => JobT tp m a
 func = fromBS . unFN <$> func_
 
 func_ :: MonadIO m => JobT tp m FuncName
 func_ = getFuncName <$> job
 
-workload :: (FromBS a, Show a, MonadIO m) => JobT tp m a
+workload :: (FromBS a, MonadIO m) => JobT tp m a
 workload = fromBS . unWL <$> workload_
 
 workload_ :: MonadIO m => JobT tp m Workload

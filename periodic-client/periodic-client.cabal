@@ -29,7 +29,6 @@ library
                      , periodic-common
                      , bytestring
                      , hslogger
-                     , byteable
                      , transformers
 
                      , resource-pool

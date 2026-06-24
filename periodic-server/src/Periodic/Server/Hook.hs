@@ -169,8 +169,7 @@ markMetricDropped droppedCounter logEvery = do
                                else pure Nothing
 
 genPersistHook
-  :: Persist db
-  => TBQueue (MetricItem db)
+  :: TBQueue (MetricItem db)
   -> TVar Int
   -> Int
   -> db -> HookEvent -> HookName -> Double -> IO ()

@@ -30,13 +30,9 @@ library
   build-depends:       base >= 4.7 && < 5
                      , periodic-common
                      , bytestring
-                     , network
                      , containers
-                     , filepath
                      , hslogger
                      , byteable
-                     , stm
-                     , async
                      , binary
                      , transformers
                      , mtl
@@ -51,7 +47,6 @@ library
 
                      , metro-socket
                      , unix-time
-                     , monadlist
 
   if !os(windows)
     exposed-modules:   Periodic.Server.Persist.PSQL
@@ -65,9 +60,6 @@ executable periodicd
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , periodic-server
-                     , periodic-common
-                     , bytestring
-                     , unliftio
                      , hslogger
                      , metro
                      , metro-socket

@@ -26,7 +26,7 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           System.Log.Logger       (infoM)
 import           UnliftIO                (Exception, STM, SomeException, TVar,
-                                          Typeable, atomically, modifyTVar',
+                                          atomically, modifyTVar',
                                           newTVar, newTVarIO, readTVar,
                                           readTVarIO, writeTVar)
 
@@ -56,7 +56,7 @@ data Memory = Memory
 
 instance Persist Memory where
   data PersistConfig Memory = UseMemory
-  data PersistException Memory = MemoryException SomeException deriving (Show, Typeable)
+  data PersistException Memory = MemoryException SomeException deriving Show
 
   newPersist _ = do
     infoM "Periodic.Server.Persist.Memory" "Memory connected"

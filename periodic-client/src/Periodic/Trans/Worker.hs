@@ -52,8 +52,8 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
 import           Metro.Session                (receive, send)
 import           Metro.Utils                  (foreverExit, getEpochTime)
 import           Periodic.Node
-import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, checkHealth,
-                                                     close, getClientEnv, ping,
+import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, close,
+                                                     getClientEnv, ping,
                                                      successRequest)
 import           Periodic.Trans.Job           (JobT, func_, name, workFail)
 import           Periodic.Types               (ClientType (TypeWorker), Msgid,
@@ -396,11 +396,6 @@ processJob_ taskList job = withEnv (Just job) $ do
           , show e
           ]
         void workFail
-
-checkHealth
-  :: (MonadUnliftIO m, Transport tp)
-  => WorkerT tp m ()
-checkHealth = runJobT BT.checkHealth
 
 processJobQueue :: (MonadUnliftIO m, Transport tp) => WorkerEnv tp m -> JobT tp m ()
 processJobQueue wEnv@WorkerEnv {..} = forever $ do

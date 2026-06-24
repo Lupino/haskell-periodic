@@ -107,7 +107,7 @@ handleWorkerSessionT ClientConfig {..} (WC.WorkDone jh w) = do
   IOMap.delete jh wJobQueue
   lift $ doneJob jh w
   send $ packetRES Success
-handleWorkerSessionT ClientConfig {..} (WC.WorkData jh w) = do
+handleWorkerSessionT _ (WC.WorkData jh w) = do
   lift $ workData jh w
   send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.WorkFail jh) = do
@@ -118,8 +118,8 @@ handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
   IOMap.delete jh wJobQueue
   lift $ schedLaterJob jh l s
   send $ packetRES Success
-handleWorkerSessionT ClientConfig {..} WC.Sleep = send $ packetRES Noop
-handleWorkerSessionT ClientConfig {..} WC.Ping = send $ packetRES Pong
+handleWorkerSessionT _ WC.Sleep = send $ packetRES Noop
+handleWorkerSessionT _ WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList

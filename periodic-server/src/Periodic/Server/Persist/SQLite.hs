@@ -24,7 +24,7 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (infoM)
-import           UnliftIO                (Exception, Typeable, throwIO, tryAny)
+import           UnliftIO                (Exception, throwIO, tryAny)
 
 stateName :: State -> ByteString
 stateName Pending = "0"
@@ -40,7 +40,7 @@ newtype SQLite = SQLite Database
 
 instance Persist SQLite where
   data PersistConfig SQLite = SQLitePath Utf8
-  data PersistException SQLite = SQLiteException Error deriving (Eq, Show, Typeable)
+  data PersistException SQLite = SQLiteException Error deriving (Eq, Show)
 
   newPersist (SQLitePath path) = do
     infoM "Periodic.Server.Persist.SQLite" ("SQLite connected " ++ show path)

@@ -14,12 +14,10 @@ module Periodic.Trans.BaseClient
   , runJob
   , recvJobData_
   , recvJobData
-  , checkHealth
 
   , successRequest
   ) where
 
-import           Control.Monad                (unless)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (Binary)
 import           Data.ByteString              (ByteString)
@@ -40,7 +38,7 @@ import           UnliftIO
 type BaseClientEnv u = NodeEnv u ServerCommand
 type BaseClientT u = NodeT u ServerCommand
 
-runBaseClientT :: Monad m => BaseClientEnv u tp -> BaseClientT u tp m a -> m a
+runBaseClientT :: BaseClientEnv u tp -> BaseClientT u tp m a -> m a
 runBaseClientT = runNodeT
 
 close :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m ()
@@ -111,13 +109,6 @@ recvJobData
   -> (ByteString -> m ())
   ->  FuncName -> JobName -> BaseClientT u tp m ()
 recvJobData mwaiter cb fn jn = recvJobData_ mwaiter cb $ initJob fn jn
-
-checkHealth :: (MonadUnliftIO m, Transport tp) => BaseClientT u tp m ()
-checkHealth = do
-  ret <- timeout 10000000 ping
-  case ret of
-    Nothing -> close
-    Just r  -> unless r close
 
 getClientEnv :: (Monad m, Transport tp) => BaseClientT u tp m (BaseClientEnv u tp)
 getClientEnv = getEnv1

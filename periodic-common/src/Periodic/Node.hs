@@ -37,7 +37,7 @@ sessionGen = Msgid . runGet getWord32be . fromStrict <$> getEntropy 4
 
 type NodeEnvList u rpkt tp = IOMap Nid (NodeEnv u rpkt tp)
 
-runNodeT :: Monad m => NodeEnv u rpkt tp -> NodeT u rpkt tp m a -> m a
+runNodeT :: NodeEnv u rpkt tp -> NodeT u rpkt tp m a -> m a
 runNodeT  = M.runNodeT1
 
 defaultSessionHandler :: MonadIO m => SessionT u rpkt tp m ()

@@ -43,7 +43,7 @@ import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
 import           System.Log.Logger       (infoM)
-import           UnliftIO                (Exception, SomeException, Typeable)
+import           UnliftIO                (Exception, SomeException)
 
 instance ToField FuncName where
   toField (FuncName fn) = toField fn
@@ -105,7 +105,7 @@ preparePath = go . B.split ' '
 
 instance Persist PSQL where
   data PersistConfig PSQL = PSQLPath ByteString
-  data PersistException PSQL = PSQLException SomeException deriving (Show, Typeable)
+  data PersistException PSQL = PSQLException SomeException deriving Show
 
   newPersist (PSQLPath path) = do
     infoM "Periodic.Server.Persist.PSQL" ("PSQL connected " ++ show path)
