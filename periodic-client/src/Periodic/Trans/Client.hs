@@ -5,6 +5,7 @@ module Periodic.Trans.Client
   ( ClientT
   , ClientEnv
   , open
+  , openWithAuth
   , close
   , runClientT
   , closeClientEnv
@@ -48,7 +49,9 @@ import           Metro.Node                   (NodeMode (..), SessionMode (..),
 import           Metro.Session                (send)
 import           Periodic.Node
 import           Periodic.Trans.BaseClient
-import           Periodic.Types               (ClientType (TypeClient),
+import           Periodic.Types               (ClientIdentity,
+                                               ClientType (TypeAuthClient,
+                                                           TypeClient),
                                                getClientType, getResult,
                                                packetREQ, regPacketREQ)
 import           Periodic.Types.ClientCommand
@@ -62,6 +65,7 @@ import           UnliftIO
 
 data ClientEnv tp = ClientEnv
   { clientConfig        :: TransportConfig tp
+  , clientAuth          :: Maybe ClientIdentity
   , clientEnvVar        :: TVar (BaseClientEnv () tp)
   , clientReconnectLock :: MVar ()
   }
@@ -88,12 +92,23 @@ runClientT env@ClientEnv {..} m = do
 open
   :: (MonadUnliftIO m, Transport tp)
   => TransportConfig tp -> m (ClientEnv tp)
-open config = do
-  cenv <- openClientEnv config
+open config = openWithIdentity config Nothing
+
+openWithAuth
+  :: (MonadUnliftIO m, Transport tp)
+  => TransportConfig tp -> ClientIdentity -> m (ClientEnv tp)
+openWithAuth config ident = openWithIdentity config $ Just ident
+
+openWithIdentity
+  :: (MonadUnliftIO m, Transport tp)
+  => TransportConfig tp -> Maybe ClientIdentity -> m (ClientEnv tp)
+openWithIdentity config mAuth = do
+  cenv <- openClientEnv config mAuth
   cenvVar <- newTVarIO cenv
   reconnectLock <- newMVar ()
   pure $ ClientEnv
     { clientConfig = config
+    , clientAuth = mAuth
     , clientEnvVar = cenvVar
     , clientReconnectLock = reconnectLock
     }
@@ -109,7 +124,7 @@ reconnectClientEnv ClientEnv {..} = withMVar clientReconnectLock $ \_ -> do
   healthy <- isClientHealthy cenv
   unless healthy $ do
     void $ tryAny (runNodeT cenv close)
-    cenv' <- openClientEnv clientConfig
+    cenv' <- openClientEnv clientConfig clientAuth
     atomically $ writeTVar clientEnvVar cenv'
 
 isClientHealthy
@@ -123,11 +138,11 @@ isClientHealthy cenv = do
 
 openClientEnv
   :: (MonadUnliftIO m, Transport tp)
-  => TransportConfig tp -> m (BaseClientEnv () tp)
-openClientEnv config = do
+  => TransportConfig tp -> Maybe ClientIdentity -> m (BaseClientEnv () tp)
+openClientEnv config mAuth = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
-    Conn.send $ regPacketREQ TypeClient
+    Conn.send $ regPacketREQ $ maybe TypeClient TypeAuthClient mAuth
     Conn.receive_
 
   let nid = case getClientType r of

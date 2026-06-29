@@ -18,6 +18,7 @@ import           Data.Byteable                (toBytes)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
 import qualified Data.IOMap                   as IOMap
+import           Data.List                    (find)
 import qualified Data.Set                     as Set
 import           Metro.Class                  (Transport)
 import           Metro.Conn                   (fromConn)
@@ -25,12 +26,13 @@ import qualified Metro.Conn                   as Conn
 import           Metro.Session                (env, getSessionEnv1, ident,
                                                receive, send)
 import           Periodic.Node
+import           Periodic.Server.Auth         (isFuncAllowed)
 import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Types
 import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Internal      (ConfigKey (..))
-import           Periodic.Types.Job           (getFuncName, initJob)
+import           Periodic.Types.Job           (FuncName, getFuncName, initJob)
 import           Periodic.Types.Packet        (getPacketData, packetRES)
 import qualified Periodic.Types.WorkerCommand as WC
 import           System.Log.Logger            (errorM)
@@ -43,23 +45,29 @@ handleClientSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
   => CC.ClientCommand -> SessionT ClientConfig Command tp (SchedT db m) ()
 handleClientSessionT (CC.SubmitJob job) = do
-  lift $ pushJob job
-  send $ packetRES Success
-handleClientSessionT (CC.RunJob job) = do
-  c <- lift . canRun $ getFuncName job
-  if c then do
-    (!nid, !msgid) <- ident <$> getSessionEnv1
-    lift $ prepareWait job nid msgid False
+  allowed <- checkFunc "SubmitJob" $ getFuncName job
+  when allowed $ do
     lift $ pushJob job
-  else send $ packetRES NoWorker
+    send $ packetRES Success
+handleClientSessionT (CC.RunJob job) = do
+  allowed <- checkFunc "RunJob" $ getFuncName job
+  when allowed $ do
+    c <- lift . canRun $ getFuncName job
+    if c then do
+      (!nid, !msgid) <- ident <$> getSessionEnv1
+      lift $ prepareWait job nid msgid False
+      lift $ pushJob job
+    else send $ packetRES NoWorker
 
 handleClientSessionT (CC.RecvData job) = do
-  c <- lift . canRun $ getFuncName job
-  if c then do
-    (!nid, !msgid) <- ident <$> getSessionEnv1
-    lift $ prepareWait job nid msgid True
-    send $ packetRES Success
-  else send $ packetRES NoWorker
+  allowed <- checkFunc "RecvData" $ getFuncName job
+  when allowed $ do
+    c <- lift . canRun $ getFuncName job
+    if c then do
+      (!nid, !msgid) <- ident <$> getSessionEnv1
+      lift $ prepareWait job nid msgid True
+      send $ packetRES Success
+    else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
   stats <- lift $ map toBytes <$> status
@@ -87,8 +95,10 @@ handleClientSessionT (CC.ConfigSet (ConfigKey key) v) = do
 handleClientSessionT CC.Dump = send =<< lift (packetRES . Data . toStrict . encode <$> dumpJob)
 
 handleClientSessionT (CC.Load jobs) = do
-  lift $ mapM_ pushJob jobs
-  send $ packetRES Success
+  allowed <- checkFuncs "Load" $ map getFuncName jobs
+  when allowed $ do
+    lift $ mapM_ pushJob jobs
+    send $ packetRES Success
 
 handleWorkerSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
@@ -121,15 +131,17 @@ handleWorkerSessionT ClientConfig {..} (WC.SchedLater jh l s) = do
 handleWorkerSessionT _ WC.Sleep = send $ packetRES Noop
 handleWorkerSessionT _ WC.Ping = send $ packetRES Pong
 handleWorkerSessionT ClientConfig {..} (WC.CanDo fn) = do
-  has <- atomically $ do
-    funcList <- readTVar wFuncList
-    if fn `Set.member` funcList
-       then pure True
-       else do
-         writeTVar wFuncList $! Set.insert fn funcList
-         pure False
-  unless has $ lift $ addFunc fn
-  send $ packetRES Success
+  allowed <- checkFunc "CanDo" fn
+  when allowed $ do
+    has <- atomically $ do
+      funcList <- readTVar wFuncList
+      if fn `Set.member` funcList
+         then pure True
+         else do
+           writeTVar wFuncList $! Set.insert fn funcList
+           pure False
+    unless has $ lift $ addFunc fn
+    send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
   has <- atomically $ do
     funcList <- readTVar wFuncList
@@ -141,15 +153,17 @@ handleWorkerSessionT ClientConfig {..} (WC.CantDo fn) = do
   when has $ lift $ removeFunc fn
   send $ packetRES Success
 handleWorkerSessionT ClientConfig {..} (WC.Broadcast fn) = do
-  has <- atomically $ do
-    funcList <- readTVar wFuncList
-    if fn `Set.member` funcList
-       then pure True
-       else do
-         writeTVar wFuncList $! Set.insert fn funcList
-         pure False
-  unless has $ lift $ broadcastFunc fn True
-  send $ packetRES Success
+  allowed <- checkFunc "Broadcast" fn
+  when allowed $ do
+    has <- atomically $ do
+      funcList <- readTVar wFuncList
+      if fn `Set.member` funcList
+         then pure True
+         else do
+           writeTVar wFuncList $! Set.insert fn funcList
+           pure False
+    unless has $ lift $ broadcastFunc fn True
+    send $ packetRES Success
 handleWorkerSessionT _ (WC.Acquire n c jh) = do
   r <- lift $ acquireLock n c jh
   send $ packetRES $ Acquired r
@@ -177,3 +191,34 @@ handleSessionT = do
         WC cmd -> do
           env0 <- env
           handleWorkerSessionT env0 cmd
+
+checkFunc
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => String -> FuncName -> SessionT ClientConfig Command tp (SchedT db m) Bool
+checkFunc action fn = do
+  cfg <- env
+  allowed <- case wAuth cfg of
+    Nothing   -> pure True
+    Just auth -> liftIO $ isFuncAllowed auth (wIdentity cfg) fn
+  unless allowed $ do
+    liftIO $ errorM "Periodic.Server.Client" $
+      "Rejected unauthorized " ++ action ++ " for " ++ show (wIdentity cfg) ++ " func=" ++ show fn
+    send $ packetRES NoWorker
+  pure allowed
+
+checkFuncs
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => String -> [FuncName] -> SessionT ClientConfig Command tp (SchedT db m) Bool
+checkFuncs action funcs = do
+  cfg <- env
+  case wAuth cfg of
+    Nothing -> pure True
+    Just auth -> do
+      allowed <- liftIO $ mapM (isFuncAllowed auth (wIdentity cfg)) funcs
+      case find (not . snd) $ zip funcs allowed of
+        Nothing -> pure True
+        Just (fn, _) -> do
+          liftIO $ errorM "Periodic.Server.Client" $
+            "Rejected unauthorized " ++ action ++ " for " ++ show (wIdentity cfg) ++ " func=" ++ show fn
+          send $ packetRES NoWorker
+          pure False

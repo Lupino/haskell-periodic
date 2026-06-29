@@ -151,6 +151,32 @@ or use the `periodic-run-pipe` command
 
     periodic status
 
+### Restrict funcs by client
+
+`periodicd` can restrict which funcs each client or worker may use. Create an
+auth file with one client per line:
+
+    client-a token-a show_file,resize_image
+    worker-a token-worker-a show_file
+
+Start the server with the auth file:
+
+    periodicd --auth-file periodic-auth.txt
+
+Then pass the matching identity from clients and workers:
+
+    periodic --client-name client-a --client-token token-a submit show_file abc.md
+    periodic-run --client-name worker-a --client-token token-worker-a show_file echo
+
+When `--auth-file` is enabled, `SubmitJob`, `RunJob`, `RecvData`, `CanDo`, and
+`Broadcast` are checked against the client's allowed funcs. Missing identity,
+unknown clients, wrong tokens, and unauthorized funcs are rejected. Without
+`--auth-file`, existing unauthenticated clients keep working.
+
+The auth file is reloaded automatically when it changes. A valid update replaces
+the in-memory rules; a malformed update is ignored and the previous valid rules
+continue to be used.
+
 ### E2E benchmark defaults
 
 The benchmark script `scripts/bench/e2e_throughput_latency.sh` uses these defaults:

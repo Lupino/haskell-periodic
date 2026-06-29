@@ -17,6 +17,7 @@ import qualified Metro.TP.RSA                   as RSA (configServerUnsafePlain)
 import           Metro.Utils                    (setupLog)
 import           Paths_periodic_server          (version)
 import           Periodic.Server                (startServer)
+import           Periodic.Server.Auth           (loadFuncAuth)
 import           Periodic.Server.Hook           (genHook)
 import           Periodic.Server.Persist        (Persist, PersistConfig)
 import           Periodic.Server.Persist.Cache  (useCache)
@@ -46,6 +47,7 @@ data Options = Options
   , processName    :: Maybe String
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
+  , authFile       :: Maybe FilePath
   , invalidOption  :: Maybe String
   }
 
@@ -62,6 +64,7 @@ options h p = Options
   , processName    = Nothing
   , rsaPublicPath  = "public_keys.pem"
   , rsaPrivatePath = ""
+  , authFile       = Nothing
   , invalidOption  = Nothing
   }
 
@@ -81,6 +84,7 @@ parseOptions ("--push-task-size":x:xs)   opt = parseOptions xs opt { pushTaskSiz
 parseOptions ("--sched-task-size":x:xs)  opt = parseOptions xs opt { schedTaskSize = strictReadArg "--sched-task-size" x }
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath = x }
+parseOptions ("--auth-file":x:xs)        opt = parseOptions xs opt { authFile = Just x }
 parseOptions (x:xs)                      opt =
   parseOptions xs opt { invalidOption = invalidOption opt <|> Just x }
 
@@ -131,6 +135,7 @@ printHelp = do
   putStrLn "Security Options:"
   putStrLn "      --rsa-private-path <P>  RSA private key file path"
   putStrLn "      --rsa-public-path <P>   RSA public keys file path or directory"
+  putStrLn "      --auth-file <P>         Client func authorization file"
   putStrLn ""
   putStrLn "Help:"
   putStrLn "  -h, --help            Display this help message"
@@ -181,13 +186,15 @@ main = do
       failUnknownStorePath storePath
 
 run :: Persist db => Options -> PersistConfig db -> IO ()
-run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath = ""} config = do
+run Options {host, pushTaskSize, schedTaskSize, hookHostPort, authFile, rsaPrivatePath = ""} config = do
   hook <- genHook hookHostPort
-  startServer config id (socketServer host) hook pushTaskSize schedTaskSize
-run Options {host, pushTaskSize, schedTaskSize, hookHostPort, rsaPrivatePath, rsaPublicPath} config = do
+  auth <- traverse loadFuncAuth authFile
+  startServer config id (socketServer host) hook auth pushTaskSize schedTaskSize
+run Options {host, pushTaskSize, schedTaskSize, hookHostPort, authFile, rsaPrivatePath, rsaPublicPath} config = do
   hook <- genHook hookHostPort
+  auth <- traverse loadFuncAuth authFile
   genTP <- RSA.configServerUnsafePlain rsaPrivatePath rsaPublicPath
-  startServer config genTP (socketServer host) hook pushTaskSize schedTaskSize
+  startServer config genTP (socketServer host) hook auth pushTaskSize schedTaskSize
 
 #ifdef mingw32_HOST_OS
 failPostgreSQLOnWindows :: IO ()

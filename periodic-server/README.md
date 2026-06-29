@@ -2,6 +2,32 @@
 
 Periodic task system haskell server.
 
+## Client func authorization
+
+Use `periodicd --auth-file <PATH>` to enable per-client func authorization.
+The file is whitespace-separated, with one client identity per line:
+
+```text
+client-a token-a func1,func2
+worker-a token-worker-a func1
+```
+
+Clients and workers authenticate during connection registration:
+
+```bash
+periodic --client-name client-a --client-token token-a run func1 job-1
+periodic-run --client-name worker-a --client-token token-worker-a func1 echo
+```
+
+With an auth file configured, the server checks `SubmitJob`, `RunJob`,
+`RecvData`, `CanDo`, `Broadcast`, and loaded jobs against the authenticated
+client's func set. Unauthorized requests return the existing failure response
+and are logged by the server.
+
+The auth file is polled for changes and hot-reloaded. Reload is atomic: a fully
+valid file replaces the active rules, while parse or validation errors leave the
+previous rules active.
+
 ## Persist hook metric queue tuning
 
 When running `periodicd --hook persist`, metric writes are buffered by an async

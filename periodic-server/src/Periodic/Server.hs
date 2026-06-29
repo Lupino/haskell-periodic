@@ -45,18 +45,21 @@ import           Periodic.Server.Scheduler    (failJob, initSchedEnv,
                                                startSchedT)
 import           Periodic.Server.Types        (ClientConfig (..), Command (WC),
                                                ServerCommand (Data))
-import           Periodic.Types               (ClientType, Job, Msgid (..),
-                                               Nid (..), Packet, getClientType,
-                                               getHandle, getResult, getTimeout,
+import           Periodic.Server.Auth         (FuncAuth, startFuncAuthReloader)
+import           Periodic.Types               (ClientType (..), Job,
+                                               Msgid (..), Nid (..), Packet,
+                                               getClientType, getHandle,
+                                               getResult, getTimeout,
                                                packetRES, regPacketRES)
 import           Periodic.Types.ServerCommand (ServerCommand (JobAssign))
+import           Periodic.Types.ClientType    (ClientIdentity)
 import           Periodic.Types.WorkerCommand (getJobAssignResult)
 import           System.Entropy               (getEntropy)
 import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
 import           UnliftIO                     (MonadUnliftIO, atomically,
-                                               newTVarIO, readTVarIO, tryAny,
-                                               writeTVar)
+                                               liftIO, newTVarIO, readTVarIO,
+                                               tryAny, writeTVar)
 
 type ServerEnv serv =
   M.ServerEnv serv ClientConfig Nid Msgid (Packet Command)
@@ -132,10 +135,12 @@ startServer
   -> (TransportConfig (STP serv) -> TransportConfig tp)
   -> S.ServerConfig serv
   -> Hook db
+  -> Maybe FuncAuth
   -> Int
   -> Int
   -> m ()
-startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
+startServer dbconfig mk config hook mAuth pushTaskSize schedTaskSize = do
+  mapM_ (liftIO . startFuncAuthReloader) mAuth
   grabQueue <- newGrabQueue
   sEnv <- fmap mapEnv . initServerEnv config sessionGen mk $ \_ _ connEnv0 -> do
     mClientType <- tryAny $ getClientType <$> runConnT connEnv0 receive_
@@ -143,10 +148,12 @@ startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
       Left err -> do
         errorM "Periodic.Server" $ "Client registration decode error: " ++ show err
         pure Nothing
-      Right (_ :: ClientType) -> do
+      Right clientType -> do
         nid <- getEntropy 4
         runConnT connEnv0 $ send (regPacketRES $ Data nid)
         let nidV = Nid $! runGet getWord32be $ fromStrict nid
+            wAuth = mAuth
+            wIdentity = clientIdentity clientType
         wFuncList  <- newTVarIO Set.empty
         wJobQueue  <- IOMap.empty
         wMsgidList <- newTVarIO []
@@ -182,3 +189,8 @@ startServer dbconfig mk config hook pushTaskSize schedTaskSize = do
           . setSessionMode SingleAction
           . setServerName "Periodic"
           . setOnExcClose True
+
+        clientIdentity :: ClientType -> Maybe ClientIdentity
+        clientIdentity (TypeAuthClient ident) = Just ident
+        clientIdentity (TypeAuthWorker ident) = Just ident
+        clientIdentity _                      = Nothing

@@ -13,6 +13,7 @@ module Periodic.Trans.Worker
   ( WorkerT
   , startWorkerT
   , startWorkerTWithSignal
+  , startWorkerTWithSignalWithAuth
   , ping
   , addFunc
   , broadcast
@@ -56,7 +57,9 @@ import qualified Periodic.Trans.BaseClient    as BT (BaseClientEnv, close,
                                                      getClientEnv, ping,
                                                      successRequest)
 import           Periodic.Trans.Job           (JobT, func_, name, workFail)
-import           Periodic.Types               (ClientType (TypeWorker), Msgid,
+import           Periodic.Types               (ClientIdentity,
+                                               ClientType (TypeAuthWorker,
+                                                           TypeWorker), Msgid,
                                                Packet, getClientType, getResult,
                                                packetREQ, recvRawPacket,
                                                regPacketREQ)
@@ -118,11 +121,16 @@ getShutdown = maybe (pure False) readTVarIO
 startWorkerTWithSignal
   :: (MonadUnliftIO m, Transport tp)
   => Maybe (TVar Bool) -> m () -> TransportConfig tp -> WorkerT tp m () -> m ()
-startWorkerTWithSignal mShutdownH cleanup config m = foreverExit $ \exit -> do
+startWorkerTWithSignal = startWorkerTWithSignalWithAuth Nothing
+
+startWorkerTWithSignalWithAuth
+  :: (MonadUnliftIO m, Transport tp)
+  => Maybe ClientIdentity -> Maybe (TVar Bool) -> m () -> TransportConfig tp -> WorkerT tp m () -> m ()
+startWorkerTWithSignalWithAuth mAuth mShutdownH cleanup config m = foreverExit $ \exit -> do
   shouldStop <- getShutdown mShutdownH
   when shouldStop $ exit ()
 
-  e <- lift $ tryAny (startWorkerT_ mShutdownH cleanup config m)
+  e <- lift $ tryAny (startWorkerT_ mAuth mShutdownH cleanup config m)
   shouldStopRetry <- getShutdown mShutdownH
   when shouldStopRetry $ exit ()
 
@@ -138,11 +146,11 @@ startWorkerTWithSignal mShutdownH cleanup config m = foreverExit $ \exit -> do
 
 startWorkerT_
   :: (MonadUnliftIO m, Transport tp)
-  => Maybe (TVar Bool) -> m () -> TransportConfig tp -> WorkerT tp m () -> m ()
-startWorkerT_ shutdownH cleanup config m = do
+  => Maybe ClientIdentity -> Maybe (TVar Bool) -> m () -> TransportConfig tp -> WorkerT tp m () -> m ()
+startWorkerT_ mAuth shutdownH cleanup config m = do
   connEnv <- initConnEnv config
   r <- runConnT connEnv $ do
-    Conn.send $ regPacketREQ TypeWorker
+    Conn.send $ regPacketREQ $ maybe TypeWorker TypeAuthWorker mAuth
     Conn.receive_
 
   let nid = case getClientType r of

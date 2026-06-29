@@ -35,8 +35,10 @@ import           Periodic.Trans.Job        (JobT, name, schedLater, timeout,
                                             withLock_, workData, workDone,
                                             workDone_, workFail, workload)
 import           Periodic.Trans.Worker     (WorkerT, addFunc, broadcast,
-                                            startWorkerTWithSignal, work)
-import           Periodic.Types            (FuncName (..), LockName (..),
+                                            startWorkerTWithSignalWithAuth,
+                                            work)
+import           Periodic.Types            (ClientIdentity (ClientIdentity),
+                                            FuncName (..), LockName (..),
                                             Msgid (..))
 import           System.Environment        (getArgs, lookupEnv)
 import           System.Exit               (exitFailure, exitSuccess)
@@ -76,6 +78,8 @@ data Options = Options
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
   , rsaMode        :: RSA.RSAMode
+  , clientName     :: Maybe String
+  , clientToken    :: Maybe String
   , parseError     :: Maybe String
   }
 
@@ -96,6 +100,8 @@ options t h = Options
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
   , rsaMode        = RSA.AES
+  , clientName     = Nothing
+  , clientToken    = Nothing
   , parseError     = Nothing
   }
 
@@ -116,6 +122,8 @@ parseOptions ("--mem-limit":x:xs)        opt = parseOptions xs opt { memLimit = 
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
 parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs $ parseReadArg "--rsa-mode" x (\v o -> o { rsaMode = v }) onParseErr opt
+parseOptions ("--client-name":x:xs)      opt = parseOptions xs opt { clientName = Just x }
+parseOptions ("--client-token":x:xs)     opt = parseOptions xs opt { clientToken = Just x }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions []                          opt = (opt { showHelp = True }, "", "", [])
 parseOptions [_]                         opt = (opt { showHelp = True }, "", "", [])
@@ -153,6 +161,8 @@ printHelp = do
   putStrLn "      --rsa-mode <MODE>     RSA mode: Plain, RSA, or AES (Default: AES)"
   putStrLn "      --rsa-public-path <P> RSA public key file or directory"
   putStrLn "      --rsa-private-path <P>RSA private key file path"
+  putStrLn "      --client-name <NAME>  Auth client name"
+  putStrLn "      --client-token <TOK>  Auth client token"
   putStrLn ""
   putStrLn "Help:"
   putStrLn "  -h, --help                Display this help message"
@@ -194,11 +204,20 @@ main = do
   pipes <- newTQueueIO
   runners <- liftIO $ mapM (\_ -> createRunner pipes memLimit readyTimeoutS cmd argv) [1 .. thread]
 
+  auth <- requireAuthPair opts
   case rsaPrivatePath of
-    "" -> startWorkerTWithSignal (Just shuttingDown) (cleanupPipes pipes runners) (socket host) $ doWork pipes opts func
+    "" -> startWorkerTWithSignalWithAuth auth (Just shuttingDown) (cleanupPipes pipes runners) (socket host) $ doWork pipes opts func
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      startWorkerTWithSignal (Just shuttingDown) (cleanupPipes pipes runners) (genTP $ socket host) $ doWork pipes opts func
+      startWorkerTWithSignalWithAuth auth (Just shuttingDown) (cleanupPipes pipes runners) (genTP $ socket host) $ doWork pipes opts func
+
+requireAuthPair :: Options -> IO (Maybe ClientIdentity)
+requireAuthPair Options {clientName = Nothing, clientToken = Nothing} = pure Nothing
+requireAuthPair Options {clientName = Just n, clientToken = Just t} =
+  pure $ Just $ ClientIdentity (B.pack n) (B.pack t)
+requireAuthPair _ = do
+  putStrLn "Error: --client-name and --client-token must be provided together"
+  exitFailure
 
 doWork :: Transport tp => TQueue Pipe -> Options -> FuncName -> WorkerT tp IO ()
 doWork pipes opts@Options{..} func = do

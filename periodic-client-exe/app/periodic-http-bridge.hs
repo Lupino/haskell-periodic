@@ -15,6 +15,7 @@ import qualified Data.ByteString.Lazy            as LB (empty, fromStrict,
                                                         toStrict)
 import           Data.List                       (isPrefixOf)
 import           Data.Maybe                      (fromMaybe)
+import qualified Data.ByteString.Char8           as B (pack)
 import           Data.Streaming.Network.Internal (HostPreference (Host))
 import           Data.String                     (fromString)
 import           Data.Version                    (showVersion)
@@ -27,6 +28,7 @@ import           Network.Wai.Handler.Warp        (setHost, setPort)
 import           Paths_periodic_client_exe       (version)
 import           Periodic.Exec.Util              (parseReadArg)
 import           Periodic.Trans.ClientPool
+import           Periodic.Types                  (ClientIdentity (ClientIdentity))
 import           Periodic.Types.Job
 import           System.Environment              (getArgs, lookupEnv)
 import           System.Exit                     (exitFailure, exitSuccess)
@@ -47,6 +49,8 @@ data Options = Options
   , rsaPrivatePath :: FilePath
   , rsaPublicPath  :: FilePath
   , rsaMode        :: RSA.RSAMode
+  , clientName     :: Maybe String
+  , clientToken    :: Maybe String
   , parseError     :: Maybe String
   , invalidOption  :: Maybe String
   }
@@ -61,6 +65,8 @@ options h = Options
   , rsaPublicPath  = "public_key.pem"
   , rsaPrivatePath = ""
   , rsaMode        = RSA.AES
+  , clientName     = Nothing
+  , clientToken    = Nothing
   , parseError     = Nothing
   , invalidOption  = Nothing
   }
@@ -75,6 +81,8 @@ parseOptions ("--pool-size":x:xs)        opt = parseOptions xs $ parseReadArg "-
 parseOptions ("--rsa-private-path":x:xs) opt = parseOptions xs opt { rsaPrivatePath = x }
 parseOptions ("--rsa-public-path":x:xs)  opt = parseOptions xs opt { rsaPublicPath  = x }
 parseOptions ("--rsa-mode":x:xs)         opt = parseOptions xs $ parseReadArg "--rsa-mode" x (\v o -> o { rsaMode = v }) onParseErr opt
+parseOptions ("--client-name":x:xs)      opt = parseOptions xs opt { clientName = Just x }
+parseOptions ("--client-token":x:xs)     opt = parseOptions xs opt { clientToken = Just x }
 parseOptions ("--help":xs)               opt = parseOptions xs opt { showHelp = True }
 parseOptions ("-h":xs)                   opt = parseOptions xs opt { showHelp = True }
 parseOptions (x:xs)                      opt = parseOptions xs opt { invalidOption = invalidOption opt <|> Just x }
@@ -101,6 +109,8 @@ printHelp = do
   putStrLn "      --rsa-mode <MODE>     RSA mode: Plain, RSA, or AES (Default: AES)"
   putStrLn "      --rsa-public-path <P> RSA public key file or directory"
   putStrLn "      --rsa-private-path <P>RSA private key file path"
+  putStrLn "      --client-name <NAME>  Auth client name"
+  putStrLn "      --client-token <TOK>  Auth client token"
   putStrLn ""
   putStrLn "Help:"
   putStrLn "  -h, --help                Display this help message"
@@ -120,7 +130,7 @@ main :: IO ()
 main = do
   h <- lookupEnv "PERIODIC_PORT"
 
-  Options{..} <- flip parseOptions (options h) <$> getArgs
+  opts@Options{..} <- flip parseOptions (options h) <$> getArgs
 
   when showHelp printHelp
   case parseError of
@@ -138,14 +148,23 @@ main = do
         { settings = setPort httpPort
                    $ setHost (Host httpHost) (settings defaultOptions)}
 
+  auth <- requireAuthPair opts
   case rsaPrivatePath of
     "" -> do
-      clientEnv <- openPool (socket host) poolSize
+      clientEnv <- maybe (openPool (socket host) poolSize) (\ident -> openPoolWithAuth (socket host) ident poolSize) auth
       scottyOpts sopts $ application clientEnv
     _ -> do
       genTP <- RSA.configClient rsaMode rsaPrivatePath rsaPublicPath
-      clientEnv <- openPool (genTP $ socket host) poolSize
+      clientEnv <- maybe (openPool (genTP $ socket host) poolSize) (\ident -> openPoolWithAuth (genTP $ socket host) ident poolSize) auth
       scottyOpts sopts $ application clientEnv
+
+requireAuthPair :: Options -> IO (Maybe ClientIdentity)
+requireAuthPair Options {clientName = Nothing, clientToken = Nothing} = pure Nothing
+requireAuthPair Options {clientName = Just n, clientToken = Just t} =
+  pure $ Just $ ClientIdentity (B.pack n) (B.pack t)
+requireAuthPair _ = do
+  putStrLn "Error: --client-name and --client-token must be provided together"
+  exitFailure
 
 
 application :: Transport tp => ClientPoolEnv tp ->  ScottyM ()

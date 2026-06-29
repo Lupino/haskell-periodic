@@ -15,8 +15,10 @@ import           Data.IOMap                   (IOMap)
 import           Data.Set                     (Set)
 import           Metro.Class                  (RecvPacket (..))
 import           Periodic.Node                (SessionEnv1)
+import           Periodic.Server.Auth         (FuncAuth)
 import qualified Periodic.Types.ClientCommand as CC
 import           Periodic.Types.Internal      (Msgid)
+import           Periodic.Types.ClientType    (ClientIdentity)
 import           Periodic.Types.Job           (FuncName, JobHandle)
 import           Periodic.Types.Packet        (Packet, recvRawPacket)
 import           Periodic.Types.ServerCommand (ServerCommand (..))
@@ -115,6 +117,8 @@ data ClientConfig = ClientConfig
   { wFuncList  :: TVar (Set FuncName)
   , wJobQueue  :: IOMap JobHandle Int64
   , wMsgidList :: TVar [Msgid]
+  , wAuth      :: Maybe FuncAuth
+  , wIdentity  :: Maybe ClientIdentity
   }
 
 type CSEnv = SessionEnv1 ClientConfig Command

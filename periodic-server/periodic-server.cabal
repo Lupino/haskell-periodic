@@ -23,6 +23,7 @@ library
                      , Periodic.Server.Persist.SQLite
                      , Periodic.Server.Persist.Memory
                      , Periodic.Server.Persist.Cache
+                     , Periodic.Server.Auth
                      , Periodic.Server.Client
                      , Periodic.Server.Types
                      , Periodic.Server.Hook
@@ -31,6 +32,7 @@ library
                      , periodic-common
                      , bytestring
                      , containers
+                     , directory
                      , hslogger
                      , byteable
                      , binary
