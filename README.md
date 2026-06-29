@@ -153,11 +153,12 @@ or use the `periodic-run-pipe` command
 
 ### Restrict funcs by client
 
-`periodicd` can restrict which funcs each client or worker may use. Create an
-auth file with one client per line:
+`periodicd` can restrict which role and funcs each client or worker identity may
+use. Create an auth file with one identity per line:
 
-    client-a token-a show_file,resize_image
-    worker-a token-worker-a show_file
+    client client-a token-a show_file,resize_image
+    worker worker-a token-worker-a show_file
+    admin admin-a token-admin admin_marker
 
 Start the server with the auth file:
 
@@ -168,10 +169,21 @@ Then pass the matching identity from clients and workers:
     periodic --client-name client-a --client-token token-a submit show_file abc.md
     periodic-run --client-name worker-a --client-token token-worker-a show_file echo
 
-When `--auth-file` is enabled, `SubmitJob`, `RunJob`, `RecvData`, `CanDo`, and
-`Broadcast` are checked against the client's allowed funcs. Missing identity,
-unknown clients, wrong tokens, and unauthorized funcs are rejected. Without
-`--auth-file`, existing unauthenticated clients keep working.
+The first field is the identity role. Workers may use both client and worker
+commands. Clients may only use client commands; worker registration commands
+such as `CanDo` and `Broadcast` are rejected for client connections. Admin
+identities may register as either client or worker and may use all commands and
+funcs.
+
+When `--auth-file` is enabled, func-bearing requests are also checked against
+the identity's allowed funcs. Missing identity, unknown clients, wrong tokens,
+role mismatches, and unauthorized funcs are rejected. Without `--auth-file`,
+unauthenticated connections keep working within their registered client or
+worker role.
+
+`status` is filtered to the identity's allowed funcs. Other commands without a
+func name, such as `ping`, `config`, `dump`, and `shutdown`, are limited by role
+only.
 
 The auth file is reloaded automatically when it changes. A valid update replaces
 the in-memory rules; a malformed update is ignored and the previous valid rules

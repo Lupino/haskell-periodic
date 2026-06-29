@@ -11,10 +11,11 @@ module Periodic.Server.Client
   ) where
 
 
-import           Control.Monad                (unless, when)
+import           Control.Monad                (filterM, unless, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary                  (encode)
 import           Data.Byteable                (toBytes)
+import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Char8        as B (intercalate)
 import           Data.ByteString.Lazy         (toStrict)
 import qualified Data.IOMap                   as IOMap
@@ -26,7 +27,9 @@ import qualified Metro.Conn                   as Conn
 import           Metro.Session                (env, getSessionEnv1, ident,
                                                receive, send)
 import           Periodic.Node
-import           Periodic.Server.Auth         (isFuncAllowed)
+import           Periodic.Server.Auth         (isAdminAllowed, isFuncAllowed,
+                                               isRoleAllowed)
+import           Periodic.Server.FuncStat     (FuncStat (..))
 import           Periodic.Server.Persist      (Persist)
 import           Periodic.Server.Scheduler
 import           Periodic.Server.Types
@@ -70,18 +73,23 @@ handleClientSessionT (CC.RecvData job) = do
     else send $ packetRES NoWorker
 
 handleClientSessionT CC.Status = do
-  stats <- lift $ map toBytes <$> status
+  cfg <- env
+  stats <- filterStatus cfg =<< lift status
   send . packetRES . Data $ B.intercalate "\n" stats
 
 handleClientSessionT CC.Ping = send $ packetRES Pong
 
 handleClientSessionT (CC.DropFunc fn) = do
-  lift $ dropFunc fn
-  send $ packetRES Success
+  allowed <- checkFunc "DropFunc" fn
+  when allowed $ do
+    lift $ dropFunc fn
+    send $ packetRES Success
 
 handleClientSessionT (CC.RemoveJob fn jn) = do
-  lift $ removeJob $ initJob fn jn
-  send $ packetRES Success
+  allowed <- checkFunc "RemoveJob" fn
+  when allowed $ do
+    lift $ removeJob $ initJob fn jn
+    send $ packetRES Success
 handleClientSessionT CC.Shutdown = lift shutdown
 
 handleClientSessionT (CC.ConfigGet (ConfigKey key)) = do
@@ -174,6 +182,15 @@ handleWorkerSessionT _ (WC.Release n jh) = do
 handleWorkerSessionT _ WC.JobAssigned = pure ()
 handleWorkerSessionT _ WC.JobUnassigned = pure ()
 
+filterStatus
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => ClientConfig -> [FuncStat] -> SessionT ClientConfig Command tp (SchedT db m) [ByteString]
+filterStatus ClientConfig {wAuth = Nothing} stats = pure $ map toBytes stats
+filterStatus ClientConfig {wAuth = Just auth, wIdentity = ident0} stats =
+  map toBytes <$> filterM isAllowed stats
+  where
+    isAllowed FuncStat {..} = liftIO $ isFuncAllowed auth ident0 sFuncName
+
 handleSessionT
   :: (MonadUnliftIO m, Persist db, Transport tp)
   => SessionT ClientConfig Command tp (SchedT db m) ()
@@ -187,10 +204,83 @@ handleSessionT = do
       case getPacketData pkt of
         SC Unknown -> send $ packetRES Unknown
         SC _       -> pure ()
-        CC cmd -> handleClientSessionT cmd
+        CC cmd -> do
+          env0 <- env
+          allowed <- checkRole env0 "ClientCommand"
+          when allowed $ handleClientSessionT cmd
         WC cmd -> do
           env0 <- env
-          handleWorkerSessionT env0 cmd
+          allowed <- checkRole env0 $ workerCommandName cmd
+          when allowed $ handleWorkerSessionT env0 cmd
+
+checkRole
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => ClientConfig -> String -> SessionT ClientConfig Command tp (SchedT db m) Bool
+checkRole cfg@ClientConfig {..} action = do
+  roleAllowed <- checkAuthRole cfg action
+  adminAllowed <- checkAdminRole cfg
+  if roleAllowed
+     then if adminAllowed
+             then pure True
+             else checkCommandRole
+     else pure False
+  where
+    checkCommandRole =
+      case wRole of
+        ClientRoleWorker -> pure True
+        ClientRoleClient ->
+          if action == "ClientCommand"
+             then pure True
+             else do
+               liftIO $ errorM "Periodic.Server.Client" $
+                 "Rejected client-only connection command " ++ action ++
+                 " for " ++ show wIdentity
+               send $ packetRES NoWorker
+               pure False
+
+checkAuthRole
+  :: (MonadUnliftIO m, Persist db, Transport tp)
+  => ClientConfig -> String -> SessionT ClientConfig Command tp (SchedT db m) Bool
+checkAuthRole ClientConfig {..} action =
+  case wAuth of
+    Nothing -> pure True
+    Just auth -> do
+      allowed <- liftIO $ isRoleAllowed auth wIdentity $ clientRoleName wRole
+      unless allowed $ do
+        liftIO $ errorM "Periodic.Server.Client" $
+          "Rejected unauthorized role for " ++ show wIdentity ++
+          " role=" ++ show (clientRoleName wRole) ++
+          " action=" ++ action
+        send $ packetRES NoWorker
+      pure allowed
+
+checkAdminRole
+  :: MonadUnliftIO m
+  => ClientConfig -> SessionT ClientConfig Command tp (SchedT db m) Bool
+checkAdminRole ClientConfig {..} =
+  case wAuth of
+    Nothing -> pure False
+    Just auth -> liftIO $ isAdminAllowed auth wIdentity
+
+clientRoleName :: ClientRole -> ByteString
+clientRoleName ClientRoleClient = "client"
+clientRoleName ClientRoleWorker = "worker"
+
+workerCommandName :: WC.WorkerCommand -> String
+workerCommandName WC.GrabJob         = "GrabJob"
+workerCommandName (WC.WorkDone _ _)  = "WorkDone"
+workerCommandName (WC.WorkData _ _)  = "WorkData"
+workerCommandName (WC.WorkFail _)    = "WorkFail"
+workerCommandName (WC.SchedLater _ _ _) = "SchedLater"
+workerCommandName WC.Sleep           = "Sleep"
+workerCommandName WC.Ping            = "WorkerPing"
+workerCommandName (WC.CanDo _)       = "CanDo"
+workerCommandName (WC.CantDo _)      = "CantDo"
+workerCommandName (WC.Broadcast _)   = "Broadcast"
+workerCommandName (WC.Acquire _ _ _) = "Acquire"
+workerCommandName (WC.Release _ _)   = "Release"
+workerCommandName WC.JobAssigned     = "JobAssigned"
+workerCommandName WC.JobUnassigned   = "JobUnassigned"
 
 checkFunc
   :: (MonadUnliftIO m, Persist db, Transport tp)

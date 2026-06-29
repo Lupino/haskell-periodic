@@ -43,7 +43,8 @@ import           Periodic.Server.Persist      (Persist, PersistConfig)
 import           Periodic.Server.Scheduler    (failJob, initSchedEnv,
                                                removeFunc, runSchedT, shutdown,
                                                startSchedT)
-import           Periodic.Server.Types        (ClientConfig (..), Command (WC),
+import           Periodic.Server.Types        (ClientConfig (..),
+                                               ClientRole (..), Command (WC),
                                                ServerCommand (Data))
 import           Periodic.Server.Auth         (FuncAuth, startFuncAuthReloader)
 import           Periodic.Types               (ClientType (..), Job,
@@ -154,6 +155,7 @@ startServer dbconfig mk config hook mAuth pushTaskSize schedTaskSize = do
         let nidV = Nid $! runGet getWord32be $ fromStrict nid
             wAuth = mAuth
             wIdentity = clientIdentity clientType
+            wRole = clientRole clientType
         wFuncList  <- newTVarIO Set.empty
         wJobQueue  <- IOMap.empty
         wMsgidList <- newTVarIO []
@@ -194,3 +196,9 @@ startServer dbconfig mk config hook mAuth pushTaskSize schedTaskSize = do
         clientIdentity (TypeAuthClient ident) = Just ident
         clientIdentity (TypeAuthWorker ident) = Just ident
         clientIdentity _                      = Nothing
+
+        clientRole :: ClientType -> ClientRole
+        clientRole TypeClient              = ClientRoleClient
+        clientRole (TypeAuthClient _)      = ClientRoleClient
+        clientRole TypeWorker              = ClientRoleWorker
+        clientRole (TypeAuthWorker _)      = ClientRoleWorker

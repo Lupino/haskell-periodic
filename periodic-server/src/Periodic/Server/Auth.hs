@@ -5,6 +5,8 @@ module Periodic.Server.Auth
   ( FuncAuth
   , FuncAuthMap
   , isFuncAllowed
+  , isAdminAllowed
+  , isRoleAllowed
   , loadFuncAuth
   , startFuncAuthReloader
   ) where
@@ -25,7 +27,7 @@ import           UnliftIO                   (Async, TVar, atomically, async,
                                              writeTVar)
 import           UnliftIO.Concurrent        (threadDelay)
 
-type FuncAuthMap = Map B.ByteString (B.ByteString, Set FuncName)
+type FuncAuthMap = Map B.ByteString (B.ByteString, B.ByteString, Set FuncName)
 
 data FuncAuth = FuncAuth
   { authFilePath :: FilePath
@@ -58,14 +60,34 @@ reloadFuncAuth FuncAuth {..} = do
         writeTVar authMTime mtime
       infoM "Periodic.Server.Auth" $ "Reloaded auth file: " ++ authFilePath
 
+isRoleAllowed :: FuncAuth -> Maybe ClientIdentity -> B.ByteString -> IO Bool
+isRoleAllowed _ Nothing _ = pure False
+isRoleAllowed FuncAuth {..} (Just ClientIdentity {..}) role = do
+  rules <- readTVarIO authRules
+  pure $
+    case Map.lookup clientName rules of
+      Just (token, expectedRole, _) ->
+        token == clientToken && (expectedRole == "admin" || role == expectedRole)
+      Nothing -> False
+
+isAdminAllowed :: FuncAuth -> Maybe ClientIdentity -> IO Bool
+isAdminAllowed _ Nothing = pure False
+isAdminAllowed FuncAuth {..} (Just ClientIdentity {..}) = do
+  rules <- readTVarIO authRules
+  pure $
+    case Map.lookup clientName rules of
+      Just (token, expectedRole, _) ->
+        token == clientToken && expectedRole == "admin"
+      Nothing -> False
+
 isFuncAllowed :: FuncAuth -> Maybe ClientIdentity -> FuncName -> IO Bool
 isFuncAllowed _ Nothing _ = pure False
 isFuncAllowed FuncAuth {..} (Just ClientIdentity {..}) fn = do
   rules <- readTVarIO authRules
   pure $
     case Map.lookup clientName rules of
-      Just (token, funcs) ->
-        token == clientToken && fn `Set.member` funcs
+      Just (token, expectedRole, funcs) ->
+        token == clientToken && (expectedRole == "admin" || fn `Set.member` funcs)
       Nothing -> False
 
 readAuthFile :: FilePath -> IO FuncAuthMap
@@ -83,12 +105,13 @@ parseAuthFile =
       | "#" `B.isPrefixOf` line = Right acc
       | otherwise =
           case B.words line of
-            [name, token, funcsRaw] -> do
+            [roleRaw, name, token, funcsRaw] -> do
+              role <- parseRole lineNo roleRaw
               validateName "client name" lineNo name
               validateName "client token" lineNo token
               funcs <- parseFuncs lineNo funcsRaw
-              pure $ Map.insert name (token, funcs) acc
-            _ -> Left $ "Invalid auth line " ++ show lineNo ++ ": expected '<client> <token> <func1,func2>'"
+              pure $ Map.insert name (token, role, funcs) acc
+            _ -> Left $ "Invalid auth line " ++ show lineNo ++ ": expected '<role> <client> <token> <func1,func2>'"
       where
         line = stripComment $ B.dropWhile isSpace rawLine
 
@@ -107,6 +130,13 @@ parseAuthFile =
       case validate fn of
         Left err -> Left $ "Invalid func on auth line " ++ show lineNo ++ ": " ++ err
         Right () -> pure fn
+
+    parseRole lineNo raw =
+      case raw of
+        "client" -> Right "client"
+        "worker" -> Right "worker"
+        "admin" -> Right "admin"
+        _ -> Left $ "Invalid role on auth line " ++ show lineNo ++ ": expected 'client', 'worker', or 'admin'"
 
     validateName what lineNo raw =
       if B.null raw

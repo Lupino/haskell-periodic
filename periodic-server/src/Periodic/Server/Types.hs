@@ -2,6 +2,7 @@
 
 module Periodic.Server.Types
   ( Command (..)
+  , ClientRole (..)
   , ClientConfig (..)
   , CSEnv
   , ServerCommand (..)
@@ -30,6 +31,10 @@ data Command
   | WC WC.WorkerCommand
   | SC ServerCommand
 
+data ClientRole
+  = ClientRoleClient
+  | ClientRoleWorker
+  deriving (Eq, Show)
 
 instance Binary Command where
   get = do
@@ -119,6 +124,7 @@ data ClientConfig = ClientConfig
   , wMsgidList :: TVar [Msgid]
   , wAuth      :: Maybe FuncAuth
   , wIdentity  :: Maybe ClientIdentity
+  , wRole      :: ClientRole
   }
 
 type CSEnv = SessionEnv1 ClientConfig Command

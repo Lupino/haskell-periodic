@@ -2,14 +2,15 @@
 
 Periodic task system haskell server.
 
-## Client func authorization
+## Client role and func authorization
 
-Use `periodicd --auth-file <PATH>` to enable per-client func authorization.
-The file is whitespace-separated, with one client identity per line:
+Use `periodicd --auth-file <PATH>` to enable per-identity role and func
+authorization. The file is whitespace-separated, with one identity per line:
 
 ```text
-client-a token-a func1,func2
-worker-a token-worker-a func1
+client client-a token-a func1,func2
+worker worker-a token-worker-a func1
+admin admin-a token-admin admin_marker
 ```
 
 Clients and workers authenticate during connection registration:
@@ -19,10 +20,19 @@ periodic --client-name client-a --client-token token-a run func1 job-1
 periodic-run --client-name worker-a --client-token token-worker-a func1 echo
 ```
 
-With an auth file configured, the server checks `SubmitJob`, `RunJob`,
-`RecvData`, `CanDo`, `Broadcast`, and loaded jobs against the authenticated
-client's func set. Unauthorized requests return the existing failure response
-and are logged by the server.
+The first field is the identity role. Workers may use both client and worker
+commands. Clients may only use client commands; worker registration commands
+such as `CanDo` and `Broadcast` are rejected for client connections. Admin
+identities may register as either client or worker and may use all commands and
+funcs.
+
+With an auth file configured, the server also checks func-bearing requests
+against the authenticated identity's func set. Role mismatches and unauthorized
+requests return the existing failure response and are logged by the server.
+
+`status` is filtered to the identity's allowed funcs. Other commands without a
+func name, such as `ping`, `config`, `dump`, and `shutdown`, are limited by role
+only.
 
 The auth file is polled for changes and hot-reloaded. Reload is atomic: a fully
 valid file replaces the active rules, while parse or validation errors leave the
