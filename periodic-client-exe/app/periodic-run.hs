@@ -25,7 +25,8 @@ import           Metro.TP.Socket            (socket)
 import           Paths_periodic_client_exe  (version)
 import           Periodic.Exec.Util         (getProcessMem,
                                              installShutdownSignalHandlers,
-                                             isValidHost, parseMemStr,
+                                             isValidHost, lookupNonEmptyEnv,
+                                             lookupReadEnv, parseMemStr,
                                              parseReadArg, strictReadArgE)
 import           Periodic.Trans.Job         (JobT, name, schedLater, timeout,
                                              withLock_, workData, workDone,
@@ -35,7 +36,7 @@ import           Periodic.Trans.Worker      (WorkerT, addFunc, broadcast,
                                              work)
 import           Periodic.Types             (ClientIdentity (ClientIdentity),
                                              FuncName (..), LockName (..))
-import           System.Environment         (getArgs, lookupEnv)
+import           System.Environment         (getArgs)
 import           System.Exit                (ExitCode (..), exitFailure,
                                              exitSuccess)
 import           System.IO                  (Handle, hClose)
@@ -78,8 +79,8 @@ data Options = Options
   , parseError     :: Maybe String
   }
 
-options :: Maybe Int -> Maybe String -> Options
-options t h = Options
+options :: Maybe Int -> Maybe String -> Maybe FilePath -> Maybe FilePath -> RSA.RSAMode -> Maybe String -> Maybe String -> Options
+options t h mRsaPrivate mRsaPublic mode mClientName mClientToken = Options
   { host           = fromMaybe "unix:///tmp/periodic.sock" h
   , thread         = fromMaybe 1 t
   , lockCount      = 1
@@ -93,11 +94,11 @@ options t h = Options
   , memLimit       = 0
   , useWorkData    = False
   , skipFail       = False
-  , rsaPublicPath  = "public_key.pem"
-  , rsaPrivatePath = ""
-  , rsaMode        = RSA.AES
-  , clientName     = Nothing
-  , clientToken    = Nothing
+  , rsaPublicPath  = fromMaybe "public_key.pem" mRsaPublic
+  , rsaPrivatePath = fromMaybe "" mRsaPrivate
+  , rsaMode        = mode
+  , clientName     = mClientName
+  , clientToken    = mClientToken
   , parseError     = Nothing
   }
 
@@ -158,10 +159,11 @@ printHelp = do
   putStrLn ""
   putStrLn "Security Options:"
   putStrLn "      --rsa-mode <MODE>     RSA mode: Plain, RSA, or AES (Default: AES)"
-  putStrLn "      --rsa-public-path <P> RSA public key file or directory"
-  putStrLn "      --rsa-private-path <P>RSA private key file path"
-  putStrLn "      --client-name <NAME>  Auth client name"
-  putStrLn "      --client-token <TOK>  Auth client token"
+  putStrLn "                            Env: $PERIODIC_RSA_MODE"
+  putStrLn "      --rsa-public-path <P> RSA public key file or directory [$PERIODIC_RSA_PUBLIC_PATH]"
+  putStrLn "      --rsa-private-path <P>RSA private key file path [$PERIODIC_RSA_PRIVATE_PATH]"
+  putStrLn "      --client-name <NAME>  Auth client name [$PERIODIC_CLIENT_NAME]"
+  putStrLn "      --client-token <TOK>  Auth client token [$PERIODIC_CLIENT_TOKEN]"
   putStrLn ""
   putStrLn "Help:"
   putStrLn "  -h, --help                Display this help message"
@@ -172,8 +174,8 @@ printHelp = do
 
 main :: IO ()
 main = do
-  h <- lookupEnv "PERIODIC_PORT"
-  mtRaw <- lookupEnv "THREAD"
+  h <- lookupNonEmptyEnv "PERIODIC_PORT"
+  mtRaw <- lookupNonEmptyEnv "THREAD"
   t <- case mtRaw of
     Nothing -> pure Nothing
     Just raw ->
@@ -181,7 +183,13 @@ main = do
         Right v  -> pure $ Just v
         Left err -> putStrLn err >> exitFailure
 
-  (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h) <$> getArgs
+  rsaPrivate <- lookupNonEmptyEnv "PERIODIC_RSA_PRIVATE_PATH"
+  rsaPublic <- lookupNonEmptyEnv "PERIODIC_RSA_PUBLIC_PATH"
+  rsaModeEnv <- lookupReadEnv "PERIODIC_RSA_MODE" >>= either (\err -> putStrLn err >> exitFailure) (pure . fromMaybe RSA.AES)
+  clientNameEnv <- lookupNonEmptyEnv "PERIODIC_CLIENT_NAME"
+  clientTokenEnv <- lookupNonEmptyEnv "PERIODIC_CLIENT_TOKEN"
+
+  (opts@Options {..}, func, cmd, argv) <- flip parseOptions (options t h rsaPrivate rsaPublic rsaModeEnv clientNameEnv clientTokenEnv) <$> getArgs
 
   when showHelp printHelp
   case parseError of

@@ -20,6 +20,18 @@ periodic --client-name client-a --client-token token-a run func1 job-1
 periodic-run --client-name worker-a --client-token token-worker-a func1 echo
 ```
 
+Client executables can also use environment variables for the same security
+options. Explicit command line flags override the environment:
+
+```bash
+export PERIODIC_CLIENT_NAME=client-a
+export PERIODIC_CLIENT_TOKEN=token-a
+export PERIODIC_RSA_MODE=AES
+export PERIODIC_RSA_PRIVATE_PATH=private_key.pem
+export PERIODIC_RSA_PUBLIC_PATH=public_key.pem
+periodic run func1 job-1
+```
+
 The first field is the identity role. Workers may use both client and worker
 commands. Clients may only use client commands; worker registration commands
 such as `CanDo` and `Broadcast` are rejected for client connections. Admin

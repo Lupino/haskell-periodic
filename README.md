@@ -169,6 +169,19 @@ Then pass the matching identity from clients and workers:
     periodic --client-name client-a --client-token token-a submit show_file abc.md
     periodic-run --client-name worker-a --client-token token-worker-a show_file echo
 
+Client executables can also read the identity from environment variables. Command
+line flags take precedence when both are set:
+
+    export PERIODIC_CLIENT_NAME=client-a
+    export PERIODIC_CLIENT_TOKEN=token-a
+    periodic submit show_file abc.md
+
+RSA client options support the same environment fallback:
+
+    export PERIODIC_RSA_MODE=AES
+    export PERIODIC_RSA_PRIVATE_PATH=private_key.pem
+    export PERIODIC_RSA_PUBLIC_PATH=public_key.pem
+
 The first field is the identity role. Workers may use both client and worker
 commands. Clients may only use client commands; worker registration commands
 such as `CanDo` and `Broadcast` are rejected for client connections. Admin

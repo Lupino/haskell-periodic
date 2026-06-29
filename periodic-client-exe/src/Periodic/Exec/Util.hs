@@ -3,6 +3,8 @@
 module Periodic.Exec.Util
   ( safeRead
   , strictReadArgE
+  , lookupNonEmptyEnv
+  , lookupReadEnv
   , parseReadArg
   , parseMemStr
   , getProcessMem
@@ -14,6 +16,7 @@ import           Control.Monad        (void)
 import           Data.Int             (Int64)
 import           Data.List            (find, isPrefixOf)
 import           Data.Maybe           (fromMaybe)
+import           System.Environment   (lookupEnv)
 import           System.Process       (Pid, readProcess)
 import           Text.Read            (readMaybe)
 import           UnliftIO             (TVar, atomically, writeTVar)
@@ -33,6 +36,20 @@ strictReadArgE flag raw =
   case readMaybe raw of
     Just v  -> Right v
     Nothing -> Left $ "Invalid value for " ++ flag ++ ": " ++ show raw
+
+lookupNonEmptyEnv :: String -> IO (Maybe String)
+lookupNonEmptyEnv name = do
+  mVal <- lookupEnv name
+  pure $ case mVal of
+    Just "" -> Nothing
+    other   -> other
+
+lookupReadEnv :: Read a => String -> IO (Either String (Maybe a))
+lookupReadEnv name = do
+  mVal <- lookupNonEmptyEnv name
+  pure $ case mVal of
+    Nothing  -> Right Nothing
+    Just raw -> Just <$> strictReadArgE ("$" ++ name) raw
 
 parseReadArg :: Read a => String -> String -> (a -> s -> s) -> (String -> s -> s) -> s -> s
 parseReadArg flag raw onOk onErr st =

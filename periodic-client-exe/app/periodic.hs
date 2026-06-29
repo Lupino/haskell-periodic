@@ -24,11 +24,12 @@ import           Metro.TP.RSA              (generateKeyPair)
 import qualified Metro.TP.RSA              as RSA (RSAMode (AES), configClient)
 import           Metro.TP.Socket           (socket)
 import           Paths_periodic_client_exe (version)
-import           Periodic.Exec.Util        (parseReadArg, safeRead)
+import           Periodic.Exec.Util        (lookupNonEmptyEnv, lookupReadEnv,
+                                            parseReadArg, safeRead)
 import           Periodic.Trans.Client
 import           Periodic.Types            (ClientIdentity (ClientIdentity), Job,
                                             Workload (..))
-import           System.Environment        (getArgs, lookupEnv)
+import           System.Environment        (getArgs)
 import           System.Exit               (exitFailure, exitSuccess)
 import           Text.Read                 (readMaybe)
 import           UnliftIO                  (async, atomically, cancel,
@@ -77,14 +78,14 @@ data Options = Options
   , invalidOption  :: Maybe String
   }
 
-options :: Maybe String -> Options
-options h = Options
+options :: Maybe String -> Maybe FilePath -> Maybe FilePath -> RSA.RSAMode -> Maybe String -> Maybe String -> Options
+options h mRsaPrivate mRsaPublic mode mClientName mClientToken = Options
   { host           = fromMaybe "unix:///tmp/periodic.sock" h
-  , rsaPublicPath  = "public_key.pem"
-  , rsaPrivatePath = ""
-  , rsaMode        = RSA.AES
-  , clientName     = Nothing
-  , clientToken    = Nothing
+  , rsaPublicPath  = fromMaybe "public_key.pem" mRsaPublic
+  , rsaPrivatePath = fromMaybe "" mRsaPrivate
+  , rsaMode        = mode
+  , clientName     = mClientName
+  , clientToken    = mClientToken
   , parseError     = Nothing
   , invalidOption  = Nothing
   }
@@ -116,10 +117,11 @@ printHelp = do
   putStrLn "  -H, --host <HOST>         Socket path or address [$PERIODIC_PORT]"
   putStrLn "                            (Default: unix:///tmp/periodic.sock)"
   putStrLn "      --rsa-mode <MODE>     Encryption mode: Plain, RSA, or AES (Default: AES)"
-  putStrLn "      --rsa-public-path <P> RSA public key file or directory"
-  putStrLn "      --rsa-private-path <P>RSA private key file path"
-  putStrLn "      --client-name <NAME>  Auth client name"
-  putStrLn "      --client-token <TOK>  Auth client token"
+  putStrLn "                            Env: $PERIODIC_RSA_MODE"
+  putStrLn "      --rsa-public-path <P> RSA public key file or directory [$PERIODIC_RSA_PUBLIC_PATH]"
+  putStrLn "      --rsa-private-path <P>RSA private key file path [$PERIODIC_RSA_PRIVATE_PATH]"
+  putStrLn "      --client-name <NAME>  Auth client name [$PERIODIC_CLIENT_NAME]"
+  putStrLn "      --client-token <TOK>  Auth client token [$PERIODIC_CLIENT_TOKEN]"
   putStrLn ""
   putStrLn "Commands:"
   putStrLn "  status      Show server and task statistics"
@@ -259,9 +261,14 @@ printKeyGenHelp = do
 
 main :: IO ()
 main = do
-  h <- lookupEnv "PERIODIC_PORT"
+  h <- lookupNonEmptyEnv "PERIODIC_PORT"
+  rsaPrivate <- lookupNonEmptyEnv "PERIODIC_RSA_PRIVATE_PATH"
+  rsaPublic <- lookupNonEmptyEnv "PERIODIC_RSA_PUBLIC_PATH"
+  rsaModeEnv <- lookupReadEnv "PERIODIC_RSA_MODE" >>= either (\err -> putStrLn err >> exitFailure) (pure . fromMaybe RSA.AES)
+  clientNameEnv <- lookupNonEmptyEnv "PERIODIC_CLIENT_NAME"
+  clientTokenEnv <- lookupNonEmptyEnv "PERIODIC_CLIENT_TOKEN"
 
-  (cmd, opt@(Options {..}), argv) <- flip parseOptions (options h) <$> getArgs
+  (cmd, opt@(Options {..}), argv) <- flip parseOptions (options h rsaPrivate rsaPublic rsaModeEnv clientNameEnv clientTokenEnv) <$> getArgs
   case parseError of
     Just err -> putStrLn err >> putStrLn "Use --help to see supported options." >> exitFailure
     Nothing  -> pure ()
