@@ -6,8 +6,8 @@ module Main
   ( main
   ) where
 
-import           Control.Monad             (void, when)
 import           Control.Applicative       ((<|>))
+import           Control.Monad             (void, when)
 import           Control.Monad.IO.Class    (liftIO)
 import           Data.Binary               (decodeFileOrFail, encodeFile)
 import           Data.Binary.Get           (ByteOffset)
@@ -27,8 +27,8 @@ import           Paths_periodic_client_exe (version)
 import           Periodic.Exec.Util        (lookupNonEmptyEnv, lookupReadEnv,
                                             parseReadArg, safeRead)
 import           Periodic.Trans.Client
-import           Periodic.Types            (ClientIdentity (ClientIdentity), Job,
-                                            Workload (..))
+import           Periodic.Types            (ClientIdentity (ClientIdentity),
+                                            Job, Workload (..))
 import           System.Environment        (getArgs)
 import           System.Exit               (exitFailure, exitSuccess)
 import           Text.Read                 (readMaybe)
@@ -209,12 +209,13 @@ printConfigKeyList :: IO ()
 printConfigKeyList = do
   putStrLn ""
   putStrLn "Available configuration keys:"
-  putStrLn "  timeout         - Max job processing duration (s)"
-  putStrLn "  lock-timeout    - Resource lock acquisition timeout (s)"
-  putStrLn "  assign-wait     - Max wait time for job assignment (s)"
-  putStrLn "  keepalive       - Client-server keepalive interval (s)"
-  putStrLn "  max-batch-size  - Maximum number of jobs per poll"
-  putStrLn "  max-pool-size   - Maximum capacity of the scheduler pool"
+  putStrLn "  timeout            - Max job processing duration (s)"
+  putStrLn "  lock-timeout       - Resource lock acquisition timeout (s)"
+  putStrLn "  assign-wait        - Max wait time for job assignment (s)"
+  putStrLn "  keepalive          - Client-server keepalive interval (s)"
+  putStrLn "  max-batch-size     - Maximum number of jobs per poll"
+  putStrLn "  max-pool-size      - Maximum capacity of the scheduler pool"
+  putStrLn "  run-job-aggressive - Direct worker assignment for run jobs (0/1)"
   putStrLn ""
   exitSuccess
 

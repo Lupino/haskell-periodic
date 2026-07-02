@@ -123,6 +123,8 @@ data SchedEnv db = SchedEnv
     , sLockTimeout   :: TVar Int
     -- max poll batch size
     , sMaxBatchSize  :: TVar Int
+    -- direct worker assignment for synchronous RunJob
+    , sRunJobAggressive :: TVar Int
     -- client or worker keepalive
     , sKeepalive     :: TVar Int64
     , sCleanup       :: IO ()
@@ -190,6 +192,7 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook sKeepalive (PoolSiz
   sLockTimeout   <- newTVarIO 300
   sAssignWait    <- newTVarIO 2
   sMaxBatchSize  <- newTVarIO 500
+  sRunJobAggressive <- newTVarIO 0
   sCleanup       <- toIO sC
   sPersist       <- liftIO $ P.newPersist config
   sAssignJobTime <- IOMap.empty
@@ -232,6 +235,7 @@ startSchedT pushTaskSize schedTaskSize = do
   loadInt "keepalive" sKeepalive
   loadInt "max-batch-size" sMaxBatchSize
   loadInt "max-pool-size" sMaxPoolSize
+  loadInt "run-job-aggressive" sRunJobAggressive
 
 loadInt :: (MonadIO m, Persist db, Num a) => String -> TVar a -> SchedT db m ()
 loadInt name ref = do
@@ -256,6 +260,7 @@ setConfigInt key val = do
     "keepalive"      -> saveInt "keepalive" val sKeepalive
     "max-batch-size" -> saveInt "max-batch-size" val sMaxBatchSize
     "max-pool-size"  -> saveInt "max-pool-size" val sMaxPoolSize
+    "run-job-aggressive" -> saveInt "run-job-aggressive" val sRunJobAggressive
     _                -> pure ()
 
 getConfigInt :: MonadIO m => String -> SchedT db m Int
@@ -268,6 +273,7 @@ getConfigInt key = do
     "keepalive"      -> fromIntegral <$> readTVarIO sKeepalive
     "max-batch-size" -> readTVarIO sMaxBatchSize
     "max-pool-size"  -> readTVarIO sMaxPoolSize
+    "run-job-aggressive" -> readTVarIO sRunJobAggressive
     _                -> pure 0
 
 runTask :: (MonadUnliftIO m) => Int -> SchedT db m () -> SchedT db m ()
@@ -409,7 +415,46 @@ queuePendingJob job = do
 
 
 runJobNow :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
-runJobNow job = persistAndDispatchJob "runJobNow" job reSchedJob
+runJobNow job = persistAndDispatchJob "runJobNow" job dispatchRunJobNow
+
+
+dispatchRunJobNow :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+dispatchRunJobNow job = do
+  aggressive <- readTVarIO =<< asks sRunJobAggressive
+  direct <- if aggressive > 0 then tryDirectRunJob job else pure False
+  unless direct $ reSchedJob job
+
+
+tryDirectRunJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m Bool
+tryDirectRunJob job = do
+  let fn = getFuncName job
+      jh = getHandle job
+      jn = getName job
+  stList <- asks sFuncStatList
+  mFuncStat <- IOMap.lookup fn stList
+  case mFuncStat of
+    Just FuncStat{sBroadcast=False, sWorker=w} | w > 0 -> do
+      alreadyQueued <- schedPoolHasJob jh fn
+      if alreadyQueued then pure False
+      else do
+        grabQueue <- asks sGrabQueue
+        mAgent <- atomically $ tryPopAgentSTM grabQueue fn
+        case mAgent of
+          Nothing -> pure False
+          Just (nid, msgid) -> do
+            persist <- asks sPersist
+            liftIO $ P.updateState persist Running fn jn
+            schedJob job nid msgid
+            pure True
+    _ -> pure False
+
+
+schedPoolHasJob :: MonadIO m => JobHandle -> FuncName -> SchedT db m Bool
+schedPoolHasJob jh fn = do
+  poolList <- asks sSchedPoolList
+  mPool <- IOMap.lookup fn poolList
+  handles <- fromMaybe [] <$> mapM Pool.getHandleList mPool
+  pure $ jh `elem` handles
 
 
 fixedSchedAt :: MonadIO m => Job -> SchedT db m Job

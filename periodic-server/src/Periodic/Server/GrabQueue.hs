@@ -3,6 +3,7 @@ module Periodic.Server.GrabQueue
   , newGrabQueue
   , pushAgent
   , popAgentSTM
+  , tryPopAgentSTM
   , popAgentListSTM
   , dropAgentList
   ) where
@@ -68,6 +69,25 @@ popAgentSTM gq@(GrabQueue s _) fn = do
       Just (_, msgid) -> do
         lift $ unGetTQueue s nid
         exit $ Just (nid, msgid)
+
+
+tryPopAgentSTM :: GrabQueue -> FuncName -> STM (Maybe (Nid, Msgid))
+tryPopAgentSTM gq@(GrabQueue s _) fn = do
+  mFirst <- tryReadTQueue s
+  case mFirst of
+    Nothing -> pure Nothing
+    Just first -> do
+      writeTQueue s first
+      foreverExit $ \exit -> do
+        nid <- lift $ readTQueue s
+        r <- lift $ findMsgid gq fn nid
+        case r of
+          Nothing -> do
+            lift $ writeTQueue s nid
+            when (nid == first) $ exit Nothing
+          Just (_, msgid) -> do
+            lift $ unGetTQueue s nid
+            exit $ Just (nid, msgid)
 
 
 popAgentListSTM :: GrabQueue -> FuncName -> STM [(Nid, Msgid)]
