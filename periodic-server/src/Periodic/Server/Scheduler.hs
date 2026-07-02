@@ -16,6 +16,7 @@ module Periodic.Server.Scheduler
   , initSchedEnv
   , startSchedT
   , pushJob
+  , runJobNow
   , failJob
   , doneJob
   , schedLaterJob
@@ -361,34 +362,54 @@ runChanJob = do
 pushJob :: MonadIO m => Job -> SchedT db m ()
 pushJob job = do
   pl <- asks sPushList
-  queue <- atomically $ readTQueue pl
-  atomically $ writeTQueue pl queue
-  atomically $ writeTQueue queue job
+  atomically $ do
+    queue <- readTQueue pl
+    writeTQueue pl queue
+    writeTQueue queue job
 
 
-runPushJob :: (MonadIO m, Persist db) => TQueue Job -> SchedT db m ()
+runPushJob :: (MonadUnliftIO m, Persist db) => TQueue Job -> SchedT db m ()
 runPushJob pl = do
   job <- atomically $ readTQueue pl
-  let fn = getFuncName job
+  persistAndQueueJob job
 
-  liftIO $ debugM "Periodic.Server.Scheduler" ("pushJob: " ++ show (getHandle job))
+
+persistAndDispatchJob
+  :: (MonadUnliftIO m, Persist db)
+  => String
+  -> Job
+  -> (Job -> SchedT db m ())
+  -> SchedT db m ()
+persistAndDispatchJob label job dispatchJob = do
+  liftIO $ debugM "Periodic.Server.Scheduler" (label ++ ": " ++ show (getHandle job))
   t0 <- liftIO getUnixTime
   p <- asks sPersist
   job' <- fixedSchedAt job
   inserted <- liftIO $ P.insertPendingUnlessRunning p job'
-  when inserted $ do
-    poolList <- asks sSchedPoolList
-    mPool <- IOMap.lookup fn poolList
-    case mPool of
-      Nothing -> pushChanJob job'
-      Just pool -> do
-        lastSchedAt <- getLastSchedAt pool
-        if lastSchedAt > 600 && getSchedAt job' > lastSchedAt + 600
-          then pure ()
-          else pushChanJob job'
-
-
+  when inserted $ dispatchJob job'
   getDuration t0 >>= runHook eventPushJob job
+
+
+persistAndQueueJob :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+persistAndQueueJob job = persistAndDispatchJob "pushJob" job queuePendingJob
+
+
+queuePendingJob :: (MonadIO m, Persist db) => Job -> SchedT db m ()
+queuePendingJob job = do
+  let fn = getFuncName job
+  poolList <- asks sSchedPoolList
+  mPool <- IOMap.lookup fn poolList
+  case mPool of
+    Nothing -> pushChanJob job
+    Just pool -> do
+      lastSchedAt <- getLastSchedAt pool
+      if lastSchedAt > 600 && getSchedAt job > lastSchedAt + 600
+        then pure ()
+        else pushChanJob job
+
+
+runJobNow :: (MonadUnliftIO m, Persist db) => Job -> SchedT db m ()
+runJobNow job = persistAndDispatchJob "runJobNow" job reSchedJob
 
 
 fixedSchedAt :: MonadIO m => Job -> SchedT db m Job
@@ -457,9 +478,10 @@ pushSchedJob job (nid, msgid) = do
   persist <- asks sPersist
   liftIO $ P.updateState persist Running fn jn
   sl <- asks sSchedList
-  queue <- atomically $ readTQueue sl
-  atomically $ writeTQueue sl queue
-  atomically $ writeTQueue queue (job, nid, msgid)
+  atomically $ do
+    queue <- readTQueue sl
+    writeTQueue sl queue
+    writeTQueue queue (job, nid, msgid)
   where fn = getFuncName job
         jn = getName job
 
