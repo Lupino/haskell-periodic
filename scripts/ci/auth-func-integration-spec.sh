@@ -38,6 +38,10 @@ auth_file="periodic-auth-${tag}.txt"
 allowed_func="auth-allowed-${tag}"
 denied_func="auth-denied-${tag}"
 admin_func="auth-admin-${tag}"
+prefix_base="auth-prefix-${tag}"
+prefix_func="${prefix_base}-allowed"
+suffix_tail="-suffix-${tag}"
+suffix_func="auth-allowed${suffix_tail}"
 
 rm -f /tmp/periodic.sock "$auth_file"
 
@@ -45,6 +49,10 @@ cat > "$auth_file" <<EOF
 client client-a token-a ${allowed_func}
 worker worker-a token-worker-a ${allowed_func}
 worker worker-b token-worker-b ${denied_func}
+client client-prefix token-prefix ${prefix_base}*
+worker worker-prefix token-worker-prefix ${prefix_base}*
+client client-suffix token-suffix *${suffix_tail}
+worker worker-suffix token-worker-suffix *${suffix_tail}
 admin admin-a token-admin ${admin_func}
 EOF
 
@@ -52,10 +60,12 @@ SERVER_PID=""
 WRONG_ROLE_PID=""
 WORKER_A_PID=""
 WORKER_B_PID=""
+PREFIX_WORKER_PID=""
+SUFFIX_WORKER_PID=""
 ADMIN_WORKER_PID=""
 
 cleanup() {
-  for pid in "${WRONG_ROLE_PID:-}" "${WORKER_A_PID:-}" "${WORKER_B_PID:-}" "${ADMIN_WORKER_PID:-}" "${SERVER_PID:-}"; do
+  for pid in "${WRONG_ROLE_PID:-}" "${WORKER_A_PID:-}" "${WORKER_B_PID:-}" "${PREFIX_WORKER_PID:-}" "${SUFFIX_WORKER_PID:-}" "${ADMIN_WORKER_PID:-}" "${SERVER_PID:-}"; do
     if [ -n "$pid" ]; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -64,7 +74,9 @@ cleanup() {
   pkill -f "periodicd.*${auth_file}" 2>/dev/null || true
   rm -f /tmp/periodic.sock "$auth_file"
   rm -f "periodicd-${tag}.log" "periodic-run-a-${tag}.log" "periodic-run-b-${tag}.log"
-  rm -f "periodic-run-admin-${tag}.log" "periodic-run-wrong-role-${tag}.log"
+  rm -f "periodic-run-prefix-${tag}.log" "periodic-run-suffix-${tag}.log"
+  rm -f "periodic-run-admin-${tag}.log"
+  rm -f "periodic-run-wrong-role-${tag}.log"
 }
 trap cleanup EXIT
 
@@ -103,6 +115,22 @@ WORKER_B_PID=$!
 sleep 2
 
 stack exec periodic-run -- \
+  --client-name worker-prefix \
+  --client-token token-worker-prefix \
+  --data "$prefix_func" echo > "periodic-run-prefix-${tag}.log" 2>&1 &
+PREFIX_WORKER_PID=$!
+
+wait_for_run_result_auth client-prefix token-prefix "$prefix_func" "prefix-${tag}" 20
+
+stack exec periodic-run -- \
+  --client-name worker-suffix \
+  --client-token token-worker-suffix \
+  --data "$suffix_func" echo > "periodic-run-suffix-${tag}.log" 2>&1 &
+SUFFIX_WORKER_PID=$!
+
+wait_for_run_result_auth client-suffix token-suffix "$suffix_func" "suffix-${tag}" 20
+
+stack exec periodic-run -- \
   --client-name admin-a \
   --client-token token-admin \
   --data "$admin_func" echo > "periodic-run-admin-${tag}.log" 2>&1 &
@@ -120,6 +148,32 @@ if ! echo "$status_output" | grep -F "$allowed_func" >/dev/null 2>&1; then
 fi
 if echo "$status_output" | grep -F "$denied_func" >/dev/null 2>&1; then
   echo "Expected client-a status to hide ${denied_func}"
+  exit 1
+fi
+
+prefix_status_output="$(stack exec periodic -- \
+  --client-name client-prefix \
+  --client-token token-prefix \
+  status 2>/dev/null || true)"
+if ! echo "$prefix_status_output" | grep -F "$prefix_func" >/dev/null 2>&1; then
+  echo "Expected client-prefix status to include ${prefix_func}"
+  exit 1
+fi
+if echo "$prefix_status_output" | grep -F "$denied_func" >/dev/null 2>&1; then
+  echo "Expected client-prefix status to hide ${denied_func}"
+  exit 1
+fi
+
+suffix_status_output="$(stack exec periodic -- \
+  --client-name client-suffix \
+  --client-token token-suffix \
+  status 2>/dev/null || true)"
+if ! echo "$suffix_status_output" | grep -F "$suffix_func" >/dev/null 2>&1; then
+  echo "Expected client-suffix status to include ${suffix_func}"
+  exit 1
+fi
+if echo "$suffix_status_output" | grep -F "$denied_func" >/dev/null 2>&1; then
+  echo "Expected client-suffix status to hide ${denied_func}"
   exit 1
 fi
 
@@ -141,6 +195,22 @@ if stack exec periodic -- \
   --client-token token-a \
   run "$denied_func" "denied-${tag}" | grep -F "Result:"; then
   echo "Expected client-a to be rejected for ${denied_func}"
+  exit 1
+fi
+
+if stack exec periodic -- \
+  --client-name client-prefix \
+  --client-token token-prefix \
+  run "$denied_func" "prefix-denied-${tag}" | grep -F "Result:"; then
+  echo "Expected client-prefix to be rejected for ${denied_func}"
+  exit 1
+fi
+
+if stack exec periodic -- \
+  --client-name client-suffix \
+  --client-token token-suffix \
+  run "$denied_func" "suffix-denied-${tag}" | grep -F "Result:"; then
+  echo "Expected client-suffix to be rejected for ${denied_func}"
   exit 1
 fi
 

@@ -8,7 +8,7 @@ Use `periodicd --auth-file <PATH>` to enable per-identity role and func
 authorization. The file is whitespace-separated, with one identity per line:
 
 ```text
-client client-a token-a func1,func2
+client client-a token-a func1,func2,report_*,*_report
 worker worker-a token-worker-a func1
 admin admin-a token-admin admin_marker
 ```
@@ -41,6 +41,11 @@ funcs.
 With an auth file configured, the server also checks func-bearing requests
 against the authenticated identity's func set. Role mismatches and unauthorized
 requests return the existing failure response and are logged by the server.
+
+Func entries are comma-separated. A trailing `*` grants access to funcs with
+that prefix, such as `report_*` matching `report_daily` and `report_monthly`.
+A leading `*` grants access to funcs with that suffix, such as `*_report`
+matching `daily_report`. Other wildcard positions and a bare `*` are invalid.
 
 `status` is filtered to the identity's allowed funcs. Other commands without a
 func name, such as `ping`, `config`, `dump`, and `shutdown`, are limited by role

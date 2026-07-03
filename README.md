@@ -156,7 +156,7 @@ or use the `periodic-run-pipe` command
 `periodicd` can restrict which role and funcs each client or worker identity may
 use. Create an auth file with one identity per line:
 
-    client client-a token-a show_file,resize_image
+    client client-a token-a show_file,resize_image,report_*,*_report
     worker worker-a token-worker-a show_file
     admin admin-a token-admin admin_marker
 
@@ -193,6 +193,11 @@ the identity's allowed funcs. Missing identity, unknown clients, wrong tokens,
 role mismatches, and unauthorized funcs are rejected. Without `--auth-file`,
 unauthenticated connections keep working within their registered client or
 worker role.
+
+Func entries are comma-separated. A trailing `*` grants access to funcs with
+that prefix, such as `report_*` matching `report_daily` and `report_monthly`.
+A leading `*` grants access to funcs with that suffix, such as `*_report`
+matching `daily_report`. Other wildcard positions and a bare `*` are invalid.
 
 `status` is filtered to the identity's allowed funcs. Other commands without a
 func name, such as `ping`, `config`, `dump`, and `shutdown`, are limited by role
