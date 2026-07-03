@@ -78,7 +78,7 @@ isRoleAllowed FuncAuth {..} (Just ClientIdentity {..}) role = do
   pure $
     case Map.lookup clientName rules of
       Just (token, expectedRole, _) ->
-        token == clientToken && (expectedRole == "admin" || role == expectedRole)
+        token == clientToken && roleMatches expectedRole role
       Nothing -> False
 
 isAdminAllowed :: FuncAuth -> Maybe ClientIdentity -> IO Bool
@@ -106,6 +106,12 @@ matchFuncAuthRule FuncAuthRule {..} fn@(FuncName raw) =
   fn `Set.member` exactFuncs
   || any (`B.isPrefixOf` raw) (Set.toList prefixFuncs)
   || any (`B.isSuffixOf` raw) (Set.toList suffixFuncs)
+
+roleMatches :: B.ByteString -> B.ByteString -> Bool
+roleMatches expectedRole requestedRole =
+  expectedRole == "admin"
+  || expectedRole == requestedRole
+  || (expectedRole == "worker" && requestedRole == "client")
 
 readAuthFile :: FilePath -> IO FuncAuthMap
 readAuthFile path = do
