@@ -225,8 +225,9 @@ addFunc
   => FuncName -> JobT tp m () -> WorkerT tp m Bool
 addFunc f j = do
   r <- runJobT $ BT.successRequest (packetREQ $ CanDo f)
-  ref <- asks taskList
-  Map.insert f j ref
+  when r $ do
+    ref <- asks taskList
+    Map.insert f j ref
   pure r
 
 broadcast
@@ -234,8 +235,9 @@ broadcast
   => FuncName -> JobT tp m () -> WorkerT tp m Bool
 broadcast f j = do
   r <- runJobT $ BT.successRequest (packetREQ $ Broadcast f)
-  ref <- asks taskList
-  Map.insert f j ref
+  when r $ do
+    ref <- asks taskList
+    Map.insert f j ref
   pure r
 
 removeFunc
