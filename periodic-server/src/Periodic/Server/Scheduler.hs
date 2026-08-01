@@ -545,9 +545,10 @@ schedJob job nid msgid = do
   waitTime <- readTVarIO =<< asks sAssignWait
   assignJobTime <- asks sAssignJobTime
   persist <- asks sPersist
+  job' <- liftIO $ P.hydrateJob persist job
   t <- liftIO getUnixTime
   IOMap.insert jh t assignJobTime
-  r <- liftIO $ assignJob waitTime nid msgid $ setTimeout tout job
+  r <- liftIO $ assignJob waitTime nid msgid $ setTimeout tout job'
   if r then pure ()
        else do
          liftIO $ P.updateState persist Pending fn jn

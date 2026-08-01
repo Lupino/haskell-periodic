@@ -39,6 +39,7 @@ import qualified Database.PSQL           as PSQL (delete)
 import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist (FuncStats (..), Persist (..),
                                           State (..))
+import           Periodic.Server.Persist.Workload
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
@@ -74,7 +75,7 @@ newtype MetricRows = MetricRows [(String, String, Int, Int64)]
 instance ToRow MetricRows where
   toRow (MetricRows rows) = concatMap toRow rows
 
-data PSQL = PSQL PSQLPool TablePrefix
+data PSQL = PSQL PSQLPool TablePrefix WorkloadStore
 
 idleTime = 10
 
@@ -82,10 +83,16 @@ maxMetricRowsPerInsert :: Int
 maxMetricRowsPerInsert = 10000
 
 runDB :: PSQL -> DB.PSQL a -> IO a
-runDB (PSQL pool tablePrefix) = runPSQLPool tablePrefix pool
+runDB (PSQL pool tablePrefix _) = runPSQLPool tablePrefix pool
 
 runDB_ :: PSQL -> DB.PSQL Int64 -> IO ()
 runDB_ db = void . runDB db
+
+workloadStore :: PSQL -> WorkloadStore
+workloadStore (PSQL _ _ store) = store
+
+hydrateJobs :: PSQL -> [Job] -> IO [Job]
+hydrateJobs db = mapM (loadWorkload $ workloadStore db)
 
 preparePath :: ByteString -> (Maybe ByteString, ByteString)
 preparePath = go . B.split ' '
@@ -118,27 +125,41 @@ instance Persist PSQL where
       void createFuncTable
       void createMetricTable
       void allPending
-    return $ PSQL pool tablePrefix
+    workloadStore' <- newWorkloadStore "psql"
+    return $ PSQL pool tablePrefix workloadStore'
 
     where (mTablePrefix, dbpath) = preparePath path
           tablePrefix = fromString . B.unpack $ fromMaybe "" mTablePrefix
 
-  getOne         db st fn = runDB  db . doGetOne st fn
-  insert         db st    = runDB_ db . doInsert st
+  getOne         db st fn jn = runDB db (doGetOne st fn jn)
+  hydrateJob     db = loadWorkload (workloadStore db)
+  insert         db st job = storeWorkload (workloadStore db) job >>= runDB_ db . doInsert st
   updateState    db st fn = runDB_ db . doUpdateState st fn
-  delete         db fn    = runDB_ db . doDelete fn
-  insertPendingUnlessRunning db = runDB db . doInsertPendingUnlessRunning
+  delete         db fn jn = do
+    raw <- runDB db $ doGetStoredJob fn jn
+    runDB_ db $ doDelete fn jn
+    mapM_ (removeWorkload $ workloadStore db) raw
+  insertPendingUnlessRunning db job = do
+    running <- getOne db Running (getFuncName job) (getName job)
+    case running of
+      Just _ -> pure False
+      Nothing -> do
+        stored <- storeWorkload (workloadStore db) job
+        runDB db $ doInsertPendingUnlessRunning stored
   size           db st    = runDB  db . doSize st
-  getRunningJob  db       = runDB  db . doGetRunningJob
+  getRunningJob  db = runDB db . doGetRunningJob
   getPendingJob  db f t c
     | c <= 0    = pure []
     | otherwise = runDB db (doGetPendingJob f t 0 (fromIntegral c))
-  getLockedJob   db fn    = runDB  db . doGetLockedJob fn
-  dumpJob        db       = runDB  db   doDumpJob
+  getLockedJob   db fn = runDB db . doGetLockedJob fn
+  dumpJob        db = hydrateJobs db =<< runDB db doDumpJob
   configSet      db name  = runDB_ db . doConfigSet name
   configGet      db       = runDB  db . doConfigGet
   insertFuncName db       = runDB_ db . doInsertFuncName
-  removeFuncName db       = runDB  db . doRemoveFuncName
+  removeFuncName db fn = do
+    raw <- runDB db $ doGetFuncJobs fn
+    runDB db $ doRemoveFuncName fn
+    mapM_ (removeWorkload $ workloadStore db) raw
   funcList       db       = runDB  db   doFuncList
   minSchedAt     db       = runDB  db . doMinSchedAt Pending
   getFuncStats   db       = runDB  db . doGetFuncStats
@@ -271,6 +292,13 @@ doCountPending fn ts =
 
 doDumpJob :: DB.PSQL [Job]
 doDumpJob = selectOnly_ jobs "value" pageNone
+
+doGetStoredJob :: FuncName -> JobName -> DB.PSQL (Maybe Job)
+doGetStoredJob fn jn =
+  selectOneOnly jobs "value" "func=? AND name=?" (fn, jn)
+
+doGetFuncJobs :: FuncName -> DB.PSQL [Job]
+doGetFuncJobs fn = selectOnly jobs "value" "func=?" (Only fn) pageNone
 
 doFuncList :: DB.PSQL [FuncName]
 doFuncList = map FuncName <$> selectOnly_ funcs "func" pageNone

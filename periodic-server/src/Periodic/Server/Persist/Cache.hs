@@ -40,6 +40,7 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
      return Cache {..}
 
    getOne           = doGetOne
+   hydrateJob       = doHydrateJob
    insert           = doInsert
    updateState      = doUpdateState
    delete           = doDelete
@@ -52,7 +53,9 @@ instance (Typeable db, Persist db) => Persist (Cache db) where
    configSet      m = configSet (backend m)
    configGet      m = configGet (backend m)
    insertFuncName m = insertFuncName (backend m)
-   removeFuncName m = removeFuncName (backend m)
+   removeFuncName m fn = do
+     removeFuncName (memory m) fn
+     removeFuncName (backend m) fn
    funcList       m = funcList (backend m)
    minSchedAt       = doMinSchedAt
    getFuncStats     = doGetFuncStats
@@ -72,6 +75,22 @@ doGetOne m s f j = do
   case r of
     Just v  -> return $ Just v
     Nothing -> getOne (backend m) s f j
+
+doHydrateJob :: Persist db => Cache db -> Job -> IO Job
+doHydrateJob m job = do
+  inMemory <- firstStored [Pending, Running, Locked]
+  case inMemory of
+    Just _ -> hydrateJob (memory m) job
+    Nothing -> hydrateJob (backend m) job
+  where
+    firstStored [] = pure Nothing
+    firstStored (state:states) = do
+      found <- getOne (memory m) state f j
+      case found of
+        Just stored -> pure $ Just stored
+        Nothing -> firstStored states
+      where f = getFuncName job
+            j = getName job
 
 doInsert :: Persist db => Cache db -> State -> Job -> IO ()
 doInsert Cache{..} s v = do

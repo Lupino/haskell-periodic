@@ -20,6 +20,7 @@ import           Data.String             (IsString (..))
 import           Database.SQLite3.Direct
 import           Metro.Utils             (getEpochTime)
 import           Periodic.Server.Persist
+import           Periodic.Server.Persist.Workload
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           Prelude                 hiding (foldr, lookup)
@@ -36,7 +37,7 @@ stateName' Pending = 0
 stateName' Running = 1
 stateName' Locked  = 2
 
-newtype SQLite = SQLite Database
+data SQLite = SQLite Database WorkloadStore
 
 instance Persist SQLite where
   data PersistConfig SQLite = SQLitePath Utf8
@@ -57,28 +58,30 @@ instance Persist SQLite where
         createMetricTable db
         allPending db
         commitTx db
-        return $ SQLite db
+        workloadStore <- newWorkloadStore "sqlite"
+        return $ SQLite db workloadStore
 
-  getOne         (SQLite db) = doGetOne db
-  insert         (SQLite db) = doInsert db
-  updateState    (SQLite db) = doUpdateState db
-  delete         (SQLite db) = doDelete db
-  size           (SQLite db) = doSize db
-  getRunningJob  (SQLite db) = doGetRunningJob db
-  getPendingJob  (SQLite db) = doGetPendingJob db
-  getLockedJob   (SQLite db) = doGetLockedJob db
-  dumpJob        (SQLite db) = doDumpJob db
-  configSet      (SQLite db) = doConfigSet db
-  configGet      (SQLite db) = doConfigGet db
-  insertFuncName (SQLite db) = doInsertFuncName db
-  removeFuncName (SQLite db) = doRemoveFuncName db
-  funcList       (SQLite db) = doFuncList db
-  minSchedAt     (SQLite db) = doMinSchedAt db Pending
-  getFuncStats   (SQLite db) = doGetFuncStats db
-  getAllFuncStats (SQLite db) = doGetAllFuncStats db
-  countPending   (SQLite db) = doCountPending db
-  insertMetric   (SQLite db) = doInsertMetric db
-  insertMetrics  (SQLite db) = doInsertMetrics db
+  getOne         (SQLite db _) = doGetOne db
+  hydrateJob     (SQLite _ store) = loadWorkload store
+  insert         (SQLite db store) = doInsert db store
+  updateState    (SQLite db _) = doUpdateState db
+  delete         (SQLite db store) = doDelete db store
+  size           (SQLite db _) = doSize db
+  getRunningJob  (SQLite db _) = doGetRunningJob db
+  getPendingJob  (SQLite db _) = doGetPendingJob db
+  getLockedJob   (SQLite db _) = doGetLockedJob db
+  dumpJob        (SQLite db store) = doDumpJob db store
+  configSet      (SQLite db _) = doConfigSet db
+  configGet      (SQLite db _) = doConfigGet db
+  insertFuncName (SQLite db _) = doInsertFuncName db
+  removeFuncName (SQLite db store) = doRemoveFuncName db store
+  funcList       (SQLite db _) = doFuncList db
+  minSchedAt     (SQLite db _) = doMinSchedAt db Pending
+  getFuncStats   (SQLite db _) = doGetFuncStats db
+  getAllFuncStats (SQLite db _) = doGetAllFuncStats db
+  countPending   (SQLite db _) = doCountPending db
+  insertMetric   (SQLite db _) = doInsertMetric db
+  insertMetrics  (SQLite db _) = doInsertMetrics db
 
 instance Exception (PersistException SQLite)
 
@@ -168,11 +171,12 @@ doGetOne db state fn jn =
         f :: Job -> [Job] -> [Job]
         f job acc = job : acc
 
-doInsert :: Database -> State -> Job -> IO ()
-doInsert db state job = do
+doInsert :: Database -> WorkloadStore -> State -> Job -> IO ()
+doInsert db store state job = do
+  stored <- storeWorkload store job
   execStmt db sql $ \stmt -> do
     bindFnAndJn fn jn stmt
-    void $ bindBlob  stmt 3 $ toBytes job
+    void $ bindBlob  stmt 3 $ toBytes stored
     void $ bindInt64 stmt 4 $ stateName' state
     void $ bindInt64 stmt 5 $ getSchedAt job
   doInsertFuncName db fn
@@ -220,8 +224,8 @@ doCountPending db fn ts =
                    <> " AND sched_at<"
                    <> B.pack (show ts)
 
-doDumpJob :: Database -> IO [Job]
-doDumpJob db = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
+doDumpJob :: Database -> WorkloadStore -> IO [Job]
+doDumpJob db store = hydrateJobs store =<< doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
   where sql = Utf8 "SELECT value FROM jobs"
 
 doFuncList :: Database -> IO [FuncName]
@@ -229,17 +233,31 @@ doFuncList db =
   doFoldr_ db sql (const $ pure ()) (\fn acc -> FuncName fn : acc) []
   where sql = Utf8 "SELECT func FROM funcs"
 
-doDelete :: Database -> FuncName -> JobName -> IO ()
-doDelete db fn jn = execStmt db sql $ bindFnAndJn fn jn
+doDelete :: Database -> WorkloadStore -> FuncName -> JobName -> IO ()
+doDelete db store fn jn = do
+  raw <- doGetStoredJob db fn jn
+  execStmt db sql $ bindFnAndJn fn jn
+  mapM_ (removeWorkload store) raw
   where sql = Utf8 "DELETE FROM jobs WHERE func=? AND name=?"
 
-doRemoveFuncName :: Database -> FuncName -> IO ()
-doRemoveFuncName db fn = do
+doRemoveFuncName :: Database -> WorkloadStore -> FuncName -> IO ()
+doRemoveFuncName db store fn = do
+  raw <- doFoldr_ db sqlJobs (`bindFN` fn) (mkFoldFunc (:)) []
   execFN db sql0 fn
   execFN db sql1 fn
+  mapM_ (removeWorkload store) raw
 
   where sql0 = Utf8 "DELETE FROM funcs WHERE func=?"
         sql1 = Utf8 "DELETE FROM jobs WHERE func=?"
+        sqlJobs = Utf8 "SELECT value FROM jobs WHERE func=?"
+
+doGetStoredJob :: Database -> FuncName -> JobName -> IO (Maybe Job)
+doGetStoredJob db fn jn =
+  listToMaybe <$> doFoldr_ db sql (bindFnAndJn fn jn) (mkFoldFunc (:)) []
+  where sql = Utf8 "SELECT value FROM jobs WHERE func=? AND name=? LIMIT 1"
+
+hydrateJobs :: WorkloadStore -> [Job] -> IO [Job]
+hydrateJobs = mapM . loadWorkload
 
 doMinSchedAt :: Database -> State -> FuncName -> IO Int64
 doMinSchedAt db state fn = queryStmt db sql (`bindFN` fn) stepInt64

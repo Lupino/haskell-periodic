@@ -34,6 +34,8 @@ class (Exception (PersistException db)) => Persist db where
   data PersistException db
   newPersist     :: PersistConfig db -> IO db
   getOne         :: db -> State -> FuncName -> JobName -> IO (Maybe Job)
+  hydrateJob     :: db -> Job -> IO Job
+  hydrateJob _   = pure
   insert         :: db -> State -> Job -> IO ()
   updateState    :: db -> State -> FuncName -> JobName -> IO ()
   delete         :: db -> FuncName -> JobName -> IO ()

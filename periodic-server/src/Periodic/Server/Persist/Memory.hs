@@ -22,6 +22,7 @@ import           Data.Maybe              (catMaybes)
 import           Periodic.Server.Persist (Persist (..),
                                           FuncStats (..),
                                           State (..))
+import           Periodic.Server.Persist.Workload
 import           Periodic.Types.Job      (FuncName (..), Job, JobName (..),
                                           getFuncName, getName, getSchedAt)
 import           System.Log.Logger       (infoM)
@@ -52,6 +53,7 @@ data Memory = Memory
   { jobList :: IOMap FuncName JobMap
   , jobIndex :: IOMap FuncName (TVar FuncIndex)
   , jobSize :: TVar Int64
+  , workloadStore :: WorkloadStore
   }
 
 instance Persist Memory where
@@ -63,9 +65,11 @@ instance Persist Memory where
     jobList   <- IOMap.empty
     jobIndex  <- IOMap.empty
     jobSize   <- newTVarIO 0
+    workloadStore <- newWorkloadStore "memory"
     return Memory {..}
 
   getOne         = doGetOne
+  hydrateJob     m = loadWorkload (workloadStore m)
   insert         = doInsert
   updateState    = doUpdateState
   delete         = doDelete
@@ -148,7 +152,9 @@ doGetOne m s f j = atomically $ do
 
 
 doInsert :: Memory -> State -> Job -> IO ()
-doInsert m s v = atomically $ insertSTM m s v
+doInsert m s v = do
+  stored <- storeWorkload (workloadStore m) v
+  atomically $ insertSTM m s stored
 
 
 insertSTM :: Memory -> State -> Job -> STM ()
@@ -177,15 +183,21 @@ insertSTM m s v = do
 
 
 doInsertPendingUnlessRunning :: Memory -> Job -> IO Bool
-doInsertPendingUnlessRunning m v = atomically $ do
-  mPureJobT <- getPureJob m f j
-  case mPureJobT of
-    Just pureJobT -> do
-      old <- readTVar pureJobT
-      if pureState old == Running
-        then pure False
-        else insertSTM m Pending v >> pure True
-    Nothing -> insertSTM m Pending v >> pure True
+doInsertPendingUnlessRunning m v = do
+  running <- doGetOne m Running f j
+  case running of
+    Just _ -> pure False
+    Nothing -> do
+      stored <- storeWorkload (workloadStore m) v
+      atomically $ do
+        mPureJobT <- getPureJob m f j
+        case mPureJobT of
+          Just pureJobT -> do
+            old <- readTVar pureJobT
+            if pureState old == Running
+              then pure False
+              else insertSTM m Pending stored >> pure True
+          Nothing -> insertSTM m Pending stored >> pure True
   where f = getFuncName v
         j = getName     v
 
@@ -209,22 +221,25 @@ doUpdateState m s f j = atomically $ do
               modifyTVar' indexT $ insertIndex s (pureJob old) . deleteIndex (pureState old) (pureJob old)
 
 doDelete :: Memory -> FuncName -> JobName -> IO ()
-doDelete m f j = atomically $ do
-  mJobMap <- getJobMap m f
-  mIndexT <- getFuncIndex m f
-  case mJobMap of
-    Nothing -> pure ()
-    Just jobMap -> do
-      mPureJobT <- IOMapS.lookup j jobMap
-      case mPureJobT of
-        Nothing -> pure ()
-        Just pureJobT -> do
-          old <- readTVar pureJobT
-          IOMapS.delete j jobMap
-          case mIndexT of
-            Nothing     -> pure ()
-            Just indexT -> modifyTVar' indexT $ deleteIndex (pureState old) (pureJob old)
-          modifyTVar' (jobSize m) (max 0 . subtract 1)
+doDelete m f j = do
+  raw <- atomically $ do
+    mJobMap <- getJobMap m f
+    mIndexT <- getFuncIndex m f
+    case mJobMap of
+      Nothing -> pure Nothing
+      Just jobMap -> do
+        mPureJobT <- IOMapS.lookup j jobMap
+        case mPureJobT of
+          Nothing -> pure Nothing
+          Just pureJobT -> do
+            old <- readTVar pureJobT
+            IOMapS.delete j jobMap
+            case mIndexT of
+              Nothing     -> pure ()
+              Just indexT -> modifyTVar' indexT $ deleteIndex (pureState old) (pureJob old)
+            modifyTVar' (jobSize m) (max 0 . subtract 1)
+            pure $ Just (pureJob old)
+  mapM_ (removeWorkload $ workloadStore m) raw
 
 doSize :: Memory -> State -> FuncName -> IO Int64
 doSize m s f = atomically $ do
@@ -337,7 +352,7 @@ doCountPending m fn ts = atomically $ do
     Just indexT -> jobCountBefore ts . idxPending <$> readTVar indexT
 
 doDumpJob :: Memory -> IO [Job]
-doDumpJob m = atomically $ mapPureJob m (genMapFunc $ const True)
+doDumpJob m = hydrateJobs m =<< atomically (mapPureJob m $ genMapFunc $ const True)
 
 
 doInsertFuncName :: Memory -> FuncName -> IO ()
@@ -348,20 +363,29 @@ doInsertFuncName m fn = atomically $ do
 
 
 doRemoveFuncName :: Memory -> FuncName -> IO ()
-doRemoveFuncName m fn = atomically $ do
-  mJobMap <- getJobMap m fn
-  mIndexT <- getFuncIndex m fn
-  case mJobMap of
-    Nothing -> IOMapS.delete fn $ jobIndex m
-    Just _ -> do
-      count <- case mIndexT of
-        Nothing -> pure 0
-        Just indexT -> do
-          index <- readTVar indexT
-          pure $ idxPendingCount index + idxRunningCount index + idxLockedCount index
-      modifyTVar' (jobSize m) (max 0 . subtract count)
-      IOMapS.delete fn $ jobList m
-      IOMapS.delete fn $ jobIndex m
+doRemoveFuncName m fn = do
+  raw <- atomically $ do
+    mJobMap <- getJobMap m fn
+    mIndexT <- getFuncIndex m fn
+    jobs <- case mJobMap of
+      Nothing -> pure []
+      Just jobMap -> mapM readTVar =<< IOMapS.elems jobMap
+    case mJobMap of
+      Nothing -> IOMapS.delete fn $ jobIndex m
+      Just _ -> do
+        count <- case mIndexT of
+          Nothing -> pure 0
+          Just indexT -> do
+            index <- readTVar indexT
+            pure $ idxPendingCount index + idxRunningCount index + idxLockedCount index
+        modifyTVar' (jobSize m) (max 0 . subtract count)
+        IOMapS.delete fn $ jobList m
+        IOMapS.delete fn $ jobIndex m
+    pure $ map pureJob jobs
+  mapM_ (removeWorkload $ workloadStore m) raw
+
+hydrateJobs :: Memory -> [Job] -> IO [Job]
+hydrateJobs m = mapM (loadWorkload $ workloadStore m)
 
 doFuncList :: Memory -> IO [FuncName]
 doFuncList = IOMap.keys . jobList
