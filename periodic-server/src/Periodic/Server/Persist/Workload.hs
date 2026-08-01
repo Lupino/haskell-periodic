@@ -9,7 +9,7 @@ module Periodic.Server.Persist.Workload
   ) where
 
 import           Control.Exception      (bracketOnError)
-import           Crypto.Hash             (Digest, SHA256, hashWith)
+import           Crypto.Hash             (Digest, SHA256 (SHA256), hashWith)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Char8   as B8
