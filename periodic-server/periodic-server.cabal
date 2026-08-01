@@ -79,6 +79,7 @@ test-suite workload
   build-depends:       base
                      , bytestring
                      , directory
+                     , filepath
                      , periodic-common
                      , periodic-server
   default-language:    Haskell2010

@@ -27,10 +27,17 @@ import           System.IO               (hClose, hFlush, hSetBinaryMode,
 
 newtype WorkloadStore = WorkloadStore FilePath
 
--- The marker lives inside the existing Workload field, keeping Job's binary
--- format and the jobs table unchanged.
-markerPrefix :: ByteString
-markerPrefix = "\NULperiodic-workload-file-v1\NUL"
+-- Markers live inside the existing Workload field, keeping Job's binary format
+-- and the jobs table unchanged.  Inline data is marked as well so arbitrary
+-- workload bytes can never be mistaken for a file reference.
+fileMarkerPrefix :: ByteString
+fileMarkerPrefix = "\NULperiodic-workload-file-v1\NUL"
+
+inlineMarkerPrefix :: ByteString
+inlineMarkerPrefix = "\NULperiodic-workload-inline-v1\NUL"
+
+inlineWorkloadLimit :: Int
+inlineWorkloadLimit = 1024
 
 newWorkloadStore :: FilePath -> IO WorkloadStore
 newWorkloadStore namespace = do
@@ -41,6 +48,9 @@ newWorkloadStore namespace = do
 storeWorkload :: WorkloadStore -> Job -> IO Job
 storeWorkload store job
   | BS.null body = pure job
+  | BS.length body <= inlineWorkloadLimit = do
+      removeStaleWorkload store job
+      pure $ setWorkload (Workload $ inlineMarkerPrefix <> body) job
   | otherwise = do
       let path = workloadPath store job
           marker = markerFor job body
@@ -50,31 +60,31 @@ storeWorkload store job
 
 loadWorkload :: WorkloadStore -> Job -> IO Job
 loadWorkload store job =
-  case parseMarker $ unWL (getWorkload job) of
-    Nothing -> pure job
-    Just (fileName, digest, size)
-      | fileName /= workloadFileName job -> ioError $ userError "Invalid workload file reference"
-      | otherwise -> do
-          let path = workloadPath store job
-          exists <- doesFileExist path
-          linked <- if exists then pathIsSymbolicLink path else pure False
-          if not exists || linked
-            then ioError $ userError "Workload file is missing or unsafe"
-            else do
-              body <- BS.readFile path
-              if BS.length body /= size || sha256 body /= digest
-                then ioError $ userError "Workload file checksum mismatch"
-                else pure $ setWorkload (Workload body) job
+  case BS.stripPrefix inlineMarkerPrefix raw of
+    Just body -> pure $ setWorkload (Workload body) job
+    Nothing ->
+      case parseFileMarker raw of
+        Nothing -> pure job
+        Just (fileName, digest, size)
+          | fileName /= workloadFileName job -> ioError $ userError "Invalid workload file reference"
+          | otherwise -> do
+              let path = workloadPath store job
+              exists <- doesFileExist path
+              linked <- if exists then pathIsSymbolicLink path else pure False
+              if not exists || linked
+                then ioError $ userError "Workload file is missing or unsafe"
+                else do
+                  body <- BS.readFile path
+                  if BS.length body /= size || sha256 body /= digest
+                    then ioError $ userError "Workload file checksum mismatch"
+                    else pure $ setWorkload (Workload body) job
+  where raw = unWL (getWorkload job)
 
 removeWorkload :: WorkloadStore -> Job -> IO ()
 removeWorkload store job =
-  case parseMarker $ unWL (getWorkload job) of
+  case parseFileMarker $ unWL (getWorkload job) of
     Just (fileName, _, _)
-      | fileName == workloadFileName job -> do
-          let path = workloadPath store job
-          exists <- doesFileExist path
-          linked <- if exists then pathIsSymbolicLink path else pure False
-          if not exists || linked then pure () else removeFile path
+      | fileName == workloadFileName job -> removeStaleWorkload store job
     _ -> pure ()
 
 workloadPath :: WorkloadStore -> Job -> FilePath
@@ -86,14 +96,14 @@ workloadFileName job = sha256 (unFN (getFuncName job) <> "\NUL" <> unJN (getName
 markerFor :: Job -> ByteString -> ByteString
 markerFor job body =
   B8.intercalate ":"
-    [ markerPrefix <> workloadFileName job
+    [ fileMarkerPrefix <> workloadFileName job
     , sha256 body
     , B8.pack $ show (BS.length body)
     ]
 
-parseMarker :: ByteString -> Maybe (ByteString, ByteString, Int)
-parseMarker raw = do
-  suffix <- BS.stripPrefix markerPrefix raw
+parseFileMarker :: ByteString -> Maybe (ByteString, ByteString, Int)
+parseFileMarker raw = do
+  suffix <- BS.stripPrefix fileMarkerPrefix raw
   case B8.split ':' suffix of
     [fileName, digest, rawSize]
       | validFileName fileName
@@ -116,6 +126,13 @@ readMaybeInt = fmap fst . listToMaybe . reads . B8.unpack
 
 sha256 :: ByteString -> ByteString
 sha256 = B8.pack . show . (hashWith SHA256 :: ByteString -> Digest SHA256)
+
+removeStaleWorkload :: WorkloadStore -> Job -> IO ()
+removeStaleWorkload store job = do
+  let path = workloadPath store job
+  exists <- doesFileExist path
+  linked <- if exists then pathIsSymbolicLink path else pure False
+  if not exists || linked then pure () else removeFile path
 
 writeAtomically :: FilePath -> ByteString -> IO ()
 writeAtomically path body = do
