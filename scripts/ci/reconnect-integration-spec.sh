@@ -70,6 +70,23 @@ wait_for_run_result() {
   return 1
 }
 
+wait_for_workers() {
+  local func_name="$1"
+  local expected="$2"
+  local attempts="${3:-30}"
+  for _ in $(seq 1 "$attempts"); do
+    local status
+    status="$("$PERIODIC_BIN" status 2>/dev/null || true)"
+    if echo "$status" | awk -v func="$func_name" -v workers="$expected" '$1 == func && $2 == workers { found = 1 } END { exit !found }'; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Expected ${func_name} to have ${expected} workers"
+  "$PERIODIC_BIN" status || true
+  return 1
+}
+
 start_server() {
   local backend_uri="$1"
   local logfile="$2"
@@ -214,5 +231,86 @@ EOF
   cleanup
 }
 
+test_worker_state_recovery() {
+  local backend_uri="$1"
+  local tag="$2"
+  local db_file="periodic-worker-state.sqlite"
+  local server_log="periodicd-worker-state-${tag}.log"
+  local worker_log="periodic-run-worker-state-${tag}.log"
+  local func_name="worker-state-func-${tag}"
+  local server_pid
+  local worker_pid=""
+
+  cleanup() {
+    if [ -n "${worker_pid:-}" ]; then
+      stop_process "$worker_pid" 3
+      worker_pid=""
+    fi
+    if [ -n "${server_pid:-}" ]; then
+      stop_process "$server_pid" 5
+      server_pid=""
+    fi
+    pkill -f "periodicd" 2>/dev/null || true
+    pkill -f "periodic-run" 2>/dev/null || true
+    rm -f /tmp/periodic.sock "$db_file"
+  }
+  trap cleanup EXIT
+
+  rm -f "$db_file"
+  server_pid="$(start_server "$backend_uri" "$server_log")"
+  wait_for_ping 30
+  "$PERIODIC_BIN" config set keepalive 1
+
+  "$PERIODIC_RUN_BIN" --data "$func_name" echo > "$worker_log" 2>&1 &
+  worker_pid=$!
+  wait_for_workers "$func_name" 1 30
+
+  # Graceful worker shutdown must remove exactly one registration.
+  stop_process "$worker_pid" 3
+  worker_pid=""
+  wait_for_workers "$func_name" 0 30
+
+  "$PERIODIC_RUN_BIN" --data "$func_name" echo > "$worker_log" 2>&1 &
+  worker_pid=$!
+  wait_for_workers "$func_name" 1 30
+
+  # SIGKILL bypasses the connection finalizer; Metro's keepalive sweep must
+  # invoke node leave and remove the registration.
+  kill -9 "$worker_pid"
+  wait "$worker_pid" 2>/dev/null || true
+  worker_pid=""
+  wait_for_workers "$func_name" 0 30
+
+  "$PERIODIC_RUN_BIN" --data "$func_name" echo > "$worker_log" 2>&1 &
+  worker_pid=$!
+  wait_for_workers "$func_name" 1 30
+  kill -9 "$worker_pid"
+  wait "$worker_pid" 2>/dev/null || true
+  worker_pid=""
+  wait_for_workers "$func_name" 0 30
+
+  "$PERIODIC_BIN" shutdown
+  for _ in $(seq 1 10); do
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if kill -0 "$server_pid" 2>/dev/null; then
+    echo "periodicd did not exit after shutdown"
+    return 1
+  fi
+  if "$PERIODIC_BIN" ping >/dev/null 2>&1; then
+    echo "periodicd still accepted connections after shutdown"
+    return 1
+  fi
+  wait "$server_pid" 2>/dev/null || true
+  server_pid=""
+
+  trap - EXIT
+  cleanup
+}
+
 test_reconnect_run "file://periodic-reconnect.sqlite" "sqlite"
 test_reconnect_pipe "file://periodic-reconnect.sqlite" "sqlite"
+test_worker_state_recovery "file://periodic-worker-state.sqlite" "sqlite"

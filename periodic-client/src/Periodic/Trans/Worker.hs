@@ -210,7 +210,7 @@ runJobT :: Monad m => JobT tp m a -> WorkerT tp m a
 runJobT = WorkerT . lift
 
 getClientEnv
-  :: (Monad m, Transport tp)
+  :: (MonadIO m, Transport tp)
   => WorkerT tp m (BT.BaseClientEnv (Maybe Job) tp)
 getClientEnv = runJobT BT.getClientEnv
 

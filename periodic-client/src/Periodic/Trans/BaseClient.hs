@@ -110,5 +110,5 @@ recvJobData
   ->  FuncName -> JobName -> BaseClientT u tp m ()
 recvJobData mwaiter cb fn jn = recvJobData_ mwaiter cb $ initJob fn jn
 
-getClientEnv :: (Monad m, Transport tp) => BaseClientT u tp m (BaseClientEnv u tp)
+getClientEnv :: (MonadIO m, Transport tp) => BaseClientT u tp m (BaseClientEnv u tp)
 getClientEnv = getEnv1

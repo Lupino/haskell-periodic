@@ -59,8 +59,8 @@ import           System.Entropy               (getEntropy)
 import           System.Log.Logger            (errorM)
 import           System.Timeout               (timeout)
 import           UnliftIO                     (MonadUnliftIO, atomically,
-                                               liftIO, newTVarIO, readTVarIO,
-                                               tryAny, writeTVar)
+                                               liftIO, newTVarIO, readTVar,
+                                               readTVarIO, tryAny, writeTVar)
 
 type ServerEnv serv =
   M.ServerEnv serv ClientConfig Nid Msgid (Packet Command)
@@ -172,7 +172,11 @@ startServer dbconfig mk config hook mAuth pushTaskSize schedTaskSize = do
   setOnNodeLeave sEnv $ \nid ClientConfig {..} ->
     runSchedT schedEnv $ do
       mapM_ failJob =<< IOMap.keys wJobQueue
-      mapM_ removeFunc . Set.toList =<< readTVarIO wFuncList
+      funcs <- atomically $ do
+        funcs <- readTVar wFuncList
+        writeTVar wFuncList Set.empty
+        pure funcs
+      mapM_ removeFunc $ Set.toList funcs
       dropAgentList grabQueue nid
 
   setOnCheckNodeState sEnv $ \_ ClientConfig {..} -> do
