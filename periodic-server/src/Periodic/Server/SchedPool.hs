@@ -4,6 +4,7 @@ module Periodic.Server.SchedPool
   ( SchedPool
   , newSchedPool
   , getHandleList
+  , hasHandle
   , runSchedPool
   , getLastSchedAt
   , unspawn
@@ -93,6 +94,19 @@ getHandleList pool@SchedPool {..} = atomically $ do
   handles <- mapM toHandle =<< getWaitingJob pool
   putTMVar waitingLock ()
   pure handles
+
+
+-- | Check the active and waiting indexes directly.  Callers that only need
+-- membership should not materialize every handle in a busy function queue.
+hasHandle :: MonadIO m => SchedPool -> JobHandle -> m Bool
+hasHandle SchedPool {..} jh = atomically $ do
+  mActive <- tryReadTMVar poolerState
+  activeMatches <- case mActive of
+    Nothing -> pure False
+    Just active -> (== jh) <$> toHandle active
+  if activeMatches
+    then pure True
+    else Map.member jh . waitingHandles <$> readTVar waitingJob
 
 
 toHandle :: TVar SchedJob -> STM JobHandle

@@ -214,7 +214,7 @@ printConfigKeyList = do
   putStrLn "  assign-wait        - Max wait time for job assignment (s)"
   putStrLn "  keepalive          - Client-server keepalive interval (s)"
   putStrLn "  max-batch-size     - Maximum number of jobs per poll"
-  putStrLn "  max-pool-size      - Maximum capacity of the scheduler pool"
+  putStrLn "  max-pool-size      - Maximum concurrent session-handler capacity per client/worker connection"
   putStrLn "  run-job-aggressive - Direct worker assignment for run jobs (0/1)"
   putStrLn ""
   exitSuccess

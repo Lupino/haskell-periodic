@@ -192,7 +192,11 @@ initSchedEnv config sGrabQueue sC sAssignJob sPushData sHook sKeepalive (PoolSiz
   sLockTimeout   <- newTVarIO 300
   sAssignWait    <- newTVarIO 2
   sMaxBatchSize  <- newTVarIO 500
-  sRunJobAggressive <- newTVarIO 0
+  -- Synchronous RunJob requests already wait for a result.  When a matching
+  -- worker has an outstanding GRABJOB, assign directly instead of traversing
+  -- the per-function scheduler queues.  The fallback preserves the queued
+  -- behavior when no worker is immediately available.
+  sRunJobAggressive <- newTVarIO 1
   sCleanup       <- toIO sC
   sPersist       <- liftIO $ P.newPersist config
   sAssignJobTime <- IOMap.empty
@@ -453,8 +457,7 @@ schedPoolHasJob :: MonadIO m => JobHandle -> FuncName -> SchedT db m Bool
 schedPoolHasJob jh fn = do
   poolList <- asks sSchedPoolList
   mPool <- IOMap.lookup fn poolList
-  handles <- fromMaybe [] <$> mapM Pool.getHandleList mPool
-  pure $ jh `elem` handles
+  maybe (pure False) (`Pool.hasHandle` jh) mPool
 
 
 fixedSchedAt :: MonadIO m => Job -> SchedT db m Job

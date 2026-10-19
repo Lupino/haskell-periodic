@@ -75,3 +75,13 @@ jobs:
 
       - name: Stack job-unassigned integration tests
         run: bash ./scripts/ci/job-unassigned-integration-spec.sh
+
+      - name: RunJob long-connection stress test (memory)
+        env:
+          BACKEND: memory
+        run: bash ./scripts/ci/long-connection-stress-spec.sh
+
+      - name: RunJob long-connection stress test (SQLite)
+        env:
+          BACKEND: sqlite
+        run: bash ./scripts/ci/long-connection-stress-spec.sh

@@ -84,6 +84,16 @@ test-suite workload
                      , periodic-server
   default-language:    Haskell2010
 
+test-suite sched-pool
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             SchedPool.hs
+  build-depends:       base
+                     , periodic-common
+                     , periodic-server
+                     , unliftio
+  default-language:    Haskell2010
+
 source-repository head
   type:     git
   location: https://github.com/Lupino/haskell-periodic

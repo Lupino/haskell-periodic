@@ -29,6 +29,7 @@ import           Metro.Server                 (getKeepalive, getMaxPoolSize,
                                                setKeepalive, setNodeMode,
                                                setOnCheckNodeState,
                                                setOnExcClose, setOnNodeLeave,
+                                               setMaxSessionPoolSize,
                                                setServerName, setSessionMode,
                                                stopServerT)
 import qualified Metro.Server                 as M (ServerEnv, startServer)
@@ -164,6 +165,10 @@ startServer dbconfig mk config hook mAuth pushTaskSize schedTaskSize = do
 
   setDefaultSessionTimeout sEnv 60
   setKeepalive sEnv 120
+  -- Each client/worker connection can have several in-flight protocol
+  -- sessions.  Keep the production default high enough for concurrent RunJob
+  -- callers; Scheduler's persisted max-pool-size setting still overrides it.
+  setMaxSessionPoolSize sEnv 32
 
   schedEnv <- initSchedEnv dbconfig grabQueue
               (runServerT sEnv stopServerT)

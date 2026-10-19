@@ -217,6 +217,33 @@ The benchmark script `scripts/bench/e2e_throughput_latency.sh` uses these defaul
 This pair was selected from repeated local runs as the most stable baseline
 for high throughput with low failure rate.
 
+### Long-connection server benchmark
+
+Use `scripts/bench/e2e_long_connection.sh` to measure the scheduler path
+without including a new CLI process and TCP/Unix connection setup for every
+job. It starts an isolated server and an in-process echo worker, then keeps a
+client connection open for each submitter:
+
+    BACKEND=memory RUNS=3 JOBS=10000 CLIENTS=16 WORKERS=16 \
+      bash scripts/bench/e2e_long_connection.sh
+
+Use `BACKEND=sqlite` to exercise the durable path. The script prints one
+machine-readable metric set per run, including successes, failures, throughput,
+and p50/p95/p99 latency. Compare baseline and optimized revisions only on the
+same host, with identical options, and use the median throughput.
+
+The script configures `run-job-aggressive`, `assign-wait`, and `max-pool-size`
+explicitly. `max-pool-size` is the maximum number of concurrent
+session-handler slots per client or worker connection; it is not a scheduler
+pool limit. It defaults to 32 (the `periodicd` default) and can be lowered on
+constrained hosts or raised for larger worker concurrency. Set
+`RUN_JOB_AGGRESSIVE=0` to measure the scheduler-queue path or
+`RUN_JOB_AGGRESSIVE=1` to measure direct assignment to an already-waiting
+worker. `ASSIGN_WAIT` defaults to 10 seconds so transient local scheduling
+delays cannot be counted as throughput failures. Keep both settings identical
+when comparing revisions. Every run receives a private server, socket, and
+SQLite database so worker teardown from one sample cannot affect the next.
+
 ### MacOS bundle
 
     make macos-bundle

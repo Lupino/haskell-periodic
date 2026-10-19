@@ -190,7 +190,7 @@ doUpdateState db state fn jn = execStmt db sql $ bindFnAndJn fn jn
 
 doInsertFuncName :: Database -> FuncName -> IO ()
 doInsertFuncName db = execFN db sql
-  where sql = Utf8 "INSERT OR REPLACE INTO funcs VALUES (?)"
+  where sql = Utf8 "INSERT OR IGNORE INTO funcs VALUES (?)"
 
 doGetRunningJob :: Database -> Int64 -> IO [Job]
 doGetRunningJob db ts = doFoldr_ db sql (const $ pure ()) (mkFoldFunc (:)) []
